@@ -1,0 +1,7 @@
+# --- runtime ---
+fastapi>=0.110,<0.130
+pydantic>=2.5,<3
+uvicorn[standard]>=0.27,<0.41
+
+# --- dev / test (optional: pip install -r requirements-dev.txt) ---
+# pytest>=8.0

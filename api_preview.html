@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Technical Services Fault Diagnosis Pill — API Preview</title>
+<style>
+  :root { --bg:#0f1115; --panel:#161a22; --border:#262b36; --txt:#e6e8ee; --mut:#9aa3b2; --acc:#4f8cff; --grn:#2fbf71; --red:#ff5c5c; --yel:#f0b429; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  header { padding:18px 20px; border-bottom:1px solid var(--border); background:var(--panel); }
+  header h1 { margin:0 0 4px; font-size:17px; }
+  header p { margin:0; color:var(--mut); font-size:13px; }
+  .wrap { display:flex; gap:0; height:calc(100vh - 81px); }
+  .list { width:320px; border-right:1px solid var(--border); overflow:auto; flex-shrink:0; }
+  .ep { padding:12px 16px; border-bottom:1px solid var(--border); cursor:pointer; }
+  .ep:hover { background:#1c2230; }
+  .ep.active { background:#1a2536; border-left:3px solid var(--acc); }
+  .m { display:inline-block; width:46px; font-weight:700; }
+  .m.GET { color:var(--grn); } .m.POST { color:var(--yel); } .m.PUT { color:var(--acc); } .m.DELETE { color:var(--red); }
+  .pp { color:var(--mut); font-size:12px; }
+  .main { flex:1; overflow:auto; padding:20px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:18px; margin-bottom:16px; }
+  .card h2 { margin:0 0 6px; font-size:15px; }
+  .desc { color:var(--mut); font-size:13px; white-space:pre-line; margin:0 0 14px; }
+  label { display:block; margin:8px 0 4px; color:var(--mut); font-size:12px; }
+  input,select { width:100%; padding:8px 10px; background:#0d1016; border:1px solid var(--border); color:var(--txt); border-radius:5px; font:13px ui-monospace,monospace; }
+  .row2 { display:flex; gap:10px; }
+  .row2 > div { flex:1; }
+  button { margin-top:14px; padding:9px 18px; background:var(--acc); color:#fff; border:0; border-radius:5px; font-weight:600; cursor:pointer; }
+  button:hover { filter:brightness(1.1); }
+  #res { background:#0d1016; border:1px solid var(--border); border-radius:6px; padding:14px; overflow:auto; white-space:pre-wrap; word-break:break-word; max-height:360px; }
+  .st { font-weight:700; }
+  .empty { color:var(--mut); text-align:center; padding:40px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Technical Services Fault Diagnosis Pill</h1>
+  <p>API 预览 — 11 个接口 / 状态机 + 护栏 G1-G8 / RBAC 强制</p>
+</header>
+<div class="wrap">
+  <div class="list" id="list"></div>
+  <div class="main" id="main"><div class="empty">选择左侧接口查看详情</div></div>
+</div>
+<script id="eps" type="application/json"></script>
+<script>window.EPDATA=null;</script>
+<script id="app">window.EPDATA = {"info": {"title": "Technical Services Fault Diagnosis Pill", "version": "1.0.0"}, "endpoints": [{"method": "POST", "path": "/cases", "summary": "Create Case", "description": "Trigger a diagnosis case. Gathers evidence + runs the decision tree.", "params": [{"name": "asset_id", "in": "query", "required": true, "schema": {"type": "string", "title": "Asset Id"}}, {"name": "sensor_id", "in": "query", "required": true, "schema": {"type": "string", "title": "Sensor Id"}}, {"name": "reading_status", "in": "query", "required": false, "schema": {"type": "string", "default": "absent", "title": "Reading Status"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "mgr1", "title": "User"}}]}, {"method": "GET", "path": "/cases", "summary": "List Cases", "description": "", "params": [{"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "auditor1", "title": "User"}}]}, {"method": "POST", "path": "/cases/{case_id}/advance", "summary": "Advance Case", "description": "Drive the agent loop: GATHERING_EVIDENCE -> diagnosis -> recommendation.\n\nIdempotent within a phase: if already past a phase it is a no-op. This\nkeeps the HTTP surface simple for the demo (one call advances as far\nas AWAITING_APPROVAL or ESCALATED).", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "mgr1", "title": "User"}}]}, {"method": "GET", "path": "/cases/{case_id}", "summary": "Get Case", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "auditor1", "title": "User"}}]}, {"method": "GET", "path": "/cases/{case_id}/evidence", "summary": "Get Evidence", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "auditor1", "title": "User"}}]}, {"method": "GET", "path": "/cases/{case_id}/diagnosis", "summary": "Get Diagnosis", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "auditor1", "title": "User"}}]}, {"method": "GET", "path": "/cases/{case_id}/recommendation", "summary": "Get Recommendation", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "auditor1", "title": "User"}}]}, {"method": "POST", "path": "/cases/{case_id}/approval", "summary": "Post Approval", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "decision", "in": "query", "required": true, "schema": {"type": "string", "title": "Decision"}}, {"name": "rationale", "in": "query", "required": false, "schema": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "Rationale"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "mgr1", "title": "User"}}]}, {"method": "GET", "path": "/cases/{case_id}/work-order", "summary": "Get Work Order", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "mgr1", "title": "User"}}]}, {"method": "POST", "path": "/cases/{case_id}/work-order", "summary": "Create Work Order", "description": "Raise + acknowledge the CMMS work order (EXECUTING -> MONITORING_OUTCOME).\n\nSpec §3 guardrail: refused unless an approve/modify decision is recorded.", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "mgr1", "title": "User"}}]}, {"method": "POST", "path": "/cases/{case_id}/outcome", "summary": "Post Outcome", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "result", "in": "query", "required": true, "schema": {"type": "string", "title": "Result"}}, {"name": "root_cause_confirmed", "in": "query", "required": false, "schema": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "Root Cause Confirmed"}}, {"name": "verified_by", "in": "query", "required": false, "schema": {"type": "string", "default": "tech1", "title": "Verified By"}}, {"name": "notes", "in": "query", "required": false, "schema": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "Notes"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "tech1", "title": "User"}}]}, {"method": "POST", "path": "/cases/{case_id}/feedback", "summary": "Post Feedback", "description": "", "params": [{"name": "case_id", "in": "path", "required": true, "schema": {"type": "string", "title": "Case Id"}}, {"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "steward1", "title": "User"}}]}, {"method": "GET", "path": "/audit/trace", "summary": "Get Audit Trace", "description": "", "params": [{"name": "user", "in": "query", "required": false, "schema": {"type": "string", "default": "auditor1", "title": "User"}}, {"name": "actor", "in": "query", "required": false, "schema": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "Actor"}}, {"name": "case_id", "in": "query", "required": false, "schema": {"anyOf": [{"type": "string"}, {"type": "null"}], "title": "Case Id"}}]}]};
+
+const list = document.getElementById('list');
+const main = document.getElementById('main');
+let cur = -1;
+
+function badge(m){return '<span class="m '+m+'">'+m+'</span>';}
+
+// smart hints per param
+const HINTS = {
+  asset_id: [],
+  sensor_id: [],
+  reading_status: ['absent','invalid'],
+  user: ['mgr1','tech1','steward1','auditor1','admin1'],
+  decision: ['approve','reject','modify'],
+  result: ['resolved','partially_resolved','unresolved'],
+  root_cause_confirmed: ['sensor_hardware_failure','comm_bus_failure','config_drift','loose_wiring','sensor_drift','sensor_fault_noise','data_path_drop','intermittent_fault'],
+};
+const DEFS = {asset_id:'CRAH-DC1-01', sensor_id:'SA-TEMP-01', reading_status:'absent', user:'mgr1', decision:'approve', result:'resolved', root_cause_confirmed:'sensor_hardware_failure', verified_by:'tech1', notes:null, rationale:null, actor:null, case_id:null};
+
+function renderList(){
+  list.innerHTML = window.EPDATA.endpoints.map((e,i)=>'<div class="ep" onclick="sel('+i+')" id="e'+i+'">'+badge(e.method)+'<span class="pp">'+e.path+'</span></div>').join('');
+}
+
+window.sel = function(i){
+  cur=i;
+  document.querySelectorAll('.ep').forEach(d=>d.classList.remove('active'));
+  document.getElementById('e'+i).classList.add('active');
+  const e = window.EPDATA.endpoints[i];
+  let h='<div class="card"><h2>'+badge(e.method)+' '+e.path+'</h2>';
+  if(e.description) h+='<p class="desc">'+e.description+'</p>';
+  // build form
+  e.params.forEach(p=>{
+    const name=p.name;
+    h+='<label>'+name+(p.required?' *':'')+'</label>';
+    const def = (p.schema&&p.schema.default!=null)? p.schema.default : DEFS[name];
+    if(name==='asset_id'){
+      h+='<div class="row2"><select id="f_'+name+'"><option value="CRAH-DC1-01">CRAH-DC1-01 (happy path)</option><option value="CRAH-DC1-02">CRAH-DC1-02 (bus 故障)</option></select></div>';
+    } else if(HINTS[name]&&Array.isArray(HINTS[name])&&HINTS[name].length){
+      const opts=HINTS[name].map(v=>'<option'+(v===def?' selected':'')+'>'+v+'</option>').join('');
+      h+='<select id="f_'+name+'">'+opts+'</select>';
+    } else {
+      h+='<input id="f_'+name+'" placeholder="'+(def==null?'(可选)':def)+'" value="'+(def==null?'':def)+'" />';
+    }
+  });
+  h+='<button onclick="run()">发送请求</button></div>';
+  h+='<div class="card"><div class="st">响应</div><div id="res" class="empty">（等待请求）</div></div>';
+  main.innerHTML=h;
+};
+
+
+window.run = async function(){
+  if(cur<0) return;
+  const e = window.EPDATA.endpoints[cur];
+  const resEl = document.getElementById('res');
+  resEl.classList.remove('empty');
+  resEl.textContent='请求中...';
+  // build query + substitute path
+  let path=e.path, q=[];
+  e.params.forEach(p=>{
+    const el=document.getElementById('f_'+p.name);
+    if(!el) return;
+    let v=el.value;
+    if(p.in==='path') path=path.replace('{'+p.name+'}',encodeURIComponent(v));
+    else if(v!=='' && v!=null) q.push(p.name+'='+encodeURIComponent(v));
+  });
+  const url = path + (q.length?('?'+q.join('&')):'');
+  resEl.textContent = e.method+' '+url+'\n\n请求中...';
+  try{
+    const r = await fetch(url,{method:e.method});
+    const txt = await r.text();
+    let body = txt;
+    try{ body = JSON.stringify(JSON.parse(txt),null,2); }catch(_){}
+    const hdr = (r=>r+' '+ (r.ok?'OK':''));
+    resEl.innerHTML = '<span class="st '+(!r.ok&&r.status>=400?'"style="color:var(--red)"':'')+'">HTTP '+r.status+'</span>\n\n'+escapeHtml(body);
+  }catch(err){
+    resEl.innerHTML = '<span class="st" style="color:var(--red)">请求失败</span>\n\n'+escapeHtml(String(err))+
+      '\n\n提示：沙箱服务可能未运行。在 Codebuddy 环境中需先启动 uvicorn。';
+  }
+};
+
+function escapeHtml(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+renderList();
+// auto-select first endpoint
+sel(0);
+</script>
+</body>
+</html>

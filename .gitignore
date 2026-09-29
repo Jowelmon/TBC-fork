@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Tooling / agent workspace
+.codebuddy/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
