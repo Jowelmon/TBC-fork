@@ -149,9 +149,12 @@ class AgentState:
         from_state = self.current_state
         key = (from_state, to_state)
         if key not in self._ALLOWED:
+            allowed_targets = [
+                t.value for (f, t) in self._ALLOWED if f == from_state
+            ]
             raise ValueError(
                 f"illegal transition {from_state.value} -> {to_state.value}: "
-                f"{reason} (allowed: {self._ALLOWED[key][0] if key in self._ALLOWED else 'NONE'})"
+                f"{reason} (allowed targets from {from_state.value}: {allowed_targets})"
             )
         prev_hash = self.history[-1].hash if self.history else GENESIS_HASH
         entry = HistoryEntry(
@@ -398,6 +401,21 @@ class AgentState:
         if self.current_state != AgentStateName.ESCALATED:
             raise ValueError("close_escalation only valid in ESCALATED")
         self._transition(AgentStateName.CLOSED, actor=actor, reason=reason)
+
+    def request_more_evidence(self, *, actor: str, reason: str) -> None:
+        """ESCALATED -> GATHERING_EVIDENCE: expert requests additional evidence.
+
+        The only re-entry path from ESCALATED back into the diagnosis loop
+        (spec §2 transition table). ``reason`` is REQUIRED for auditability
+        — the audit entry must record why additional evidence was needed.
+        """
+        if self.current_state != AgentStateName.ESCALATED:
+            raise ValueError("request_more_evidence only valid in ESCALATED")
+        self._transition(
+            AgentStateName.GATHERING_EVIDENCE,
+            actor=actor,
+            reason=f"expert requests more evidence: {reason}",
+        )
 
     # ------------------------------------------------------------------ #
     # Audit / observability

@@ -138,7 +138,12 @@ class LearningStore:
         similar = self.get_similar(fault_signature, asset_type, k=3)
         if not similar:
             return 0.2  # 【ASSUMPTION】 low-but-nonzero baseline
-        best_sim = max(jaccard(fault_signature, vc.fault_signature) for vc in similar if vc.confirmed_cause == confirmed_cause) if any(vc.confirmed_cause == confirmed_cause for vc in similar) else 0.0
+        matching = [vc for vc in similar if vc.confirmed_cause == confirmed_cause]
+        best_sim = (
+            max(jaccard(fault_signature, vc.fault_signature) for vc in matching)
+            if matching
+            else 0.0
+        )
         prior = self.cause_prior(confirmed_cause)
         # weight similarity 0.6, prior 0.4  【ASSUMPTION】
         return min(1.0, 0.6 * best_sim + 0.4 * prior)

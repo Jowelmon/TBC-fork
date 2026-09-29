@@ -327,77 +327,17 @@ def get_similar_cases(fault_signature: str, asset_type: str = "CRAH", k: int = 3
 # ========================================================================== #
 # 3. Reasoning tools
 # ========================================================================== #
-def evaluate_causal_hypothesis(hypothesis: str, evidence: list[EvidenceItem]) -> dict:
-    """Score a candidate cause against gathered evidence and return refs.
-
-    Deterministic heuristic: +1 per supporting evidence item, plus a kb_match
-    fraction. Returns a dict the agent uses to build ``Diagnosis``.
-    """
-    hyp = (hypothesis or "").lower()
-    supporting: list[str] = []
-    refs: list[str] = []
-    for ev in evidence:
-        payload_text = str(ev.payload).lower()
-        if hyp.split("_")[0] in payload_text or hyp in payload_text:
-            supporting.append(ev.type)
-        for ref in ev.kb_refs or []:
-            if ref not in refs:
-                refs.append(ref)
-
-    score = min(1.0, len(supporting) / 3.0)
-    out = {
-        "hypothesis": hypothesis,
-        "supporting_evidence_types": supporting,
-        "kb_refs": refs,
-        "score": round(score, 3),
-    }
-    _log("evaluate_causal_hypothesis", {"hypothesis": hypothesis}, out)
-    return out
+# The causal-hypothesis scoring tool (``evaluate_causal_hypothesis``) was
+# removed during code review — the deterministic decision tree in
+# ``decision_tree.py`` is the single source of truth for cause scoring, and
+# the standalone heuristic scorer was never called by the agent loop, demo,
+# or tests. Keeping one scoring path avoids divergence between two
+# independent scoring heuristics.
 
 
 # ========================================================================== #
 # 4. Output / action tools (integrate with AgentState)
 # ========================================================================== #
-def create_recommendation(
-    diagnosis: "DiagnosisLike",
-    evidence: list[EvidenceItem],
-    confidence: float,
-) -> Recommendation:
-    """Assemble a grounded Recommendation from a diagnosis + evidence.
-
-    Gathers kb_refs (from diagnosis + decision-tree evidence) and evidence
-    type-list refs. ``DiagnosisLike`` needs ``.candidate_causes`` and
-    ``.top_cause_id`` — accepts the real ``Diagnosis`` or a stand-in.
-    """
-    # Build actions from candidate causes + their kb_refs.
-    actions: list[RecommendationAction] = []
-    kb_refs: list[str] = list(diagnosis.kb_refs or [])
-    for cause in diagnosis.candidate_causes:
-        # The decision tree attaches the draft action to its DecisionResult;
-        # here we synthesize a RecommendationAction from each candidate cause.
-        # (When the caller passes a Diagnosis built from a DecisionResult, the
-        #  full action lives elsewhere; we record cause id + evidence refs.)
-        if cause.id not in kb_refs:
-            kb_refs.extend(cause.evidence_refs or [])
-
-    ev_refs = [ev.type for ev in evidence]
-    for ref in ev_refs:
-        pass  # ev_refs already populated
-
-    # Top-level kb_refs dedup
-    seen: set[str] = set()
-    dedup_refs = [r for r in kb_refs if not (r in seen or seen.add(r))]
-
-    rec = Recommendation(
-        actions=actions,
-        kb_refs=dedup_refs,
-        evidence_refs=ev_refs,
-    )
-    _log("create_recommendation",
-         {"top_cause_id": diagnosis.top_cause_id, "confidence": confidence}, rec)
-    return rec
-
-
 def request_human_approval(
     state: "AgentStateLike",
     recommendation: Recommendation,
@@ -450,7 +390,7 @@ def record_outcome_for_state(state: "AgentStateLike", outcome: Outcome) -> None:
     state.record_outcome(outcome)
 
 
-def submit_feedback(case_id: str, corrections: dict, outcome_id: str | None = None,
+def submit_feedback(case_id: str, corrections: dict,
                     *, state=None) -> str:
     """Submit feedback and promote it into the KB via the learning loop.
 
@@ -504,19 +444,6 @@ def submit_feedback(case_id: str, corrections: dict, outcome_id: str | None = No
     )
     vc = _LSTORE.record_feedback(fb, confidence=confidence, action_taken=action_taken)
     _log("submit_feedback",
-         {"case_id": case_id, "corrections": corrections, "outcome_id": outcome_id},
+         {"case_id": case_id, "corrections": corrections},
          {"feedback_id": fb_id, "validated_case": vc.id, "corrected": vc.corrected})
     return fb_id
-
-
-def escalate_to_expert(case_id: str, reason: str) -> dict:
-    out = {"case_id": case_id, "escalated_to": "technical_services_expert", "reason": reason,
-           "ticket": f"ESC-{uuid.uuid4().hex[:8].upper()}"}
-    _log("escalate_to_expert", {"case_id": case_id, "reason": reason}, out)
-    return out
-
-
-def coordinate_with_pill(target_pill: str, context: dict) -> dict:
-    out = {"target_pill": target_pill, "context": context, "status": "handoff_queued"}
-    _log("coordinate_with_pill", {"target_pill": target_pill, "context": context}, out)
-    return out

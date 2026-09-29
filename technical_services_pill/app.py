@@ -159,8 +159,6 @@ def advance_case(case_id: str, user: str) -> dict:
         from .confidence import score_confidence, evidence_coverage_score
         from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
         from .models import CandidateCause, Diagnosis, Recommendation
-        from .tools import get_similar_cases
-
         state.begin_diagnosing(actor="agent")
         results = evaluate_decision_tree(state.observation, state.evidence)
         if not results:
@@ -199,9 +197,11 @@ def advance_case(case_id: str, user: str) -> dict:
             FAULT_BRANCH_COUNTS.get(state.observation.type, 6),
         )
         sig = _fault_signature(state, top.cause_id, top.kb_refs)
-        cases = get_similar_cases(sig, _asset_type(state.asset_id), 1)
+        from .learning import STORE as _LSTORE
+
+        kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id))
         conf = score_confidence(evidence_coverage=coverage, peer_agreement=1.0,
-                                kb_match=0.9 if cases else 0.0)
+                                kb_match=kb_match)
         new_st = state.complete_diagnosis(diag, conf, actor="agent")
         if new_st == AgentStateName.RECOMMENDING:
             rec = Recommendation(
@@ -299,8 +299,15 @@ def post_approval(
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     if dec == HumanDecision.MODIFY:
-        # apply the manager's modified action set as the recommendation
-        state.recommendation = Recommendation(actions=modified_actions or [])
+        # apply the manager's modified action set while preserving G8
+        # grounding metadata (kb_refs / evidence_refs) from the original
+        # recommendation so the audit trail stays fully grounded.
+        orig = state.recommendation
+        state.recommendation = Recommendation(
+            actions=modified_actions or [],
+            kb_refs=list(orig.kb_refs) if orig and orig.kb_refs else [],
+            evidence_refs=list(orig.evidence_refs) if orig and orig.evidence_refs else [],
+        )
     return {"case_id": case_id, "current_state": state.current_state.value}
 
 
@@ -380,7 +387,7 @@ def post_feedback(
     from .tools import submit_feedback as _fb
     corrections = corrections or {}
     corrections.setdefault("submitted_by", user)
-    fb_id = _fb(case_id, corrections, None, state=state)
+    fb_id = _fb(case_id, corrections, state=state)
     try:
         state.queue_feedback(fb_id, actor=user)
     except ValueError as exc:
@@ -414,6 +421,25 @@ def close_escalation(case_id: str, user: str, reason: str) -> dict:
     state = _get_case(case_id)
     try:
         state.close_escalation(actor=user, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return {"case_id": case_id, "current_state": state.current_state.value}
+
+
+@app.post("/cases/{case_id}/escalation/evidence")
+def request_more_evidence(case_id: str, user: str, reason: str) -> dict:
+    """Request more evidence on an escalated case (ESCALATED -> GATHERING_EVIDENCE).
+
+    The only HTTP re-entry path from ESCALATED back into the diagnosis loop
+    (spec §2 transition table). An expert who needs additional sensor data
+    or telemetry calls this to send the case back to evidence gathering.
+    ``reason`` is REQUIRED for auditability. Requires ``approve_reject_modify``
+    capability (expert/manager role).
+    """
+    _need(user, "approve_reject_modify")
+    state = _get_case(case_id)
+    try:
+        state.request_more_evidence(actor=user, reason=reason)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return {"case_id": case_id, "current_state": state.current_state.value}

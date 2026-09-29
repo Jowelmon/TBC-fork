@@ -56,9 +56,6 @@ def _run_happy_path() -> str:
     _hr("CASE 1 — CRAH-DC1-01 / SA-TEMP-01 (happy path)")
 
     obs = ReadingStatus.ABSENT
-    observation = type(
-        "O", (), {}
-    )  # placeholder; real Observation built below
     from .models import Observation
 
     observation = Observation(
@@ -143,6 +140,7 @@ def _run_happy_path() -> str:
     fb_id = submit_feedback(
         getattr(state, "case_id", "") or "demo",
         {"confirmed": True, "lesson": "cal overdue + absent -> replace"},
+        state=state,
     )
     state.queue_feedback(fb_id, actor="steward1")
     print(f"feedback {fb_id} -> {state.current_state.value}")
