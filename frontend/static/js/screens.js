@@ -1,6 +1,6 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
-import { api } from './api.js';
+import { api } from './api.js?v=2';
 
 // ── Known cause IDs for validated root-cause dropdown ──────
 const KNOWN_CAUSES = [
