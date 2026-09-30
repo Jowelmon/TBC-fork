@@ -1,0 +1,178 @@
+// app.js - App controller: navigation, role switching, toasts, helpers
+
+import { api } from './api.js';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, seedDemoCases } from './screens.js';
+
+// ── State ──────────────────────────────────────────────────
+const state = {
+  screen: 'dashboard',
+  caseId: null,
+  role: localStorage.getItem('tbc_user') || 'mgr1',
+};
+
+const SCREEN_TITLES = {
+  dashboard: 'Asset and Fault Dashboard',
+  diagnosis: 'AI Diagnosis and Recommendation',
+  decision: 'AOM Decision',
+  outcome: 'Outcome and Feedback',
+  governance: 'Pill Summary and Governance',
+};
+
+// ── DOM refs ───────────────────────────────────────────────
+const content = document.getElementById('content');
+const screenTitle = document.getElementById('screen-title');
+const roleSelect = document.getElementById('role-select');
+const roleBadge = document.getElementById('role-badge');
+const breadcrumbCurrent = document.getElementById('breadcrumb-current');
+const navItems = document.querySelectorAll('.nav-item');
+
+// ── Helpers ────────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => (t.className = 'toast'), 4000);
+}
+
+// ── Copy to clipboard (for audit chain) ─────────────────────
+function copyToClipboard(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.classList.add('copied');
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.classList.remove('copied'); btn.textContent = 'Copy'; }, 2000);
+  });
+}
+
+// ── Role display name ───────────────────────────────────────
+const ROLE_NAMES = {
+  tech1:    { name: 'Technician',            cap: 'technician' },
+  mgr1:     { name: 'Asset Ops Manager',      cap: 'asset_ops_manager' },
+  steward1: { name: 'Knowledge Steward',     cap: 'knowledge_steward' },
+  auditor1: { name: 'Auditor',                cap: 'auditor' },
+  admin1:   { name: 'Admin',                  cap: 'admin' },
+};
+
+function roleDisplayName(id) {
+  return ROLE_NAMES[id]?.name || id;
+}
+
+function statePill(stateVal) {
+  // Miora spec status pill mapping
+  const map = {
+    TRIGGERED:          { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
+    GATHERING_EVIDENCE: { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
+    DIAGNOSING:         { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
+    RECOMMENDING:       { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
+    AWAITING_APPROVAL:  { cls: 'badge-yellow', label: 'Action required' },
+    EXECUTING:          { cls: 'badge-blue',   label: 'In maintenance' },
+    MONITORING_OUTCOME: { cls: 'badge-blue',   label: 'In maintenance' },
+    RECORDING_OUTCOME:  { cls: 'badge-blue',   label: 'In maintenance' },
+    FEEDBACK_QUEUED:    { cls: 'badge-grey',   label: 'Awaiting feedback' },
+    ESCALATED:          { cls: 'badge-red',    label: 'Escalated' },
+    CLOSED:             { cls: 'badge-green',  label: 'Resolved' },
+  };
+  const m = map[stateVal] || { cls: 'badge-grey', label: stateVal };
+  return `<span class="badge ${m.cls}">${m.label}</span>`;
+}
+
+function confBand(conf) {
+  // Miora spec confidence bands
+  if (conf === null || conf === undefined) return { cls: 'badge-grey', label: 'N/A' };
+  if (conf < 0.35) return { cls: 'badge-red', label: (conf * 100).toFixed(0) + '% Escalate' };
+  if (conf < 0.55) return { cls: 'badge-yellow', label: (conf * 100).toFixed(0) + '% Medium' };
+  return { cls: 'badge-green', label: (conf * 100).toFixed(0) + '% Recommendable' };
+}
+
+function fmtTime(ts) {
+  if (!ts) return '-';
+  try { return new Date(ts).toLocaleString('en-SG', { hour12: false }); }
+  catch { return ts; }
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Navigation ─────────────────────────────────────────────
+function navigate(screen, caseId = null) {
+  state.screen = screen;
+  if (caseId) state.caseId = caseId;
+
+  // Update nav items
+  navItems.forEach(item => {
+    item.classList.remove('active');
+    if (item.dataset.screen === screen) item.classList.add('active');
+  });
+
+  // Enable case-specific nav items if a case is selected
+  const caseScreens = ['diagnosis', 'decision', 'outcome'];
+  navItems.forEach(item => {
+    if (caseScreens.includes(item.dataset.screen)) {
+      item.disabled = !state.caseId;
+    }
+  });
+
+  screenTitle.textContent = SCREEN_TITLES[screen] || screen;
+
+  // Update breadcrumbs
+  if (breadcrumbCurrent) {
+    if (state.caseId && caseScreens.includes(screen)) {
+      breadcrumbCurrent.textContent = `${SCREEN_TITLES[screen]} / ${state.caseId}`;
+    } else {
+      breadcrumbCurrent.textContent = SCREEN_TITLES[screen] || screen;
+    }
+  }
+
+  // Update role badge
+  if (roleBadge) {
+    roleBadge.textContent = roleDisplayName(state.role);
+  }
+
+  renderScreen();
+}
+
+function renderScreen() {
+  const h = { api, showToast, statePill, confBand, fmtTime, esc, navigate, seedDemoCases, copyToClipboard, roleDisplayName };
+  switch (state.screen) {
+    case 'dashboard':
+      renderDashboard(content, state, h);
+      break;
+    case 'diagnosis':
+      renderDiagnosis(content, state, h);
+      break;
+    case 'decision':
+      renderDecision(content, state, h);
+      break;
+    case 'outcome':
+      renderOutcome(content, state, h);
+      break;
+    case 'governance':
+      renderGovernance(content, state, h);
+      break;
+  }
+}
+
+// ── Role switcher ──────────────────────────────────────────
+roleSelect.value = state.role;
+roleBadge.textContent = roleDisplayName(state.role);
+roleSelect.addEventListener('change', () => {
+  state.role = roleSelect.value;
+  localStorage.setItem('tbc_user', state.role);
+  roleBadge.textContent = roleDisplayName(state.role);
+  renderScreen();
+});
+
+// ── Nav click handlers ─────────────────────────────────────
+navItems.forEach(item => {
+  item.addEventListener('click', () => {
+    if (item.disabled) return;
+    navigate(item.dataset.screen);
+  });
+});
+
+// ── Init ───────────────────────────────────────────────────
+navigate('dashboard');
+
+// Expose for debugging
+window.__app__ = { state, navigate, showToast, copyToClipboard };

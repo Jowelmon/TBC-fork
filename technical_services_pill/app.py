@@ -289,13 +289,17 @@ def post_approval(
         if state.recommendation and state.recommendation.actions:
             original_actions = list(state.recommendation.actions)
 
-    hd = HumanDecisionRecord(
-        decision=dec, decided_by=user, rationale=rationale,
-        modified_actions=modified_actions,
-        original_actions=original_actions,
-    )
+    from pydantic import ValidationError as PydanticValidationError
+
     try:
+        hd = HumanDecisionRecord(
+            decision=dec, decided_by=user, rationale=rationale,
+            modified_actions=modified_actions,
+            original_actions=original_actions,
+        )
         state.record_human_decision(hd, actor=user)
+    except PydanticValidationError as exc:
+        raise HTTPException(422, str(exc))
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     if dec == HumanDecision.MODIFY:
