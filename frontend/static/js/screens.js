@@ -283,9 +283,9 @@ export function renderDiagnosis(el, state, h) {
       const confVal = s.confidence !== null && s.confidence !== undefined ? (s.confidence * 100).toFixed(1) + '%' : 'N/A';
       const confPct = (s.confidence * 100).toFixed(1);
       const confCls = s.confidence < 0.35 ? 'low' : (s.confidence < 0.55 ? 'medium' : 'high');
-      const confBand = s.confidence < 0.35 ? 'Escalate' : (s.confidence < 0.55 ? 'Medium / Needs scrutiny' : 'Recommendable');
+      const confBandLabel = s.confidence < 0.35 ? 'Escalate' : (s.confidence < 0.55 ? 'Medium / Needs scrutiny' : 'Recommendable');
       confBody.innerHTML = `
-        <div style="font-size:18px;margin-bottom:8px"><strong>Confidence: ${confVal}</strong> <span class="badge badge-${s.confidence < 0.35 ? 'red' : (s.confidence < 0.55 ? 'yellow' : 'green')}">${confBand}</span></div>
+        <div style="font-size:18px;margin-bottom:8px"><strong>Confidence: ${confVal}</strong> <span class="badge badge-${s.confidence < 0.35 ? 'red' : (s.confidence < 0.55 ? 'yellow' : 'green')}">${confBandLabel}</span></div>
         <div class="conf-meter-wrap">
           <div class="conf-meter-track">
             <div class="conf-meter-thresholds">
