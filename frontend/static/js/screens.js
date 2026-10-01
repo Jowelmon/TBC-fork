@@ -829,7 +829,12 @@ export function renderGovernance(el, state, h) {
         <div class="stat stat-blue"><div class="stat-val">4 / 24</div><div class="stat-lbl">Trees / Causes</div></div>
       `;
       const dist = stats.cause_distribution || stats.causes || {};
-      const entries = Object.entries(dist);
+      const priors = stats.cause_priors || {};
+      // F6: fall back to cause_priors ({cause: {confirmed, total, rate}})
+      // when the API doesn't return a flat cause_distribution dict
+      const entries = Object.keys(dist).length
+        ? Object.entries(dist)
+        : Object.entries(priors).map(([cause, info]) => [cause, info.total || info.confirmed || 0]);
       const cdEl = document.getElementById('cause-dist');
       if (!entries.length) {
         cdEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[ ]</div><div class="empty-state-title">No validated cases yet</div><div class="empty-state-desc">Once cases are closed with confirmed root causes, their validated knowledge will appear here as cause distribution bars.</div></div>`;
