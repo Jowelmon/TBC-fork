@@ -78,6 +78,15 @@ SAFETY_CRITICAL_CAUSE_IDS: frozenset[str] = frozenset({
     # (cavitation/bearing wear are progressive, not imminent-safety)
 })
 
+# --- Safety-approval-required cause IDs (G2b) ---------------------------
+# These causes involve safety or environmental risk but are still actionable
+# by a human technician with proper precautions. They force mandatory human
+# approval (AWAITING_APPROVAL) with an explicit safety flag in the guardrail
+# result — they do NOT auto-escalate (the human can still approve the repair).
+SAFETY_APPROVAL_REQUIRED_CAUSE_IDS: frozenset[str] = frozenset({
+    "refrigerant_leak",  # environmental + pressure hazard; repair needs approval
+})
+
 # --- Prompt-injection patterns (G7) -------------------------------------
 _INJECTION_PATTERN = re.compile(
     r"(?i)\b(ignore\s+(all\s+)?(prior|previous)\s+instructions|"
@@ -140,6 +149,19 @@ def check_guardrails(
     if ctx.safety_critical:
         res.add("G2", "safety-critical condition (e.g. cooling lost AND temperature "
                       "rising) — must escalate", escalate=True)
+
+    # G2b — safety-approval-required cause: mandatory human approval with
+    # explicit safety flag. Does NOT auto-escalate (the human can still
+    # approve the repair), but the guardrail result names the safety risk.
+    if top_cause_label:
+        lowered_label = top_cause_label.lower()
+        for cause_id in SAFETY_APPROVAL_REQUIRED_CAUSE_IDS:
+            readable = cause_id.replace("_", " ")
+            if readable in lowered_label:
+                res.add("G2b", f"safety-critical cause '{top_cause_label}' "
+                              "requires mandatory human approval before action "
+                              "(environmental / pressure hazard)", require_approval=True)
+                break
 
     # G3 — cross-domain root cause: coordinate + escalate to that pill's owner.
     if top_cause_label:
