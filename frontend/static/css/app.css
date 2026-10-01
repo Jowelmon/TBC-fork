@@ -268,6 +268,22 @@ textarea { resize: vertical; min-height: 70px; }
   overflow-x: auto; white-space: pre-wrap; word-break: break-all;
   margin-top: 4px;
 }
+.evidence-plain { margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+.evidence-field {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 10px; border-radius: 4px; font-size: 13px;
+  background: var(--bg-input);
+}
+.evidence-field-label { color: var(--text-dim); }
+.evidence-field-value { font-weight: 600; }
+.evidence-field.evidence-abnormal {
+  background: var(--red-bg); border: 1px solid var(--red);
+}
+.evidence-field.evidence-abnormal .evidence-field-value { color: var(--red); }
+.evidence-toggle {
+  font-size: 12px; cursor: pointer; border: 1px solid var(--border);
+  background: transparent; padding: 2px 10px; border-radius: 4px; color: var(--text);
+}
 
 /* ── Guardrail grid ─────────────────────────────────────────────────────────── */
 .gr-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }

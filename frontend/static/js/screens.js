@@ -2,6 +2,12 @@
 
 import { api } from './api.js?v=2';
 
+// F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
+function _esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // ── Known cause IDs for validated root-cause dropdown ──────
 const KNOWN_CAUSES = [
   'comm_bus_failure', 'config_drift', 'loose_wiring', 'sensor_hardware_failure',
@@ -31,6 +37,79 @@ const WEIGHTS = [
   { id: 'W4', val: 0.10, label: 'Data Staleness', sign: '-' },
   { id: 'W5', val: 0.15, label: 'Conflict Penalty', sign: '-' },
 ];
+
+// F5: Evidence display toggle state (plain English vs raw JSON)
+let _evidenceRawMode = false;
+
+// F5: Keys whose value `true` indicates an abnormal/fault condition
+const _ABNORMAL_BOOL_KEYS = new Set([
+  'low_pressure_switch', 'high_pressure_switch', 'leak_detected',
+  'motor_overcurrent', 'temp_rising', 'greasing_overdue',
+  'soft_foot_detected', 'directional_dominant', 'on_battery',
+  'balance_ok',
+]);
+
+// F5: Numeric thresholds for abnormal values { key: { max?, min?, equals?, suffix? } }
+const _ABNORMAL_THRESHOLDS = {
+  charge_pct:       { max: 70, suffix: '%' },
+  soh_pct:          { max: 60, suffix: '%' },
+  battery_temp_c:   { max: 35, suffix: '°C' },
+  temp_c:           { max: 60, suffix: '°C' },
+  approach_temp:    { min: 3.0, suffix: '°C' },
+  axial_mm_s:       { max: 4.5, suffix: ' mm/s' },
+  dominant_order:   { equals: '2x' },
+};
+
+function _humaniseKey(key) {
+  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function renderEvidencePlain(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '<span class="muted">—</span>';
+  }
+  const entries = Object.entries(payload);
+  return `<div class="evidence-plain">` + entries.map(([key, val]) => {
+    const label = _humaniseKey(key);
+    let displayVal = val;
+    let abnormal = false;
+
+    if (_ABNORMAL_BOOL_KEYS.has(key) && val === true) {
+      abnormal = true;
+      displayVal = key === 'balance_ok' ? 'Imbalanced' : 'TRIPPED';
+    } else if (key === 'alarms' && Array.isArray(val) && val.length > 0) {
+      abnormal = true;
+      displayVal = val.join(', ');
+    } else if (key === 'alarms' && Array.isArray(val) && val.length === 0) {
+      displayVal = 'None';
+    } else if (typeof val === 'boolean') {
+      displayVal = val ? 'Yes' : 'No';
+    } else if (typeof val === 'number') {
+      const t = _ABNORMAL_THRESHOLDS[key];
+      if (t) {
+        if (t.max !== undefined && val > t.max) abnormal = true;
+        if (t.min !== undefined && val < t.min) abnormal = true;
+        displayVal = val + (t.suffix || '');
+      } else {
+        displayVal = String(val);
+      }
+    } else if (typeof val === 'string') {
+      const t = _ABNORMAL_THRESHOLDS[key];
+      if (t && t.equals !== undefined && val === t.equals) {
+        abnormal = true;
+      }
+      displayVal = val;
+    } else {
+      displayVal = JSON.stringify(val);
+    }
+
+    const cls = abnormal ? 'evidence-abnormal' : 'evidence-normal';
+    return `<div class="evidence-field ${cls}">
+      <span class="evidence-field-label">${_esc(label)}</span>
+      <span class="evidence-field-value">${_esc(String(displayVal))}</span>
+    </div>`;
+  }).join('') + `</div>`;
+}
 
 // ═══════════════════════════════════════════════════════════
 // Screen 1: Dashboard
@@ -208,7 +287,7 @@ export function renderDiagnosis(el, state, h) {
 
       // Two-column: evidence + diagnosis
       html += `<div class="grid-2">
-        <div class="card"><div class="card-header"><h3>Evidence Timeline</h3><span class="muted">${(s.evidence||[]).length} items</span></div><div class="card-body">
+        <div class="card"><div class="card-header"><h3>Evidence Timeline</h3><div class="flex align-center gap-8"><span class="muted">${(s.evidence||[]).length} items</span><button class="evidence-toggle" id="btn-ev-toggle">${_evidenceRawMode ? 'Plain English' : 'Raw JSON'}</button></div></div><div class="card-body">
           <span class="tier-label tier-fact">Tier 1 - Sensor Observations (Facts)</span>
           <div id="ev-body"></div>
         </div></div>
@@ -241,6 +320,9 @@ export function renderDiagnosis(el, state, h) {
         evBody.innerHTML = evs.map(ev => {
           const src = ev.source || 'unknown';
           const payload = JSON.stringify(ev.payload, null, 2);
+          const payloadHtml = _evidenceRawMode
+            ? `<pre class="evidence-payload">${esc(payload)}</pre>`
+            : renderEvidencePlain(ev.payload);
           return `<div class="evidence-item">
             <div class="evidence-dot dot-${src}"></div>
             <div style="flex:1;min-width:0">
@@ -249,7 +331,7 @@ export function renderDiagnosis(el, state, h) {
                 <span class="muted">${esc(ev.type || '')}</span>
                 <span class="evidence-meta">${fmtTime(ev.retrieved_at)}</span>
               </div>
-              <pre class="evidence-payload">${esc(payload)}</pre>
+              ${payloadHtml}
             </div>
           </div>`;
         }).join('');
@@ -362,6 +444,15 @@ export function renderDiagnosis(el, state, h) {
             showToast('Agent advanced', 'success');
             load();
           } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+      }
+
+      // F5: Wire evidence toggle button
+      const evToggleBtn = document.getElementById('btn-ev-toggle');
+      if (evToggleBtn) {
+        evToggleBtn.onclick = () => {
+          _evidenceRawMode = !_evidenceRawMode;
+          load();
         };
       }
     } catch (e) {
