@@ -110,10 +110,10 @@ pip install -r requirements.txt jinja2
 PYTHONPATH=. uvicorn frontend.serve:app --port 8000
 ```
 
-Open `http://localhost:8000/ui`, click **Seed Demo Cases**, then
-walk one CLOSED case and one ESCALATED case end to end. Use the role
-switcher (top right) to see RBAC in action. See
-`frontend/README.md` for details.
+Open `http://localhost:8000/ui`. On first load, **3 demo cases are
+auto-seeded** (one CLOSED, one ESCALATED, one AWAITING_APPROVAL) so the
+dashboard is never empty. Use the role switcher (top right) to see RBAC
+in action. See `frontend/README.md` for details.
 
 ### Makefile Targets
 
@@ -143,8 +143,12 @@ switcher (top right) to see RBAC in action. See
 | `GET` | `/cases/{id}/work-order` | Retrieve work order status |
 | `POST` | `/cases/{id}/work-order` | Create + acknowledge work order (requires prior approval) |
 | `POST` | `/cases/{id}/outcome` | Record observed outcome |
-| `POST` | `/cases/{id}/feedback` | Submit feedback → writes validated case back to KB |
-| `GET` | `/kb/stats` | Knowledge-base statistics (case count, cause distribution) |
+| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal (F2) |
+| `GET` | `/kb/stats` | Knowledge-base statistics (case count, cause priors, pending proposals) |
+| `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
+| `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
+| `POST` | `/kb/proposals/{id}/reject` | Reject a proposal (steward/admin) |
+| `POST` | `/kb/rollback/{version}` | Roll back KB to a target version (admin only) |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
 
 > Interactive Swagger docs at `/docs`, ReDoc at `/redoc` once the server is running.
@@ -159,6 +163,7 @@ created (spec §4.4, Layer 4).
 |---|---|---|
 | **G1** | Recommendation implies a BMS setpoint / interlock / safety-system / firmware change | Block + escalate |
 | **G2** | Fault classified safety-critical (cooling lost **AND** temperature rising) | Must escalate |
+| **G2b** | Cause involves environmental/pressure hazard (e.g. refrigerant leak) | Force `AWAITING_APPROVAL` with safety flag (does NOT auto-escalate) |
 | **G3** | Root cause maps to another pill's domain (chiller, power, BMS bus, leasing, tenant) | Coordinate + escalate |
 | **G4** | `confidence < ESCALATE_CONFIDENCE` (0.35) | Escalate, do not recommend |
 | **G5** | Asset not in registry / unknown asset | Escalate (short-circuit, no diagnosis) |
@@ -280,28 +285,40 @@ confidence = W1·evidence_coverage
 | `MIN_RECO_CONFIDENCE` | 0.55 | `DIAGNOSING → RECOMMENDING` requires `confidence ≥` this |
 | `ESCALATE_CONFIDENCE` | 0.35 | `confidence <` this → `ESCALATED` (no recommendation, G4) |
 
-## Closed-Loop Learning
+## Closed-Loop Learning (F2: Proposal Workflow)
 
-The system improves itself through a feedback → validation → KB write-back loop
-(spec §7):
+The system improves itself through a **feedback → proposal → steward approval → KB
+write-back** loop (spec §7, enhanced in F2):
 
 ```
-  diagnosis ──▶ human feedback ──▶ ValidatedCase ──▶ LearningStore (KB)
-                      │                                      │
-                      ▼                                      ▼
-                 recorded as                              next diagnosis
-                 FeedbackRecord                        retrieves via Jaccard
-                                                       similarity → kb_match ↑
-                                                       → confidence ↑
+  diagnosis ──▶ human feedback ──▶ pending proposal ──▶ steward review
+                      │                                        │
+                      ▼                                   approve / reject
+                 FeedbackRecord                               │
+                                                      ┌───────┴───────┐
+                                                      ▼               ▼
+                                                 ValidatedCase    (discarded)
+                                                 written to KB
+                                                      │
+                                                      ▼
+                                                 next diagnosis
+                                                 retrieves via Jaccard
+                                                 similarity → kb_match ↑
+                                                 → confidence ↑
 ```
 
 1. After a case closes, `submit_feedback` records the human-confirmed (or
-   corrected) root cause.
-2. The feedback becomes a `ValidatedCase` written into `LearningStore`.
+   corrected) root cause and creates a **pending proposal** (not directly
+   ingested).
+2. A knowledge steward reviews the proposal via `/kb/queue` and approves or
+   rejects it. Approval ingests the case into the KB and increments the KB
+   version.
 3. On the **next** diagnosis, `get_similar()` retrieves matching cases and
    `kb_match_score()` returns a similarity in `[0, 1]`.
 4. A higher `kb_match` feeds into the W3 term, raising `confidence` — so
    recurring faults are diagnosed faster and with more confidence.
+5. An admin can **roll back** the KB to a prior version via `/kb/rollback/{version}`,
+   removing all cases added after that version.
 
 **Demo proof:** the learning-loop case shows `kb_match` rising from **0.24 →
 1.00** and confidence from **0.51 → 0.70** after one feedback cycle.
@@ -326,7 +343,7 @@ make test
 PYTHONPATH=. python3.11 -m pytest tests/test_agent_state.py -q
 ```
 
-**62 assertions across 16 test functions**, mapping to spec §8 test cases:
+**29 tests across 20 test functions**, mapping to spec §8 test cases + F1-F7 acceptance tests:
 
 | Test | Spec | Verifies |
 |---|---|---|
@@ -343,9 +360,22 @@ PYTHONPATH=. python3.11 -m pytest tests/test_agent_state.py -q
 | `test_reject_closes` | — | Rejection transitions to CLOSED |
 | `test_full_lifecycle` | — | Complete 9-state traversal with hash-chain integrity |
 | `test_audit_tamper_detected` | — | Tampering with audit history breaks the SHA-256 chain |
-| `test_learning_loop` | §7 | Closed-loop: feedback → KB write-back → kb_match 0.24 → 1.00 |
+| `test_learning_loop` | §7 | Closed-loop: feedback → proposal → approve → KB write-back |
 | `test_multi_asset_decision_trees` | §4.2 | Chiller/UPS/pump trees resolve all 15 cause branches deterministically |
-| `test_multi_asset_e2e_gather` | §4.2 | `gather_evidence_for_fault` → decision tree end-to-end for 3 asset types |
+| `test_multi_asset_branch_isolation` | §4.2 | Branch isolation across fault types |
+| `test_f1_escalation_via_api` | F1 | CRAH-DC1-02 reaches ESCALATED with G3 via real API path |
+| `test_f1_no_hardcoded_confidence` | F1 | Confidence is real (not hardcoded 0.8) |
+| `test_f2_feedback_creates_pending_proposal` | F2 | Feedback creates a pending proposal, not direct KB write |
+| `test_f2_approve_proposal_ingests_into_kb` | F2 | Steward approval ingests case + bumps KB version |
+| `test_f2_reject_proposal_does_not_enter_kb` | F2 | Rejected proposals never enter the KB |
+| `test_f2_rollback_removes_approved_cases` | F2 | Rollback removes cases added after target version |
+| `test_f2_rbac_kb_queue_requires_steward` | F2 | Only steward/admin can view the queue |
+| `test_f2_rbac_rollback_requires_steward` | F2 | Only admin can rollback |
+| `test_f3_refrigerant_leak_routes_to_awaiting_approval` | F3 | Chiller refrigerant leak → AWAITING_APPROVAL (not ESCALATED) |
+| `test_f3_guardrail_names_g2b` | F3 | G2b in rule_ids, requires_approval=True, must_escalate=False |
+| `test_enforced_capabilities_are_declared` | RBAC | Declared capabilities match enforced set |
+| `test_core_capabilities_enforced` | RBAC | Core capability enforcement works |
+| `test_phantom_capabilities_are_known_demo_scope` | RBAC | Phantom caps are documented demo scope |
 
 ## Audit Integrity
 
@@ -380,7 +410,11 @@ technical_services_pill/
 └── __init__.py          # Public API exports
 
 tests/
-└── test_agent_state.py  # 16 tests, 62 assertions
+├── test_agent_state.py     # 16 core tests (spec TC1-TC11 + lifecycle + audit)
+├── test_f1_escalation_api.py  # F1: G3 escalation via real API path
+├── test_f2_proposals.py    # F2: Proposal workflow (approve/reject/rollback/RBAC)
+├── test_f3_refrigerant_leak.py  # F3: G2b safety-approval guardrail
+└── test_rbac_caps.py       # RBAC capability enforcement
 
 api_preview.html          # Self-contained API explorer (open in browser)
 requirements.txt          # Runtime dependencies
