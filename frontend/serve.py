@@ -37,7 +37,6 @@ _DEMO_USERS = [
 @app.get("/ui", response_class=HTMLResponse)
 async def ui(request: Request):
     """Serve the single-page frontend shell."""
-    return _templates.TemplateResponse("index.html", {
-        "request": request,
+    return _templates.TemplateResponse(request, "index.html", {
         "users": _DEMO_USERS,
     })
