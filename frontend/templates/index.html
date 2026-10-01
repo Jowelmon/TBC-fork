@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Technical Services Intelligence Pill</title>
+  <link rel="stylesheet" href="/static/css/app.css?v=2">
+</head>
+<body>
+  <div id="app">
+    <!-- Nav rail -->
+    <nav id="nav-rail">
+      <div class="nav-brand">
+        <div class="nav-logo">TBC</div>
+        <div class="nav-title">Technical Services<br><span>Intelligence Pill</span></div>
+      </div>
+      <div class="nav-items">
+        <button class="nav-item active" data-screen="dashboard" aria-label="Navigate to Dashboard">
+          <span class="nav-icon" aria-hidden="true">&#9632;</span>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-screen="diagnosis" disabled aria-label="Navigate to Diagnosis (requires a case)">
+          <span class="nav-icon" aria-hidden="true">&#9679;</span>
+          <span>Diagnosis</span>
+        </button>
+        <button class="nav-item" data-screen="decision" disabled aria-label="Navigate to AOM Decision (requires a case)">
+          <span class="nav-icon" aria-hidden="true">&#10003;</span>
+          <span>AOM Decision</span>
+        </button>
+        <button class="nav-item" data-screen="outcome" disabled aria-label="Navigate to Outcome (requires a case)">
+          <span class="nav-icon" aria-hidden="true">&#10146;</span>
+          <span>Outcome</span>
+        </button>
+        <button class="nav-item" data-screen="governance" aria-label="Navigate to Governance">
+          <span class="nav-icon" aria-hidden="true">&#9878;</span>
+          <span>Governance</span>
+        </button>
+      </div>
+      <div class="nav-footer">
+        KB v1.3.0<br>
+        <span class="nav-footer-sub">Keppel AI Harvest</span>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <main id="main">
+      <header id="topbar">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <h1 id="screen-title">Asset and Fault Dashboard</h1>
+          <div class="breadcrumb" id="breadcrumb">
+            <a onclick="window.__app__.navigate('dashboard')">Home</a>
+            <span class="breadcrumb-sep">/</span>
+            <span class="breadcrumb-current" id="breadcrumb-current">Dashboard</span>
+          </div>
+        </div>
+        <div id="role-switcher">
+          <span class="role-badge" id="role-badge">mgr1</span>
+          <label for="role-select" class="role-label">Acting as</label>
+          <select id="role-select" aria-label="Select acting role">
+            {% for u in users %}
+            <option value="{{ u.id }}">{{ u.id }} / {{ u.role }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </header>
+      <div id="content"></div>
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+  <!-- ES module entry point -->
+  <script type="module">
+    // Inject demo users into the module scope
+    window.__DEMO_USERS__ = [
+      {% for u in users %}
+      { id: "{{ u.id }}", role: "{{ u.role }}" },
+      {% endfor %}
+    ];
+  </script>
+  <script type="module" src="/static/js/app.js?v=2"></script>
+</body>
+</html>

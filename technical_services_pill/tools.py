@@ -442,8 +442,9 @@ def submit_feedback(case_id: str, corrections: dict,
         submitted_by=corrections.get("submitted_by", "steward1"),
         submitted_at=datetime.now(),
     )
-    vc = _LSTORE.record_feedback(fb, confidence=confidence, action_taken=action_taken)
+    proposal = _LSTORE.record_feedback(fb, confidence=confidence, action_taken=action_taken)
     _log("submit_feedback",
          {"case_id": case_id, "corrections": corrections},
-         {"feedback_id": fb_id, "validated_case": vc.id, "corrected": vc.corrected})
+         {"feedback_id": fb_id, "proposal_id": proposal["proposal_id"],
+          "status": proposal["status"]})
     return fb_id

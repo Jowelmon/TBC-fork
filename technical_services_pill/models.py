@@ -264,6 +264,7 @@ class ValidatedCase(BaseModel):
     corrected: bool  # True if feedback overturned the proposed cause
     weight: float = 1.0  # decays/boosts similarity contribution
     created_at: datetime
+    kb_version: int = 0  # KB version when this case was ingested (0 = seed)
 
     model_config = ConfigDict(validate_assignment=True)
 

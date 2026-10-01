@@ -150,53 +150,57 @@ def _run_happy_path() -> str:
 
 
 def _run_escalation() -> str:
-    """Spec TC2: CRAH-DC1-02 comm_bus_failure -> guardrail G3 escalate."""
+    """Spec TC2: CRAH-DC1-02 comm_bus_failure -> guardrail G3 escalate.
+
+    Drives the case through the same API path (TestClient) as a real caller.
+    No hardcoded confidence: the decision tree resolves comm_bus_failure,
+    the real confidence scorer runs, and guardrail G3 escalates via the
+    post-G4 guardrail evaluation in ``advance_case``.
+    """
     _hr("CASE 2 — CRAH-DC1-02 / SA-TEMP-02 (bus failure escalation)")
 
-    from .models import Observation
+    from fastapi.testclient import TestClient
 
-    observation = Observation(
-        type="temperature_measurement_missing",
-        sensor_id="SA-TEMP-02",
-        detected_at=datetime.now(timezone.utc),
-        reading_status=ReadingStatus.ABSENT,
-        asset_id="CRAH-DC1-02",
-    )
-    state = AgentState(asset_id="CRAH-DC1-02", observation=observation)
-    print(f"triggered -> {state.current_state.value}")
+    from .app import app
 
-    evidence = gather_evidence_for_case("CRAH-DC1-02", "SA-TEMP-02")
-    for ev in evidence:
-        state.add_evidence(ev, actor="agent")
-    print(f"gathered {len(state.evidence)} evidence items")
+    client = TestClient(app)
 
-    state.begin_diagnosing(actor="agent")
-    results = evaluate_decision_tree(observation, state.evidence)
-    top = results[0]
-    candidates = [
-        CandidateCause(id=r.cause_id, label=r.cause_label, likelihood=0.9 if r is top else 0.3)
-        for r in results
-    ]
-    diagnosis = Diagnosis(
-        candidate_causes=candidates,
-        top_cause_id=top.cause_id,
-        reasoning_trace=f"decision tree -> {top.cause_id}; all tags dead",
-        kb_refs=top.kb_refs,
-    )
-    confidence = 0.8
-    new_state = state.complete_diagnosis(diagnosis, confidence, actor="agent")
-    print(f"diagnosis: {top.cause_id} | confidence={confidence:.2f} -> {new_state.value}")
+    # Create the case through the API (same path as real callers).
+    resp = client.post("/cases", params={
+        "asset_id": "CRAH-DC1-02",
+        "sensor_id": "SA-TEMP-02",
+        "user": "tech1",
+        "observation_type": "temperature_measurement_missing",
+        "reading_status": "absent",
+    })
+    resp.raise_for_status()
+    body = resp.json()
+    case_id = body["case_id"]
+    print(f"case created -> {case_id}  state={body['current_state']}  evidence={body['evidence_count']}")
 
-    # RECOMMENDING -> guardrail G3 (cross-domain BMS) must escalate
-    rec = Recommendation(
-        actions=[top.action],
-        kb_refs=top.kb_refs,
-        evidence_refs=[ev.type for ev in state.evidence],
-    )
-    state.propose_recommendation(rec, actor="agent")
-    print(f"guardrail G3 (BMS cross-domain) -> MUST ESCALATE -> {state.current_state.value}")
-    print(f"audit chain valid: {state.verify_audit_chain()}  entries: {len(state.history)}")
-    return state.current_state.value
+    # Advance through the real agent loop (no hardcoded confidence).
+    resp = client.post(f"/cases/{case_id}/advance", params={"user": "tech1"})
+    resp.raise_for_status()
+    adv = resp.json()
+    final_state = adv["current_state"]
+    confidence = adv["confidence"]
+    print(f"advance -> {final_state}  confidence={confidence:.2f}")
+
+    # Verify guardrail G3 fired and names the target domain.
+    resp = client.get(f"/cases/{case_id}/recommendation", params={"user": "tech1"})
+    resp.raise_for_status()
+    gr = resp.json().get("guardrail_result")
+    if gr:
+        print(f"guardrail rules: {gr.get('rule_ids')}")
+        for reason in gr.get("reasons", []):
+            print(f"  {reason}")
+    else:
+        print("guardrail_result: None (G3 did not fire)")
+
+    # Audit chain check.
+    snap = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()
+    print(f"audit chain valid: {snap.get('audit_chain_valid')}  entries: {len(snap.get('history', []))}")
+    return final_state
 
 
 def _run_learning_loop() -> tuple[str, float, float]:
@@ -256,15 +260,17 @@ def _run_learning_loop() -> tuple[str, float, float]:
             root_cause_confirmed="comm_bus_failure",
             verified_by="expert1", notes="bus controller replaced",
         )
-    # submit feedback confirming the cause -> promoted into the KB
+    # submit feedback confirming the cause -> creates a pending proposal (F2)
     fb_id = submit_feedback(
         st1.case_id,
         {"confirmed_cause": "comm_bus_failure", "fault_signature": sig,
          "submitted_by": "steward1", "outcome": "resolved"},
         state=st1,
     )
-    print(f"feedback {fb_id} confirmed comm_bus_failure -> promoted to KB")
-    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}")
+    # F2: steward approves the proposal to ingest it into the live KB
+    _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward1")
+    print(f"feedback {fb_id} proposal approved -> promoted to KB")
+    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, version={_LSTORE.get_kb_version()}")
     # re-diagnose identical signature -> should reuse the new validated case
     _diagnose_asset("diagnose #2 (after  feedback)")
     st2, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
