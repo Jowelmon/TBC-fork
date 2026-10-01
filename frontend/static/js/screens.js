@@ -263,10 +263,11 @@ export function renderDiagnosis(el, state, h) {
         const diag = s.diagnosis;
         const causes = (diag.candidate_causes || []).map(c => {
           const top = c.id === diag.top_cause_id;
+          const evRefs = (c.evidence_refs || []).map(r => `<code>${esc(r)}</code>`).join(' ') || '—';
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;${top ? 'border-color:var(--green);background:var(--green-bg);' : ''}">
             ${top ? '<span class="badge badge-green">Top</span> ' : ''}<code>${esc(c.id)}</code>
             <strong>${esc(c.label)}</strong>
-            <span class="muted" style="margin-left:auto">Likelihood: ${(c.likelihood * 100).toFixed(0)}%</span>
+            <span class="muted" style="margin-left:auto;font-size:12px">Evidence: ${evRefs}</span>
           </div>`;
         }).join('');
         diagBody.innerHTML = `
