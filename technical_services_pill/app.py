@@ -441,8 +441,10 @@ def post_feedback(
     stats = _LSTORE.stats()
     return {"case_id": case_id, "feedback_id": fb_id,
             "current_state": state.current_state.value,
+            "proposal_status": "pending",
             "kb_cases_total": stats["total_validated_cases"],
-            "kb_feedback_added": stats["feedback_added"]}
+            "kb_feedback_added": stats["feedback_added"],
+            "pending_proposals": stats["pending_proposals"]}
 
 
 @app.get("/kb/stats")
@@ -451,6 +453,75 @@ def get_kb_stats(user: str) -> dict:
     _need(user, "view_case")
     from .learning import STORE as _LSTORE
     return _LSTORE.stats()
+
+
+@app.get("/kb/queue")
+def get_kb_queue(user: str) -> dict:
+    """List pending knowledge proposals awaiting steward approval (F2).
+
+    Requires ``approve_knowledge_version`` capability (knowledge steward
+    or admin). Returns the list of pending proposals with their metadata.
+    """
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    pending = _LSTORE.list_pending_proposals()
+    return {"queue": pending, "pending_count": len(pending)}
+
+
+@app.post("/kb/proposals/{proposal_id}/approve")
+def approve_proposal(proposal_id: str, user: str) -> dict:
+    """Approve a pending knowledge proposal and ingest it into the live KB (F2).
+
+    Requires ``approve_knowledge_version`` capability. On approval the KB
+    version increments and the proposal's feedback is promoted to a
+    ValidatedCase retrievable by future diagnoses.
+    """
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    try:
+        proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"proposal_id": proposal_id, "status": "approved",
+            "decided_by": user, "kb_version": _LSTORE.get_kb_version(),
+            "validated_case_id": proposal.get("validated_case_id")}
+
+
+@app.post("/kb/proposals/{proposal_id}/reject")
+def reject_proposal(proposal_id: str, user: str, reason: str) -> dict:
+    """Reject a pending knowledge proposal (F2).
+
+    Requires ``approve_knowledge_version`` capability. The rejected
+    proposal is retained in the audit trail but never ingested into the KB.
+    """
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    try:
+        proposal = _LSTORE.reject_proposal(proposal_id, decided_by=user, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"proposal_id": proposal_id, "status": "rejected",
+            "decided_by": user, "reason": reason}
+
+
+@app.post("/kb/rollback/{target_version}")
+def rollback_kb(target_version: int, user: str) -> dict:
+    """Roll back the KB to a prior version, removing cases added after it (F2).
+
+    Requires ``rollback_knowledge_version`` capability. Seed cases
+    (version 0) are never removed.
+    """
+    _need(user, "rollback_knowledge_version")
+    from .learning import STORE as _LSTORE
+    try:
+        target_version = int(target_version)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "target_version must be an integer")
+    try:
+        result = _LSTORE.rollback(target_version)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return result
 
 
 @app.post("/cases/{case_id}/escalation/close")

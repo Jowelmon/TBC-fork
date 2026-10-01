@@ -260,15 +260,17 @@ def _run_learning_loop() -> tuple[str, float, float]:
             root_cause_confirmed="comm_bus_failure",
             verified_by="expert1", notes="bus controller replaced",
         )
-    # submit feedback confirming the cause -> promoted into the KB
+    # submit feedback confirming the cause -> creates a pending proposal (F2)
     fb_id = submit_feedback(
         st1.case_id,
         {"confirmed_cause": "comm_bus_failure", "fault_signature": sig,
          "submitted_by": "steward1", "outcome": "resolved"},
         state=st1,
     )
-    print(f"feedback {fb_id} confirmed comm_bus_failure -> promoted to KB")
-    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}")
+    # F2: steward approves the proposal to ingest it into the live KB
+    _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward1")
+    print(f"feedback {fb_id} proposal approved -> promoted to KB")
+    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, version={_LSTORE.get_kb_version()}")
     # re-diagnose identical signature -> should reuse the new validated case
     _diagnose_asset("diagnose #2 (after  feedback)")
     st2, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")

@@ -41,15 +41,3 @@ async def ui(request: Request):
         "request": request,
         "users": _DEMO_USERS,
     })
-
-
-@app.get("/kb/queue")
-async def kb_queue(user: str):
-    """Stub endpoint for the knowledge approval queue.
-
-    Pending backend implementation (takeover.md gap 1). Returns an empty
-    queue so the frontend panel renders gracefully.
-    """
-    from technical_services_pill.app import _need
-    _need(user, "approve_knowledge_version")
-    return {"queue": [], "pending_count": 0, "note": "pending backend implementation"}

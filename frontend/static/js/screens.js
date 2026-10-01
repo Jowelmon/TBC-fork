@@ -685,14 +685,45 @@ export function renderGovernance(el, state, h) {
     <div class="banner banner-info mt-16"><p>A candidate must <strong>never</strong> appear as already-approved knowledge.</p></div>
   `;
 
-  // Knowledge queue stub
-  document.getElementById('queue-body').innerHTML = `
-    <div class="banner banner-warn"><span class="pending-badge">PENDING BACKEND</span><p>The knowledge approval queue endpoint is not yet implemented. The <code>approve_knowledge_version</code> capability exists in RBAC but no endpoint uses it.</p></div>
-    <div class="flex gap-8 mt-16">
-      <button class="btn btn-secondary" disabled>Approve</button>
-      <button class="btn btn-secondary" disabled>Reject</button>
-    </div>
-  `;
+  // Knowledge queue — load real pending proposals
+  async function loadQueue() {
+    const qb = document.getElementById('queue-body');
+    try {
+      const data = await api.get('/kb/queue');
+      const queue = data.queue || [];
+      if (!queue.length) {
+        qb.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[ ]</div><div class="empty-state-title">No pending proposals</div><div class="empty-state-desc">When feedback is submitted on closed cases, proposals will appear here for steward review.</div></div>`;
+        return;
+      }
+      qb.innerHTML = queue.map(p => `<div class="card" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <strong>${esc(p.proposal_id)}</strong> — Cause: <code>${esc(p.confirmed_cause)}</code>
+            <div style="font-size:12px;color:var(--muted)">Case: ${esc(p.case_id)} | Asset: ${esc(p.asset_id)} | Submitted by: ${esc(p.submitted_by)}</div>
+          </div>
+          <div class="flex gap-8">
+            <button class="btn btn-green btn-sm" id="approve-${esc(p.proposal_id)}">Approve</button>
+            <button class="btn btn-red btn-sm" id="reject-${esc(p.proposal_id)}">Reject</button>
+          </div>
+        </div>
+      </div>`).join('');
+      // Wire approve/reject buttons
+      queue.forEach(p => {
+        const aBtn = document.getElementById(`approve-${p.proposal_id}`);
+        const rBtn = document.getElementById(`reject-${p.proposal_id}`);
+        if (aBtn) aBtn.onclick = async () => {
+          try { await api.post(`/kb/proposals/${p.proposal_id}/approve`); showToast('Proposal approved', 'success'); loadQueue(); loadStats(); }
+          catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+        if (rBtn) rBtn.onclick = async () => {
+          try { await api.post(`/kb/proposals/${p.proposal_id}/reject`, { reason: 'Rejected by reviewer' }); showToast('Proposal rejected', 'success'); loadQueue(); }
+          catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+      });
+    } catch (e) {
+      qb.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  }
 
   // Load KB stats
   async function loadStats() {
@@ -701,7 +732,8 @@ export function renderGovernance(el, state, h) {
       document.getElementById('gov-stats').innerHTML = `
         <div class="stat"><div class="stat-val">${stats.total_validated_cases ?? 0}</div><div class="stat-lbl">Validated Cases</div></div>
         <div class="stat stat-purple"><div class="stat-val">${stats.feedback_added ?? 0}</div><div class="stat-lbl">Feedback Added</div></div>
-        <div class="stat stat-green"><div class="stat-val">1.3.0</div><div class="stat-lbl">KB Version</div></div>
+        <div class="stat stat-yellow"><div class="stat-val">${stats.pending_proposals ?? 0}</div><div class="stat-lbl">Pending Proposals</div></div>
+        <div class="stat stat-green"><div class="stat-val">v${stats.kb_version ?? 0}</div><div class="stat-lbl">KB Version</div></div>
         <div class="stat stat-blue"><div class="stat-val">4 / 24</div><div class="stat-lbl">Trees / Causes</div></div>
       `;
       const dist = stats.cause_distribution || stats.causes || {};
@@ -749,6 +781,7 @@ export function renderGovernance(el, state, h) {
   }
 
   loadStats();
+  loadQueue();
   loadTrace();
 }
 
