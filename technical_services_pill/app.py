@@ -147,26 +147,32 @@ def list_cases(user: str) -> dict:
 
 @app.post("/cases/{case_id}/advance")
 def advance_case(case_id: str, user: str) -> dict:
-    """Drive the agent loop: GATHERING_EVIDENCE -> diagnosis -> recommendation.
+    """Drive the agent loop to a terminal or waiting state in one call.
 
-    Idempotent within a phase: if already past a phase it is a no-op. This
-    keeps the HTTP surface simple for the demo (one call advances as far
-    as AWAITING_APPROVAL or ESCALATED).
+    Loops through GATHERING_EVIDENCE -> DIAGNOSING -> (RECOMMENDING |
+    GATHERING_EVIDENCE | ESCALATED) until the state is no longer
+    GATHERING_EVIDENCE. The state machine's ``_gathering_loops`` counter
+    caps the loop at 2 iterations before forcing ESCALATED.
+
+    When the case escalates via G4 (low confidence / max gathering loops)
+    but a diagnosis with a top cause exists, guardrails are evaluated
+    anyway so that G3 cross-domain escalation is surfaced with
+    ``guardrail_result`` populated — the proximate cause of escalation is
+    recorded, but the guardrail attribution is not lost.
     """
     _need(user, "view_case")
     state = _get_case(case_id)
-    if state.current_state == AgentStateName.GATHERING_EVIDENCE:
+
+    while state.current_state == AgentStateName.GATHERING_EVIDENCE:
         from .confidence import score_confidence, evidence_coverage_score
         from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
         from .models import CandidateCause, Diagnosis, Recommendation
+
         state.begin_diagnosing(actor="agent")
         results = evaluate_decision_tree(state.observation, state.evidence)
         if not results:
-            # Decision tree could not resolve a cause from the gathered
-            # evidence — escalate gracefully instead of crashing. The
-            # state is now DIAGNOSING; route via complete_diagnosis with
-            # a below-floor confidence so the G4 escalation path fires.
             from .models import CandidateCause, Diagnosis
+
             unknown = CandidateCause(
                 id="unresolvable", label="No candidate cause resolved",
                 likelihood=0.0, evidence_refs=[],
@@ -177,9 +183,8 @@ def advance_case(case_id: str, user: str) -> dict:
                 kb_refs=[],
             )
             state.complete_diagnosis(diag, 0.0, actor="agent")
-            return {"case_id": case_id, "current_state": state.current_state.value,
-                    "confidence": state.confidence,
-                    "reason": "decision tree returned no candidate cause"}
+            break
+
         top = results[0]
         candidates = [
             CandidateCause(id=r.cause_id, label=r.cause_label,
@@ -209,6 +214,42 @@ def advance_case(case_id: str, user: str) -> dict:
                 evidence_refs=[e.type for e in state.evidence],
             )
             state.propose_recommendation(rec, actor="agent")
+            break
+
+    # If the case escalated via G4 (low confidence / max gathering loops)
+    # but a diagnosis with a resolvable top cause exists, evaluate
+    # guardrails anyway so G3 cross-domain escalation is surfaced with
+    # guardrail_result populated (spec §4.4 edge case E5).
+    if (
+        state.current_state == AgentStateName.ESCALATED
+        and state.guardrail_result is None
+        and state.diagnosis
+        and state.diagnosis.top_cause_id
+        and state.diagnosis.top_cause_id != "unresolvable"
+    ):
+        from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
+        from .models import GuardrailContext, Recommendation
+
+        top_label = None
+        for c in state.diagnosis.candidate_causes:
+            if c.id == state.diagnosis.top_cause_id:
+                top_label = c.label
+                break
+        ctx = GuardrailContext(asset_known=True)
+        if state.diagnosis.top_cause_id in SAFETY_CRITICAL_CAUSE_IDS:
+            ctx = ctx.model_copy(update={"safety_critical": True})
+        rec = Recommendation(
+            actions=[],
+            kb_refs=list(state.diagnosis.kb_refs or []),
+            evidence_refs=[e.type for e in state.evidence],
+        )
+        gr = check_guardrails(
+            rec, ctx, confidence=state.confidence, top_cause_label=top_label,
+        )
+        if gr.must_escalate or not gr.allowed:
+            state.guardrail_result = gr
+            state.recommendation = rec
+
     return {"case_id": case_id, "current_state": state.current_state.value,
             "confidence": state.confidence}
 
