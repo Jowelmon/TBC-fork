@@ -103,6 +103,18 @@ make demo
 make serve
 ```
 
+### Option C - Frontend Demo UI
+
+```bash
+pip install -r requirements.txt jinja2
+PYTHONPATH=. uvicorn frontend.serve:app --port 8000
+```
+
+Open `http://localhost:8000/ui`, click **Seed Demo Cases**, then
+walk one CLOSED case and one ESCALATED case end to end. Use the role
+switcher (top right) to see RBAC in action. See
+`frontend/README.md` for details.
+
 ### Makefile Targets
 
 | Command | Description |
