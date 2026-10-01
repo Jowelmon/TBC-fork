@@ -111,6 +111,9 @@ function renderEvidencePlain(payload) {
   }).join('') + `</div>`;
 }
 
+// F7: Track whether auto-seed has already run this session
+let _autoSeeded = false;
+
 // ═══════════════════════════════════════════════════════════
 // Screen 1: Dashboard
 // ═══════════════════════════════════════════════════════════
@@ -193,6 +196,15 @@ export function renderDashboard(el, state, h) {
       const ids = data.cases || [];
       const snapshots = await Promise.all(ids.map(id => api.get(`/cases/${id}`).catch(() => null)));
       const cases = snapshots.filter(s => s);
+
+      // F7: Auto-seed 3 demo cases on first dashboard load if empty
+      if (!cases.length && !_autoSeeded) {
+        _autoSeeded = true;
+        showToast('Auto-seeding demo cases…', 'info');
+        await seedDemoCases(h);
+        return; // seedDemoCases navigates back to dashboard which re-loads
+      }
+
       renderStats(cases);
       renderTable(cases);
     } catch (e) {
