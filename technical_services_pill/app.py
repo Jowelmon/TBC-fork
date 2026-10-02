@@ -469,6 +469,69 @@ def post_feedback(
             "pending_proposals": stats["pending_proposals"]}
 
 
+# --------------------------------------------------------------------------- #
+# Expert knowledge capture (LLM drafts, steward approves)
+# --------------------------------------------------------------------------- #
+from pydantic import BaseModel as _BaseModel, Field as _Field
+
+
+class CaptureInterviewRequest(_BaseModel):
+    expert_name: str = _Field(min_length=1, max_length=120)
+    expert_role: str = _Field(min_length=1, max_length=120)
+    asset_type: str = _Field(min_length=1, max_length=40)
+    transcript: str = _Field(min_length=1)
+
+
+@app.get("/capture/sample")
+def get_capture_sample(user: str) -> dict:
+    """A sample technician interview for the demo."""
+    _need(user, "view_case")
+    from .capture import SAMPLE_INTERVIEW
+    return {"expert_name": "R. Tan", "expert_role": "Senior M&E Technician, 22 years",
+            "asset_type": "CRAH", "transcript": SAMPLE_INTERVIEW}
+
+
+@app.post("/capture/interview")
+def post_capture_interview(user: str, body: CaptureInterviewRequest) -> dict:
+    """Turn an expert interview into a pending knowledge proposal.
+
+    The LLM drafts structured heuristics; capture.py drops anything not
+    quoted verbatim from the transcript; the result is queued for a
+    different knowledge steward to approve. Nothing enters the KB here.
+    """
+    _need(user, "capture_expert_knowledge")
+    from . import capture, llm
+    from .learning import STORE as _LSTORE
+    from .tools import _log
+
+    try:
+        draft = capture.draft_from_transcript(body.transcript, body.asset_type)
+    except capture.CaptureError as exc:
+        raise HTTPException(422, str(exc))
+    except llm.LLMError as exc:
+        raise HTTPException(502, f"knowledge extraction failed: {exc}")
+
+    proposal = _LSTORE.record_expert_capture(
+        draft=draft, submitted_by=user, expert_name=body.expert_name,
+        expert_role=body.expert_role, asset_type=body.asset_type,
+    )
+    _log("capture_expert_knowledge",
+         {"expert": body.expert_name, "asset_type": body.asset_type,
+          "provider": draft["provider"], "submitted_by": user},
+         proposal)
+    return {"proposal_id": proposal["proposal_id"], "status": "pending",
+            "provider": draft["provider"], "heuristics": draft["heuristics"],
+            "warnings": draft["warnings"], "dropped": draft["dropped"]}
+
+
+@app.get("/kb/expert-heuristics")
+def get_expert_heuristics(user: str) -> dict:
+    """Approved, live expert heuristics with provenance."""
+    _need(user, "view_case")
+    from .learning import STORE as _LSTORE
+    return {"heuristics": _LSTORE.expert_heuristics}
+
+
 @app.get("/kb/stats")
 def get_kb_stats(user: str) -> dict:
     """Knowledge-base learning stats: validated cases, cause priors."""

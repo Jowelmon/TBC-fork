@@ -41,6 +41,7 @@ _ALL_CAPABILITIES: frozenset[str] = frozenset(
         "approve_knowledge_version",
         "rollback_knowledge_version",
         "read_audit_trail",
+        "capture_expert_knowledge",
     }
 )
 
@@ -53,6 +54,7 @@ PERMISSIONS: dict[Role, frozenset[str]] = {
             "approve_reject_modify",
             "record_outcome",
             "submit_feedback",
+            "capture_expert_knowledge",
         }
     ),
     Role.KNOWLEDGE_STEWARD: frozenset(
@@ -61,6 +63,7 @@ PERMISSIONS: dict[Role, frozenset[str]] = {
             "submit_feedback",
             "approve_knowledge_version",
             "read_audit_trail",
+            "capture_expert_knowledge",
         }
     ),
     Role.AUDITOR: frozenset({"view_case", "read_audit_trail"}),
