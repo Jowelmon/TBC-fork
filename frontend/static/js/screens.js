@@ -268,7 +268,7 @@ export function renderDashboard(el, state, h) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Screen 2: AI Diagnosis and Recommendation
+// Screen 2: Diagnosis and Recommendation
 // ═══════════════════════════════════════════════════════════
 export function renderDiagnosis(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
@@ -303,8 +303,8 @@ export function renderDiagnosis(el, state, h) {
           <span class="tier-label tier-fact">Tier 1 - Sensor Observations (Facts)</span>
           <div id="ev-body"></div>
         </div></div>
-        <div class="card"><div class="card-header"><h3>AI Diagnosis</h3></div><div class="card-body">
-          <span class="tier-label tier-ai">Tier 2 - AI Diagnosis + Confidence</span>
+        <div class="card"><div class="card-header"><h3>Decision-Tree Diagnosis</h3></div><div class="card-body">
+          <span class="tier-label tier-ai">Tier 2 - Decision-Tree Diagnosis + Confidence</span>
           <div id="diag-body"></div>
         </div></div>
       </div>`;
@@ -314,7 +314,7 @@ export function renderDiagnosis(el, state, h) {
 
       // Recommendation
       html += `<div class="card"><div class="card-header"><h3>Recommended Action</h3></div><div class="card-body">
-        <span class="tier-label tier-action">Tier 3 - Recommended Action (AI-Generated)</span>
+        <span class="tier-label tier-action">Tier 3 - Recommended Action (from approved Intelligence Pill knowledge)</span>
         <div id="rec-body"></div>
       </div></div>`;
 
@@ -530,7 +530,7 @@ export function renderDecision(el, state, h) {
             <span class="tier-label tier-human">Human-Validated</span>
             <div class="diff-grid">
               <div class="diff-col original">
-                <div class="diff-col-header">Original Actions (AI-Generated)</div>
+                <div class="diff-col-header">Original Actions (Recommended)</div>
                 <div class="diff-col-body">
                   ${(hd.original_actions || []).map(a => `<div class="diff-field"><div class="diff-field-label">Type</div><div class="diff-field-value">${esc(a.type)}</div><div class="diff-field-label">Target</div><div class="diff-field-value">${esc(a.target)}</div><div class="diff-field-label">Detail</div><div class="diff-field-value">${esc(a.detail)}</div></div>`).join('')}
                 </div>
@@ -778,7 +778,7 @@ export function renderGovernance(el, state, h) {
   // Pipeline visual
   document.getElementById('pipeline-body').innerHTML = `
     <div class="pipeline">
-      <div class="pipeline-step"><div class="pipeline-circle">1</div><div class="pipeline-label">AI Proposes</div><div class="pipeline-desc">Agent produces diagnosis</div></div>
+      <div class="pipeline-step"><div class="pipeline-circle">1</div><div class="pipeline-label">Outcome Proposes</div><div class="pipeline-desc">Confirmed cause becomes a pending proposal</div></div>
       <div class="pipeline-arrow">-></div>
       <div class="pipeline-step"><div class="pipeline-circle">2</div><div class="pipeline-label">Steward Reviews</div><div class="pipeline-desc">Knowledge steward validates</div></div>
       <div class="pipeline-arrow">-></div>

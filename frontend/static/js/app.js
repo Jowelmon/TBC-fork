@@ -12,7 +12,7 @@ const state = {
 
 const SCREEN_TITLES = {
   dashboard: 'Asset and Fault Dashboard',
-  diagnosis: 'AI Diagnosis and Recommendation',
+  diagnosis: 'Diagnosis and Recommendation',
   decision: 'AOM Decision',
   outcome: 'Outcome and Feedback',
   governance: 'Pill Summary and Governance',
