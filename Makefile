@@ -1,16 +1,22 @@
-.PHONY: help test demo serve docker-up docker-down lint clean
+.PHONY: help install test demo serve reset docker-up docker-down lint clean
 
 help:  ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-test:  ## Run the unit test suite (PYTHONPATH set automatically)
-	PYTHONPATH=. python3.11 tests/test_agent_state.py
+install:  ## Install runtime + test dependencies
+	pip install -r requirements.txt
 
-demo:  ## Run the 3-case end-to-end demo
-	PYTHONPATH=. python3.11 -m technical_services_pill.demo
+test:  ## Run the full test suite
+	PYTHONPATH=. python3 -m pytest tests/ -q
 
-serve:  ## Start the FastAPI API server locally on :8000
-	PYTHONPATH=. uvicorn technical_services_pill.app:app --reload --port 8000
+demo:  ## Run the end-to-end console demo
+	PYTHONPATH=. python3 -m technical_services_pill.demo
+
+serve:  ## Start the app with the UI on :8000 (open http://localhost:8000/ui)
+	PYTHONPATH=. uvicorn frontend.serve:app --port 8000
+
+reset:  ## Wipe persisted state (data/tbc.sqlite) for a clean demo
+	rm -f data/tbc.sqlite
 
 docker-up:  ## Build and start the API container
 	docker compose up --build -d
@@ -23,7 +29,7 @@ docker-demo:  ## Run the demo inside a container
 	docker compose run --rm demo
 
 lint:  ## Quick syntax check on all modules
-	python3.11 -m py_compile technical_services_pill/*.py tests/*.py
+	python3 -m py_compile technical_services_pill/*.py tests/*.py
 
 clean:  ## Remove bytecode caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true
