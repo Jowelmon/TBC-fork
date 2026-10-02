@@ -450,7 +450,10 @@ def post_feedback(
     state = _get_case(case_id)
     from .tools import submit_feedback as _fb
     corrections = corrections or {}
-    corrections.setdefault("submitted_by", user)
+    # The proposer is always the authenticated caller; a client-supplied
+    # submitted_by would let anyone pin a proposal on someone else and then
+    # approve it themselves.
+    corrections["submitted_by"] = user
     fb_id = _fb(case_id, corrections, state=state)
     try:
         state.queue_feedback(fb_id, actor=user)
@@ -496,9 +499,11 @@ def approve_proposal(proposal_id: str, user: str) -> dict:
     ValidatedCase retrievable by future diagnoses.
     """
     _need(user, "approve_knowledge_version")
-    from .learning import STORE as _LSTORE
+    from .learning import STORE as _LSTORE, SelfApprovalError
     try:
         proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user)
+    except SelfApprovalError as exc:
+        raise HTTPException(403, str(exc))
     except ValueError as exc:
         raise HTTPException(404, str(exc))
     return {"proposal_id": proposal_id, "status": "approved",

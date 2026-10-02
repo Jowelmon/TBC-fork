@@ -30,6 +30,10 @@ SEED_KB_MAJOR = 1
 SEED_KB_MINOR = 3
 
 
+class SelfApprovalError(ValueError):
+    """Raised when the approver of a knowledge proposal is its proposer."""
+
+
 def kb_version_label(approved_updates: int) -> str:
     """Map the internal approval counter to the displayed semantic version."""
     return f"{SEED_KB_MAJOR}.{SEED_KB_MINOR + approved_updates}.0"
@@ -183,6 +187,11 @@ class LearningStore:
             raise ValueError(f"proposal {proposal_id} not found")
         if p["status"] != "pending":
             raise ValueError(f"proposal {proposal_id} is {p['status']}, not pending")
+        if decided_by == p.get("submitted_by"):
+            raise SelfApprovalError(
+                f"{decided_by} proposed {proposal_id} and cannot also approve it; "
+                "a different knowledge steward must review it"
+            )
         p["status"] = "approved"
         p["decided_by"] = decided_by
         p["decided_at"] = _now()

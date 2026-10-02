@@ -48,6 +48,7 @@ const ROLE_NAMES = {
   tech1:    { name: 'Technician',            cap: 'technician' },
   mgr1:     { name: 'Asset Ops Manager',      cap: 'asset_ops_manager' },
   steward1: { name: 'Knowledge Steward',     cap: 'knowledge_steward' },
+  steward2: { name: 'Knowledge Steward 2',   cap: 'knowledge_steward' },
   auditor1: { name: 'Auditor',                cap: 'auditor' },
   admin1:   { name: 'Admin',                  cap: 'admin' },
 };

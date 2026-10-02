@@ -676,7 +676,7 @@ export function renderOutcome(el, state, h) {
         // Feedback
         if (s.current_state === 'FEEDBACK_QUEUED' || s.current_state === 'CLOSED') {
           const role = api.user();
-          const canFB = ['mgr1', 'steward1', 'admin1'].includes(role);
+          const canFB = ['mgr1', 'steward1', 'steward2', 'admin1'].includes(role);
           if (canFB) {
             ocBody.innerHTML += `<div class="mt-16">
               <h4>Submit Feedback</h4>

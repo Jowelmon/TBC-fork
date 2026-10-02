@@ -113,6 +113,7 @@ DEMO_USERS: dict[str, User] = {
     "tech1": User("tech1", Role.TECHNICIAN),
     "mgr1": User("mgr1", Role.ASSET_OPS_MANAGER),
     "steward1": User("steward1", Role.KNOWLEDGE_STEWARD),
+    "steward2": User("steward2", Role.KNOWLEDGE_STEWARD),
     "auditor1": User("auditor1", Role.AUDITOR),
     "admin1": User("admin1", Role.ADMIN),
 }
