@@ -252,6 +252,15 @@ def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceIt
 # ========================================================================== #
 # 2. Knowledge tools (RAG over validated heuristics + cases)
 # ========================================================================== #
+def _current_kb_version_label() -> str:
+    """Live KB version; falls back to the seed label if the store is unavailable."""
+    try:
+        from .learning import STORE as _LSTORE
+        return _LSTORE.get_kb_version_label()
+    except ImportError:  # pragma: no cover
+        return KNOWLEDGE_VERSION
+
+
 def query_knowledge_base(pill: str, query: str) -> dict:
     """Return matching heuristics + causal models for ``query``.
 
@@ -271,7 +280,7 @@ def query_knowledge_base(pill: str, query: str) -> dict:
     ]
     out = {
         "pill": pill,
-        "version": KNOWLEDGE_VERSION,
+        "version": _current_kb_version_label(),
         "heuristics": heuristics,
         "causal_models": causal,
         "kb_refs": [h["id"] for h in heuristics] + [c["id"] for c in causal],

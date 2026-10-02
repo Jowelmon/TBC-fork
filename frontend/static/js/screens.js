@@ -816,7 +816,7 @@ export function renderGovernance(el, state, h) {
         const aBtn = document.getElementById(`approve-${p.proposal_id}`);
         const rBtn = document.getElementById(`reject-${p.proposal_id}`);
         if (aBtn) aBtn.onclick = async () => {
-          try { await api.post(`/kb/proposals/${p.proposal_id}/approve`); showToast('Proposal approved', 'success'); loadQueue(); loadStats(); }
+          try { await api.post(`/kb/proposals/${p.proposal_id}/approve`); showToast('Proposal approved', 'success'); loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.(); }
           catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
         if (rBtn) rBtn.onclick = async () => {
@@ -837,7 +837,7 @@ export function renderGovernance(el, state, h) {
         <div class="stat"><div class="stat-val">${stats.total_validated_cases ?? 0}</div><div class="stat-lbl">Validated Cases</div></div>
         <div class="stat stat-purple"><div class="stat-val">${stats.feedback_added ?? 0}</div><div class="stat-lbl">Feedback Added</div></div>
         <div class="stat stat-yellow"><div class="stat-val">${stats.pending_proposals ?? 0}</div><div class="stat-lbl">Pending Proposals</div></div>
-        <div class="stat stat-green"><div class="stat-val">v${stats.kb_version ?? 0}</div><div class="stat-lbl">KB Version</div></div>
+        <div class="stat stat-green"><div class="stat-val">v${stats.kb_version_label ?? "1.3.0"}</div><div class="stat-lbl">KB Version</div></div>
         <div class="stat stat-blue"><div class="stat-val">4 / 24</div><div class="stat-lbl">Trees / Causes</div></div>
       `;
       const dist = stats.cause_distribution || stats.causes || {};

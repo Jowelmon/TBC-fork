@@ -26,6 +26,14 @@ from typing import Any
 
 from .models import FeedbackRecord, ValidatedCase
 
+SEED_KB_MAJOR = 1
+SEED_KB_MINOR = 3
+
+
+def kb_version_label(approved_updates: int) -> str:
+    """Map the internal approval counter to the displayed semantic version."""
+    return f"{SEED_KB_MAJOR}.{SEED_KB_MINOR + approved_updates}.0"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -254,6 +262,11 @@ class LearningStore:
     def get_kb_version(self) -> int:
         return self._kb_version
 
+    def get_kb_version_label(self) -> str:
+        """Human-facing semantic version. Seed knowledge is 1.3.0; each
+        steward-approved proposal bumps the minor version (1.3.0 -> 1.4.0)."""
+        return kb_version_label(self._kb_version)
+
     # ------------------------------------------------------------------ #
     def get_similar(self, fault_signature: str, asset_type: str | None = None, k: int = 3) -> list[ValidatedCase]:
         """Top-k validated cases by Jaccard token overlap + asset-type bonus."""
@@ -305,6 +318,7 @@ class LearningStore:
             "corrected_count": sum(1 for vc in self.validated if vc.corrected),
             "pending_proposals": len(self.list_pending_proposals()),
             "kb_version": self._kb_version,
+            "kb_version_label": self.get_kb_version_label(),
             "cause_priors": {
                 cause: {"confirmed": st["confirmed"], "total": st["total"], "rate": round(st["confirmed"] / st["total"], 3)}
                 for cause, st in self._cause_stats.items()

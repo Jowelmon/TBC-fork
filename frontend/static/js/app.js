@@ -95,8 +95,19 @@ function esc(s) {
 }
 
 // ── Navigation ─────────────────────────────────────────────
+// Keep the nav footer in step with the live KB version (same source as Governance).
+async function refreshKbVersion() {
+  const el = document.getElementById('nav-kb-version');
+  if (!el) return;
+  try {
+    const stats = await api.get('/kb/stats');
+    if (stats.kb_version_label) el.textContent = `KB v${stats.kb_version_label}`;
+  } catch (_) { /* leave last known value */ }
+}
+
 function navigate(screen, caseId = null) {
   state.screen = screen;
+  refreshKbVersion();
   if (caseId) state.caseId = caseId;
 
   // Update nav items
@@ -175,4 +186,4 @@ navItems.forEach(item => {
 navigate('dashboard');
 
 // Expose for debugging
-window.__app__ = { state, navigate, showToast, copyToClipboard };
+window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion };
