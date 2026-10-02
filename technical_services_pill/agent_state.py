@@ -205,12 +205,17 @@ class AgentState:
             reason=f"begin diagnosis ({len(self.evidence)} evidence items)",
         )
 
-    def escalate_for_evidence(self, *, actor: str = "agent") -> None:
+    def escalate_for_evidence(
+        self,
+        *,
+        actor: str = "agent",
+        reason: str = "evidence insufficient and not resolvable automatically",
+    ) -> None:
         """GATHERING_EVIDENCE -> ESCALATED when evidence cannot be resolved."""
         self._transition(
             AgentStateName.ESCALATED,
             actor=actor,
-            reason="evidence insufficient and not resolvable automatically",
+            reason=reason,
         )
 
     def complete_diagnosis(

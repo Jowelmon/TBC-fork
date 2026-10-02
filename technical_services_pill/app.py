@@ -168,7 +168,26 @@ def advance_case(case_id: str, user: str) -> dict:
         from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
         from .models import CandidateCause, Diagnosis, Recommendation
 
-        state.begin_diagnosing(actor="agent")
+        # G5: an asset outside the registry is out of this pill's scope.
+        # Escalate before diagnosing instead of stalling in GATHERING_EVIDENCE.
+        from .mock_registry import ASSETS
+        from .models import GuardrailResult
+
+        if state.asset_id not in ASSETS:
+            gr = GuardrailResult()
+            gr.add("G5", "asset not in registry; cannot diagnose unknown asset",
+                   escalate=True, block=True)
+            state.guardrail_result = gr
+            state.escalate_for_evidence(
+                actor="agent", reason="[G5] unknown asset; outside pill scope")
+            break
+
+        try:
+            state.begin_diagnosing(actor="agent")
+        except ValueError as exc:
+            # Evidence can never reach the minimum: escalate, never stall.
+            state.escalate_for_evidence(actor="agent", reason=str(exc))
+            break
         results = evaluate_decision_tree(state.observation, state.evidence)
         if not results:
             from .models import CandidateCause, Diagnosis
