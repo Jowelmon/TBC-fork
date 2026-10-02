@@ -1,7 +1,7 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=2';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, seedDemoCases } from './screens.js?v=2';
+import { api } from './api.js?v=3';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=3';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -12,6 +12,7 @@ const state = {
 
 const SCREEN_TITLES = {
   dashboard: 'Asset and Fault Dashboard',
+  capture: 'Expert Knowledge Capture',
   diagnosis: 'Diagnosis and Recommendation',
   decision: 'AOM Decision',
   outcome: 'Outcome and Feedback',
@@ -161,6 +162,9 @@ function renderScreen() {
       break;
     case 'governance':
       renderGovernance(content, state, h);
+      break;
+    case 'capture':
+      renderCapture(content, state, h);
       break;
   }
 }
