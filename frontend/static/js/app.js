@@ -1,6 +1,7 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
 import { api } from './api.js?v=3';
+import { initGuide } from './guide.js?v=3';
 import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=3';
 
 // ── State ──────────────────────────────────────────────────
@@ -172,6 +173,12 @@ function renderScreen() {
 // ── Role switcher ──────────────────────────────────────────
 roleSelect.value = state.role;
 roleBadge.textContent = roleDisplayName(state.role);
+function setRole(role) {
+  if (roleSelect.value === role) return;
+  roleSelect.value = role;
+  roleSelect.dispatchEvent(new Event('change'));
+}
+
 roleSelect.addEventListener('change', () => {
   state.role = roleSelect.value;
   localStorage.setItem('tbc_user', state.role);
@@ -187,7 +194,21 @@ navItems.forEach(item => {
   });
 });
 
+// ── Model chip (which model drafts expert knowledge) ───────
+(async () => {
+  const chip = document.getElementById('model-chip');
+  try {
+    const info = await api.get('/system/info');
+    chip.textContent = `Capture model: ${info.llm_label}`;
+    if (info.llm_provider === 'adp' && !info.adp_configured) {
+      chip.textContent += ' (key missing)';
+      chip.className = 'badge badge-red';
+    }
+  } catch (_) { chip.hidden = true; }
+})();
+
 // ── Init ───────────────────────────────────────────────────
+initGuide({ api, navigate, setRole, showToast });
 navigate('dashboard');
 
 // Expose for debugging

@@ -2,6 +2,16 @@
 
 import { api } from './api.js?v=3';
 
+// Async loaders can resolve after the user has navigated away; never crash.
+function setHTML(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+  return el;
+}
+
+const isForbidden = e => /403|lacks capability|forbidden/i.test(e?.message || '');
+const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Role-based access:</strong> ${what} is limited to ${roles}. Switch role in the top bar to see it.</p></div>`;
+
 // F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
   if (s === null || s === undefined) return '';
@@ -208,7 +218,7 @@ export function renderDashboard(el, state, h) {
       renderStats(cases);
       renderTable(cases);
     } catch (e) {
-      document.getElementById('cases-tbody').innerHTML = `<tr><td colspan="8" class="muted">Error: ${esc(e.message)}</td></tr>`;
+      setHTML('cases-tbody', `<tr><td colspan="8" class="muted">Error: ${esc(e.message)}</td></tr>`);
     }
   }
 
@@ -217,12 +227,12 @@ export function renderDashboard(el, state, h) {
     const action = cases.filter(c => c.current_state === 'AWAITING_APPROVAL').length;
     const escalated = cases.filter(c => c.current_state === 'ESCALATED').length;
     const closed = cases.filter(c => c.current_state === 'CLOSED').length;
-    document.getElementById('stats-row').innerHTML = `
+    setHTML('stats-row', `
       <div class="stat"><div class="stat-val">${total}</div><div class="stat-lbl">Total Cases</div></div>
       <div class="stat stat-yellow"><div class="stat-val">${action}</div><div class="stat-lbl">Awaiting Approval</div></div>
       <div class="stat stat-red"><div class="stat-val">${escalated}</div><div class="stat-lbl">Escalated</div></div>
       <div class="stat stat-green"><div class="stat-val">${closed}</div><div class="stat-lbl">Resolved</div></div>
-    `;
+    `);
   }
 
   function renderTable(cases) {
@@ -241,7 +251,7 @@ export function renderDashboard(el, state, h) {
       const obs = c.observation || {};
       const cb = confBand(c.confidence);
       const canAdv = c.current_state === 'GATHERING_EVIDENCE';
-      return `<tr class="clickable" onclick="window.__app__.navigate('diagnosis', '${c.case_id}')">
+      return `<tr class="clickable" tabindex="0" role="link" aria-label="Open case ${c.case_id} on ${c.asset_id}" onclick="window.__app__.navigate('diagnosis', '${c.case_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.__app__.navigate('diagnosis', '${c.case_id}')}">
         <td><code>${esc(c.case_id)}</code></td>
         <td><strong>${esc(c.asset_id)}</strong></td>
         <td>${esc((obs.type || '-').replace(/_/g, ' '))}</td>
@@ -576,12 +586,12 @@ export function renderDecision(el, state, h) {
       if (btnModify) btnModify.onclick = () => showModifyForm();
 
       function showRationaleForm(decision) {
-        document.getElementById('decision-form').innerHTML = `
+        setHTML('decision-form', `
           <div class="form-group"><label>Rationale (required for ${decision})</label>
             <textarea id="rat-text" placeholder="Explain why you are ${decision}ing this recommendation..."></textarea>
           </div>
           <button class="btn btn-red" id="btn-confirm-${decision}">Confirm ${decision === 'reject' ? 'Rejection' : 'Modification'}</button>
-        `;
+        `);
         document.getElementById(`btn-confirm-${decision}`).onclick = async () => {
           const rat = document.getElementById('rat-text').value.trim();
           if (!rat) { showToast('Rationale is required', 'error'); return; }
@@ -591,7 +601,7 @@ export function renderDecision(el, state, h) {
       }
 
       function showModifyForm() {
-        document.getElementById('decision-form').innerHTML = `
+        setHTML('decision-form', `
           <div class="form-group"><label>Rationale (required for modify)</label><textarea id="rat-text" placeholder="Explain the modification..."></textarea></div>
           <div class="grid-2">
             <div class="form-group"><label>Modified Action Type</label><input id="mod-type" type="text" placeholder="e.g. sensor_replacement"></div>
@@ -599,7 +609,7 @@ export function renderDecision(el, state, h) {
           </div>
           <div class="form-group"><label>Modified Action Detail</label><input id="mod-detail" type="text" placeholder="e.g. Replace supply-air RTD sensor"></div>
           <button class="btn btn-secondary" id="btn-confirm-modify">Confirm Modification</button>
-        `;
+        `);
         document.getElementById('btn-confirm-modify').onclick = async () => {
           const rat = document.getElementById('rat-text').value.trim();
           const mt = document.getElementById('mod-type').value.trim();
@@ -776,7 +786,7 @@ export function renderGovernance(el, state, h) {
   `;
 
   // Pipeline visual
-  document.getElementById('pipeline-body').innerHTML = `
+  setHTML('pipeline-body', `
     <div class="pipeline">
       <div class="pipeline-step"><div class="pipeline-circle">1</div><div class="pipeline-label">Expert or Outcome Proposes</div><div class="pipeline-desc">AI-drafted interviews and confirmed outcomes become pending proposals</div></div>
       <div class="pipeline-arrow">-></div>
@@ -787,11 +797,12 @@ export function renderGovernance(el, state, h) {
       <div class="pipeline-step"><div class="pipeline-circle">4</div><div class="pipeline-label">Version Bump</div><div class="pipeline-desc">1.3.0 -> 1.4.0</div></div>
     </div>
     <div class="banner banner-info mt-16"><p>A candidate must <strong>never</strong> appear as already-approved knowledge.</p></div>
-  `;
+  `);
 
   // Knowledge queue — load real pending proposals
   async function loadQueue() {
     const qb = document.getElementById('queue-body');
+    if (!qb) return;
     try {
       const data = await api.get('/kb/queue');
       const queue = data.queue || [];
@@ -829,7 +840,9 @@ export function renderGovernance(el, state, h) {
         };
       });
     } catch (e) {
-      qb.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+      qb.innerHTML = isForbidden(e)
+        ? rbacNote('Reviewing knowledge proposals', 'knowledge stewards (steward1, steward2)')
+        : `<p class="muted">Error: ${esc(e.message)}</p>`;
     }
   }
 
@@ -837,13 +850,13 @@ export function renderGovernance(el, state, h) {
   async function loadStats() {
     try {
       const stats = await api.get('/kb/stats');
-      document.getElementById('gov-stats').innerHTML = `
+      setHTML('gov-stats', `
         <div class="stat"><div class="stat-val">${stats.total_validated_cases ?? 0}</div><div class="stat-lbl">Validated Cases</div></div>
         <div class="stat stat-purple"><div class="stat-val">${stats.feedback_added ?? 0}</div><div class="stat-lbl">Feedback Added</div></div>
         <div class="stat stat-yellow"><div class="stat-val">${stats.pending_proposals ?? 0}</div><div class="stat-lbl">Pending Proposals</div></div>
         <div class="stat stat-green"><div class="stat-val">v${stats.kb_version_label ?? "1.3.0"}</div><div class="stat-lbl">KB Version</div></div>
         <div class="stat stat-blue"><div class="stat-val">4 / 24</div><div class="stat-lbl">Trees / Causes</div></div>
-      `;
+      `);
       const dist = stats.cause_distribution || stats.causes || {};
       const priors = stats.cause_priors || {};
       // F6: fall back to cause_priors ({cause: {confirmed, total, rate}})
@@ -862,7 +875,7 @@ export function renderGovernance(el, state, h) {
         }).join('');
       }
     } catch (e) {
-      document.getElementById('cause-dist').innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+      setHTML('cause-dist', `<p class="muted">Error: ${esc(e.message)}</p>`);
     }
   }
 
@@ -872,6 +885,7 @@ export function renderGovernance(el, state, h) {
       const data = await api.get('/audit/trace');
       const entries = data.entries || [];
       const tb = document.getElementById('trace-body');
+      if (!tb) return;
       if (!entries.length) {
         tb.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[ ]</div><div class="empty-state-title">No audit entries</div><div class="empty-state-desc">SHA-256 hash-chain audit entries will appear here once cases progress through state transitions.</div></div>`;
         return;
@@ -889,7 +903,9 @@ export function renderGovernance(el, state, h) {
         </tr>`).join('')}</tbody>
       </table></div>`;
     } catch (e) {
-      document.getElementById('trace-body').innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+      setHTML('trace-body', isForbidden(e)
+        ? rbacNote('The audit trail', 'auditors, knowledge stewards and admins')
+        : `<p class="muted">Error: ${esc(e.message)}</p>`);
     }
   }
 

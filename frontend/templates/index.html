@@ -3,10 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%E2%9A%99%3C/text%3E%3C/svg%3E">
   <title>Technical Services Intelligence Pill</title>
   <link rel="stylesheet" href="/static/css/app.css?v=3">
 </head>
 <body>
+  <a class="skip-link" href="#content">Skip to main content</a>
   <div id="app">
     <!-- Nav rail -->
     <nav id="nav-rail">
@@ -52,12 +54,14 @@
         <div style="display:flex;flex-direction:column;gap:4px">
           <h1 id="screen-title">Asset and Fault Dashboard</h1>
           <div class="breadcrumb" id="breadcrumb">
-            <a onclick="window.__app__.navigate('dashboard')">Home</a>
+            <a href="#" onclick="event.preventDefault(); window.__app__.navigate('dashboard')">Home</a>
             <span class="breadcrumb-sep">/</span>
             <span class="breadcrumb-current" id="breadcrumb-current">Dashboard</span>
           </div>
         </div>
         <div id="role-switcher">
+          <span class="badge badge-purple" id="model-chip" title="Model that drafts expert knowledge. Diagnosis itself is deterministic.">Capture model: ...</span>
+          <button class="btn btn-secondary btn-sm" id="guide-toggle" aria-expanded="false" aria-controls="guide-panel">Demo guide</button>
           <span class="role-badge" id="role-badge">mgr1</span>
           <label for="role-select" class="role-label">Acting as</label>
           <select id="role-select" aria-label="Select acting role">
@@ -67,9 +71,11 @@
           </select>
         </div>
       </header>
-      <div id="content"></div>
+      <div id="content" tabindex="-1"></div>
     </main>
   </div>
+
+  <aside id="guide-panel" class="guide-panel" hidden aria-label="Demo guide"></aside>
 
   <!-- Toast -->
   <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
