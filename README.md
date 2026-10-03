@@ -366,7 +366,15 @@ diagnose a cause until an engineer adds a decision-tree branch for it.
 | Value | Behaviour |
 |---|---|
 | `mock` (default) | Deterministic offline extractor, so the demo runs without keys. Labelled "Offline mock model" in the UI. |
-| `adp` | Tencent Cloud Agent Development Platform via `llm._call_adp()`. Credentials from env vars, never committed. Failures return HTTP 502, never a silent fallback. |
+| `adp` | Tencent Cloud Agent Development Platform, v2 Chat API over HTTP SSE (`llm._call_adp()`). Failures return HTTP 502, never a silent fallback. |
+
+To use ADP: `cp .env.example .env`, set `TBC_LLM_PROVIDER=adp` and paste your
+AppKey (ADP console: your app > Publish > Service status > API management >
+Copy) into `ADP_APP_KEY`. `.env` is gitignored. The top bar shows which model
+is active.
+
+**Demo guide:** the "Demo guide" button in the top bar walks an eight-step
+tour of the whole loop, setting the role and screen for each step.
 
 ## RBAC Roles
 
