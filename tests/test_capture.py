@@ -97,6 +97,7 @@ def test_approval_needs_second_steward_and_bumps_version(client):
 
 def test_unconfigured_adp_fails_loudly(client, monkeypatch):
     monkeypatch.setenv("TBC_LLM_PROVIDER", "adp")
+    monkeypatch.delenv("ADP_APP_KEY", raising=False)
     r = client.post("/capture/interview", params={"user": "steward1"}, json=_body())
     assert r.status_code == 502
-    assert "_call_adp" in r.json()["detail"]
+    assert "ADP_APP_KEY" in r.json()["detail"]

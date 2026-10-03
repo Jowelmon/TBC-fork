@@ -21,6 +21,21 @@ from fastapi.templating import Jinja2Templates
 import logging
 import os
 
+
+def _load_dotenv(path: str = ".env") -> None:
+    """Minimal .env loader: KEY=VALUE lines, existing env vars win."""
+    if not os.path.exists(path):
+        return
+    for raw in open(path, encoding="utf-8"):
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
 from technical_services_pill import persistence
 from technical_services_pill.app import app
 from technical_services_pill.rbac import DEMO_USERS

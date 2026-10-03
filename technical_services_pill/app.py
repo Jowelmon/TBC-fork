@@ -482,6 +482,20 @@ class CaptureInterviewRequest(_BaseModel):
     transcript: str = _Field(min_length=1)
 
 
+@app.get("/system/info")
+def get_system_info(user: str) -> dict:
+    """Which model drafts expert knowledge, for the UI badge. Never returns secrets."""
+    _need(user, "view_case")
+    from . import llm
+    provider = llm.provider_name()
+    return {
+        "llm_provider": provider,
+        "llm_label": "Tencent Cloud ADP" if provider == "adp" else "Offline mock model",
+        "adp_configured": llm.adp_configured(),
+        "diagnosis": "deterministic decision tree",
+    }
+
+
 @app.get("/capture/sample")
 def get_capture_sample(user: str) -> dict:
     """A sample technician interview for the demo."""

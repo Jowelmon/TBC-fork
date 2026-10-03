@@ -74,24 +74,102 @@ def complete_json(transcript: str, asset_type: str, allowed_causes: list[str]) -
 # --------------------------------------------------------------------------- #
 # Tencent Cloud ADP
 # --------------------------------------------------------------------------- #
-def _call_adp(system_prompt: str, user_prompt: str) -> str:
-    """Send one extraction request to the Tencent Cloud ADP agent.
+ADP_DEFAULT_ENDPOINT = "https://wss.lke.tencentcloud.com/adp/v2/chat"
+ADP_TIMEOUT_S = float(os.environ.get("ADP_TIMEOUT_S", "90"))
 
-    Contract: return the model's raw text reply (expected to be the JSON
-    object described in SYSTEM_PROMPT). Raise ``LLMError`` on any failure;
-    the API turns that into a clear 502 rather than falling back silently.
 
-    Read credentials from environment variables (never commit them):
-        ADP_APP_KEY, ADP_ENDPOINT, and whatever else the ADP app requires.
+def adp_configured() -> bool:
+    return bool(os.environ.get("ADP_APP_KEY", "").strip())
+
+
+def _call_adp(system_prompt: str, user_prompt: str, *, transport: Any = None) -> str:
+    """Send one extraction request to the published Tencent Cloud ADP app.
+
+    Uses the ADP v2 Chat API over HTTP SSE (AppKey-only auth). Each call is
+    a fresh conversation, so extractions never leak context into each other.
+    Returns the concatenated text of the app's ``reply`` messages; thinking
+    traces (``thought`` messages) are discarded.
+
+    Env:
+        ADP_APP_KEY   required. From Publish > Service status > API management.
+        ADP_ENDPOINT  optional, defaults to the international v2 endpoint.
     """
-    raise LLMError(
-        "TBC_LLM_PROVIDER=adp but _call_adp() is not implemented yet; "
-        "see technical_services_pill/llm.py"
+    import uuid
+
+    import httpx
+
+    app_key = os.environ.get("ADP_APP_KEY", "").strip()
+    if not app_key:
+        raise LLMError("ADP_APP_KEY is not set; copy it from the ADP console (Publish > API management)")
+
+    body = {
+        "RequestId": str(uuid.uuid4()),
+        "ConversationId": str(uuid.uuid4()),
+        "AppKey": app_key,
+        "VisitorId": "tbc-expert-capture",
+        "Contents": [{"Type": "text", "Text": f"{system_prompt}\n\n{user_prompt}"}],
+        "Incremental": True,
+        "Stream": "enable",
+    }
+    headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+    endpoint = os.environ.get("ADP_ENDPOINT", ADP_DEFAULT_ENDPOINT)
+
+    message_types: dict[str, str] = {}
+    deltas: dict[str, list[str]] = {}
+    order: list[str] = []
+    final_messages: list[dict[str, Any]] = []
+
+    try:
+        with httpx.Client(timeout=ADP_TIMEOUT_S, transport=transport) as client:
+            with client.stream("POST", endpoint, headers=headers, json=body) as resp:
+                if resp.status_code != 200:
+                    resp.read()
+                    raise LLMError(f"ADP returned HTTP {resp.status_code}: {resp.text[:300]}")
+                for line in resp.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        event = json.loads(line[5:].strip())
+                    except json.JSONDecodeError:
+                        continue
+                    etype = event.get("Type", "")
+                    if etype == "error" or event.get("Error"):
+                        raise LLMError(f"ADP error event: {json.dumps(event)[:300]}")
+                    if etype in ("message.added", "message.processing", "message.done"):
+                        msg = event.get("Message") or {}
+                        if msg.get("MessageId"):
+                            message_types[msg["MessageId"]] = msg.get("Type", "reply")
+                    elif etype == "text.delta":
+                        mid = event.get("MessageId", "_")
+                        if mid not in deltas:
+                            deltas[mid] = []
+                            order.append(mid)
+                        deltas[mid].append(event.get("Text", ""))
+                    elif etype == "response.completed":
+                        final_messages = (event.get("Response") or {}).get("Messages") or []
+    except httpx.HTTPError as exc:
+        raise LLMError(f"could not reach ADP at {endpoint}: {exc}") from exc
+
+    reply = "".join(
+        "".join(deltas[m]) for m in order if message_types.get(m, "reply") == "reply"
     )
+    if not reply.strip():
+        # Fall back to the completed record if the stream sent no deltas.
+        reply = "".join(
+            c.get("Text", "")
+            for m in final_messages if m.get("Type", "reply") == "reply"
+            for c in (m.get("Contents") or []) if c.get("Type", "text") == "text"
+        )
+    if not reply.strip():
+        raise LLMError("ADP returned an empty reply")
+    return reply
 
 
 def _parse_json(raw: str) -> dict[str, Any]:
     cleaned = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    if not cleaned.startswith("{") and "{" in cleaned and "}" in cleaned:
+        # Tolerate a sentence of preamble around the object.
+        cleaned = cleaned[cleaned.index("{"): cleaned.rindex("}") + 1]
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
