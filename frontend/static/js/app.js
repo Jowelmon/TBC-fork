@@ -27,6 +27,18 @@ const breadcrumbCurrent = document.getElementById('breadcrumb-current');
 const navItems = document.querySelectorAll('.nav-item');
 
 // ── Helpers ────────────────────────────────────────────────
+async function updateKbFooter() {
+  const footer = document.getElementById('kb-footer');
+  if (!footer) return;
+  try {
+    const stats = await api.get('/kb/stats');
+    const version = stats && stats.kb_version !== undefined ? stats.kb_version : 0;
+    footer.innerHTML = `v${version}<br><span class="nav-footer-sub">Keppel AI Harvest</span>`;
+  } catch (err) {
+    footer.innerHTML = `v0<br><span class="nav-footer-sub">KB unavailable</span>`;
+  }
+}
+
 function showToast(msg, type = 'info') {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -160,6 +172,7 @@ roleSelect.addEventListener('change', () => {
   state.role = roleSelect.value;
   localStorage.setItem('tbc_user', state.role);
   roleBadge.textContent = roleDisplayName(state.role);
+  updateKbFooter();
   renderScreen();
 });
 
@@ -173,6 +186,7 @@ navItems.forEach(item => {
 
 // ── Init ───────────────────────────────────────────────────
 navigate('dashboard');
+updateKbFooter();
 
 // Expose for debugging
 window.__app__ = { state, navigate, showToast, copyToClipboard };
