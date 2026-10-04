@@ -186,23 +186,27 @@ class AgentState:
     ) -> None:
         """GATHERING_EVIDENCE -> DIAGNOSING.
 
-        Allowed when min evidence count met OR max retrieval rounds elapsed
-        (spec §2). ``force`` lets a caller proceed regardless (e.g. test seed).
+        Insufficient evidence is routed to the escalation path instead of raising
+        a hard failure, keeping the workflow safe and resilient.
         """
         ready = (
             len(self.evidence) >= MIN_EVIDENCE_COUNT
             or self._retrieval_rounds >= 3
         )
-        if not (ready or force):
-            raise ValueError(
-                f"insufficient evidence: {len(self.evidence)} items, "
-                f"{self._retrieval_rounds} rounds (need {MIN_EVIDENCE_COUNT} items "
-                f"or 3 rounds)"
+        if ready or force:
+            self._transition(
+                AgentStateName.DIAGNOSING,
+                actor=actor,
+                reason=f"begin diagnosis ({len(self.evidence)} evidence items)",
             )
+            return
         self._transition(
-            AgentStateName.DIAGNOSING,
+            AgentStateName.ESCALATED,
             actor=actor,
-            reason=f"begin diagnosis ({len(self.evidence)} evidence items)",
+            reason=(
+                f"insufficient evidence: {len(self.evidence)} items, "
+                f"{self._retrieval_rounds} rounds (need {MIN_EVIDENCE_COUNT} items or 3 rounds)"
+            ),
         )
 
     def escalate_for_evidence(
