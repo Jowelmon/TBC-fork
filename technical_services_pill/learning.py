@@ -182,6 +182,7 @@ class LearningStore:
         proposal: dict[str, Any] = {
             "proposal_id": f"PROP-{uuid.uuid4().hex[:8].upper()}",
             "kind": "expert_capture",
+            "proposal_type": "EXPERT_CAPTURE",
             "feedback_id": None,
             "case_id": None,
             "asset_id": None,
@@ -195,6 +196,16 @@ class LearningStore:
             "provider": draft.get("provider"),
             "warnings": draft.get("warnings", []),
             "submitted_by": submitted_by,
+            "status": "pending",
+            "created_at": _now(),
+            "decided_by": None,
+            "decided_at": None,
+            "reason": None,
+            "kb_version": None,
+        }
+        self._proposals.append(proposal)
+        return proposal
+
     def record_expert_knowledge(self, knowledge: dict[str, Any], *, source: str = "expert_interview") -> dict[str, Any]:
         """Create a pending expert knowledge proposal for stewardship review."""
         proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"

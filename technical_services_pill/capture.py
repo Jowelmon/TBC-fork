@@ -12,7 +12,6 @@ Pipeline (each step is a boundary the model cannot cross):
    steward must approve it before it reaches the live knowledge base.
 
 The model drafts; people decide. Nothing in this module writes to the KB.
-"""Expert knowledge capture for AI HARVEST.
 
 This module is intentionally small and deterministic: it converts a narrative
 expert note into a structured knowledge item that can be reviewed, approved,
@@ -81,11 +80,14 @@ def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
             )
             continue
 
-        cause = str(item.get("likely_cause", "")).strip()
-        is_new = cause not in KNOWN_CAUSE_IDS
+        cause_raw = str(item.get("likely_cause", "")).strip()
+        canonical_cause = canonicalize_cause_id(cause_raw) or cause_raw
+        is_new = canonical_cause not in KNOWN_CAUSE_IDS
         if is_new:
-            slug = re.sub(r"[^a-z0-9_]+", "_", cause.lower().removeprefix("new:")).strip("_")
+            slug = re.sub(r"[^a-z0-9_]+", "_", cause_raw.lower().removeprefix("new:")).strip("_")
             cause = f"new:{slug or 'unnamed'}"
+        else:
+            cause = cause_raw
 
         kept.append({
             "symptom_pattern": str(item.get("symptom_pattern", "")).strip()[:300],
@@ -122,6 +124,7 @@ Senior technician: With a chiller tripping on low pressure, I check the refriger
 
 If the approach temperature keeps creeping up week by week, look at the condenser first. A fouled condenser is the usual story there, especially after the dry season.
 """
+
 from .cause_registry import canonicalize_cause_id
 
 _CANONICAL_PATTERN_HINTS: dict[str, list[str]] = {

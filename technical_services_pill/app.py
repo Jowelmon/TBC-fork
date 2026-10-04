@@ -147,28 +147,6 @@ def list_cases(user: str) -> dict:
     return {"cases": STORE.list()}
 
 
-@app.post("/capture/interview")
-def capture_interview(
-    expert_text: str,
-    user: str,
-    asset_id: str | None = None,
-    asset_type: str | None = None,
-) -> dict:
-    """Capture expert knowledge as structured evidence for stewardship review."""
-    _need(user, "submit_feedback")
-    if not expert_text or not expert_text.strip():
-        raise HTTPException(400, "expert_text is required")
-    from .learning import STORE as _LSTORE
-
-    knowledge = capture_expert_knowledge(
-        expert_text,
-        asset_type=asset_type or ("CRAH" if asset_id and asset_id.startswith("CRAH") else None),
-    )
-    knowledge["asset_id"] = asset_id
-    proposal = _LSTORE.record_expert_knowledge(knowledge, source="expert_interview")
-    return {"proposal": proposal, "knowledge": knowledge}
-
-
 @app.post("/cases/{case_id}/advance")
 def advance_case(case_id: str, user: str) -> dict:
     """Drive the agent loop to a terminal or waiting state in one call.
@@ -188,7 +166,7 @@ def advance_case(case_id: str, user: str) -> dict:
     state = _get_case(case_id)
 
     while state.current_state == AgentStateName.GATHERING_EVIDENCE:
-        from .confidence import score_confidence, evidence_coverage_score
+        from .confidence import derive_confidence_signals, score_confidence, evidence_coverage_score
         from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
         from .models import CandidateCause, Diagnosis, Recommendation
 
@@ -248,8 +226,14 @@ def advance_case(case_id: str, user: str) -> dict:
         from .learning import STORE as _LSTORE
 
         kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id))
-        conf = score_confidence(evidence_coverage=coverage, peer_agreement=1.0,
-                                kb_match=kb_match)
+        signals = derive_confidence_signals(state.evidence)
+        conf = score_confidence(
+            evidence_coverage=coverage,
+            peer_agreement=signals["peer_agreement"],
+            kb_match=kb_match,
+            data_staleness=signals["data_staleness"],
+            conflict_penalty=signals["conflict_penalty"],
+        )
         state.ai_hypothesis = generate_diagnostic_hypothesis(
             asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
             observations={
@@ -442,7 +426,7 @@ def post_outcome(
     result: str,
     user: str,
     root_cause_confirmed: str | None = None,
-    verified_by: str = "tech1",
+    verified_by: str | None = None,
     notes: str | None = None,
 ) -> dict:
     _need(user, "record_outcome")
@@ -466,7 +450,7 @@ def post_outcome(
             )
     outcome = Outcome(
         result=res, root_cause_confirmed=root_cause_confirmed,
-        verified_by=verified_by, notes=notes,
+        verified_by=verified_by or user, notes=notes,
     )
     try:
         state.record_outcome(outcome)
