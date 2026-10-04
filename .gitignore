@@ -18,3 +18,8 @@ env/
 *.swp
 .idea/
 .vscode/
+# Local SQLite state (persistence.py)
+data/
+
+# Secrets
+.env

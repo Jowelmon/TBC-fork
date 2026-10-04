@@ -448,7 +448,7 @@ def test_learning_loop():
     proposal = store.record_feedback(fb, confidence=0.55, action_taken="bus_reseat")
     _check("proposal created (pending)", proposal["status"] == "pending")
     # F2: approve the proposal to ingest into the live KB
-    store.approve_proposal(proposal["proposal_id"], decided_by="steward1")
+    store.approve_proposal(proposal["proposal_id"], decided_by="steward2")
     _check("validated case appended", len(store.validated) == base_cases + 1)
     _check("corrected flag False (cause agreed)", proposal["corrected"] is False)
 
@@ -494,7 +494,7 @@ def test_learning_loop():
         state=s,
     )
     # F2: approve the proposal to ingest into the live KB
-    LEARNING_STORE.approve_by_feedback_id(fb_id, decided_by="steward1")
+    LEARNING_STORE.approve_by_feedback_id(fb_id, decided_by="steward2")
     _check("submit_feedback promoted a validated case",
            len(LEARNING_STORE.validated) == live_before + 1)
     _check("feedback id returned", fb_id.startswith("FB-"))

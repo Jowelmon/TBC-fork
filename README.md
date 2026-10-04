@@ -4,11 +4,12 @@ A deterministic, audit-ready agent for diagnosing technical-services faults on
 critical data-center assets (CRAH units, chillers, pumps, UPS). Built for the
 Keppel **AI HARVEST** hackathon.
 
-> **Design principle:** the agent is *LLM-independent and fully deterministic*.
-> Given the same observation + evidence it always reaches the same diagnosis,
-> the same recommendation, and the same guardrail verdict — so every run is
-> auditable and unit-testable. The LLM is an optional narrative layer; the
-> safety-critical logic never depends on it.
+> **Design principle: AI in the harvest, determinism in the execution.**
+> An LLM turns expert interviews into draft knowledge (see *Expert Knowledge
+> Capture*), but nothing it drafts goes live until a second knowledge steward
+> approves it. Diagnosis itself is deterministic: the same observation and
+> evidence always yield the same diagnosis, recommendation and guardrail
+> verdict, so every run is auditable and unit-testable.
 
 ---
 
@@ -103,11 +104,11 @@ make demo
 make serve
 ```
 
-### Option C - Frontend Demo UI
+### Option C - Frontend Demo UI (what judges should run)
 
 ```bash
-pip install -r requirements.txt jinja2
-PYTHONPATH=. uvicorn frontend.serve:app --port 8000
+pip install -r requirements.txt
+make serve          # = PYTHONPATH=. uvicorn frontend.serve:app --port 8000
 ```
 
 Open `http://localhost:8000/ui`. On first load, **3 demo cases are
@@ -115,13 +116,19 @@ auto-seeded** (one CLOSED, one ESCALATED, one AWAITING_APPROVAL) so the
 dashboard is never empty. Use the role switcher (top right) to see RBAC
 in action. See `frontend/README.md` for details.
 
+State persists to `data/tbc.sqlite` across restarts (cases, proposals, KB
+versions; audit chains are re-verified on load). Run `make reset` for a
+clean demo, or set `TBC_PERSIST=0` to keep everything in memory.
+
 ### Makefile Targets
 
 | Command | Description |
 |---|---|
-| `make test` | Run the 62-assertion unit test suite |
-| `make demo` | Run the 3-case end-to-end demo |
-| `make serve` | Start FastAPI on `localhost:8000` with `--reload` |
+| `make install` | Install runtime and test dependencies |
+| `make test` | Run the full pytest suite |
+| `make demo` | Run the end-to-end console demo |
+| `make serve` | Start the API and UI on `localhost:8000` (open `/ui`) |
+| `make reset` | Wipe persisted state for a clean demo |
 | `make docker-up` | Build + start the API container in background |
 | `make docker-demo` | Run the demo inside a container |
 | `make docker-down` | Stop and remove containers |
@@ -320,30 +327,73 @@ write-back** loop (spec §7, enhanced in F2):
 5. An admin can **roll back** the KB to a prior version via `/kb/rollback/{version}`,
    removing all cases added after that version.
 
-**Demo proof:** the learning-loop case shows `kb_match` rising from **0.24 →
-1.00** and confidence from **0.51 → 0.70** after one feedback cycle.
+**Demo proof:** the learning-loop case shows `kb_match` rising from **0.73 →
+1.00** and confidence from **0.63 → 0.70** after one approved feedback cycle.
+
+**Separation of actors:** whoever proposes a change can never approve it.
+`approve_proposal` returns 403 if the approver is the proposer, and the
+proposer is always the authenticated caller (a client-supplied
+`submitted_by` is ignored). Demo users `steward1` and `steward2` exist so
+the second-reviewer rule can be shown live.
+
+## Expert Knowledge Capture (LLM drafts, steward approves)
+
+The challenge's hardest requirement is capturing know-how that was never
+written down. The **Capture** screen (`POST /capture/interview`) takes an
+interview with an experienced technician and runs:
+
+```
+interview transcript
+   │  G7: instruction-like text redacted before any model sees it
+   ▼
+LLM extraction (llm.py)  ──▶  symptom, likely cause, checks, never-do,
+   │                          escalate-when, verbatim evidence quote
+   ▼
+grounding check: any item whose quote is not in the transcript is DROPPED
+cause check:     causes outside the known universe are flagged "new:<slug>"
+   ▼
+pending proposal ──▶ a DIFFERENT knowledge steward approves ──▶ live KB
+                                                     (version bump, rollback-able)
+```
+
+Approved heuristics on known causes enter the validated library, raising
+that cause's empirical prior and so the confidence of future diagnoses.
+Heuristics proposing a *new* cause stay as knowledge only: the engine cannot
+diagnose a cause until an engineer adds a decision-tree branch for it.
+
+**Providers** (`TBC_LLM_PROVIDER`):
+
+| Value | Behaviour |
+|---|---|
+| `mock` (default) | Deterministic offline extractor, so the demo runs without keys. Labelled "Offline mock model" in the UI. |
+| `adp` | Tencent Cloud Agent Development Platform, v2 Chat API over HTTP SSE (`llm._call_adp()`). Failures return HTTP 502, never a silent fallback. |
+
+To use ADP: `cp .env.example .env`, set `TBC_LLM_PROVIDER=adp` and paste your
+AppKey (ADP console: your app > Publish > Service status > API management >
+Copy) into `ADP_APP_KEY`. `.env` is gitignored. The top bar shows which model
+is active.
+
+**Demo guide:** the "Demo guide" button in the top bar walks an eight-step
+tour of the whole loop, setting the role and screen for each step.
 
 ## RBAC Roles
 
 | Role | Key Permissions |
 |---|---|
 | `technician` | Create cases, gather evidence, read diagnosis |
-| `asset_ops_manager` | Approve/reject/modify recommendations, create work orders, record outcomes |
-| `knowledge_steward` | Submit feedback, manage KB |
+| `asset_ops_manager` | Approve/reject/modify recommendations, create work orders, record outcomes, capture expert interviews |
+| `knowledge_steward` | Submit feedback, capture expert interviews, approve another steward's proposals |
 | `auditor` | Read audit trace, all cases (read-only) |
 | `admin` | All permissions |
 
 ## Testing
 
 ```bash
-# Standalone runner (no pytest needed)
-make test
-
-# Or with pytest
-PYTHONPATH=. python3.11 -m pytest tests/test_agent_state.py -q
+make test        # = PYTHONPATH=. python3 -m pytest tests/ -q
 ```
 
-**29 tests across 20 test functions**, mapping to spec §8 test cases + F1-F7 acceptance tests:
+**43 tests**, mapping to spec §8 test cases, the F1-F7 acceptance tests, and
+the governance, persistence and expert-capture tests added since:
 
 | Test | Spec | Verifies |
 |---|---|---|

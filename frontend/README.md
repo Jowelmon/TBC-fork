@@ -38,7 +38,7 @@ modify any backend files.
 | # | Screen | API Endpoints |
 |---|--------|--------------|
 | 1 | Asset and Fault Dashboard | `GET /cases`, `GET /cases/{id}` |
-| 2 | AI Diagnosis and Recommendation | `GET /cases/{id}` |
+| 2 | Diagnosis and Recommendation | `GET /cases/{id}` |
 | 3 | AOM Decision | `POST /cases/{id}/approval` |
 | 4 | Outcome and Feedback | `POST /cases/{id}/work-order`, `POST /cases/{id}/outcome`, `POST /cases/{id}/feedback` |
 | 5 | Pill Summary and Governance | `GET /kb/stats`, `GET /audit/trace`, `GET /kb/queue` (stub) |

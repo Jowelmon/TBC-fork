@@ -26,6 +26,18 @@ from typing import Any
 
 from .models import FeedbackRecord, ValidatedCase
 
+SEED_KB_MAJOR = 1
+SEED_KB_MINOR = 3
+
+
+class SelfApprovalError(ValueError):
+    """Raised when the approver of a knowledge proposal is its proposer."""
+
+
+def kb_version_label(approved_updates: int) -> str:
+    """Map the internal approval counter to the displayed semantic version."""
+    return f"{SEED_KB_MAJOR}.{SEED_KB_MINOR + approved_updates}.0"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -62,6 +74,8 @@ class LearningStore:
         self._proposals: list[dict[str, Any]] = []
         self._expert_knowledge: list[dict[str, Any]] = []
         self._kb_version: int = 0  # 0 = seeded registry only
+        # Expert heuristics captured from interviews, live once approved.
+        self.expert_heuristics: list[dict[str, Any]] = []
         self._seed_from_registry()
 
     # ------------------------------------------------------------------ #
@@ -127,6 +141,7 @@ class LearningStore:
         proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"
         proposal: dict[str, Any] = {
             "proposal_id": proposal_id,
+            "kind": "outcome_feedback",
             "proposal_type": "CASE_FEEDBACK",
             "feedback_id": fb.feedback_id,
             "case_id": fb.case_id,
@@ -150,6 +165,36 @@ class LearningStore:
         self._proposals.append(proposal)
         return proposal
 
+    def record_expert_capture(
+        self,
+        *,
+        draft: dict[str, Any],
+        submitted_by: str,
+        expert_name: str,
+        expert_role: str,
+        asset_type: str,
+    ) -> dict[str, Any]:
+        """Queue AI-drafted expert knowledge as a pending proposal.
+
+        Nothing reaches the live KB until a different knowledge steward
+        approves it, exactly like outcome feedback.
+        """
+        proposal: dict[str, Any] = {
+            "proposal_id": f"PROP-{uuid.uuid4().hex[:8].upper()}",
+            "kind": "expert_capture",
+            "feedback_id": None,
+            "case_id": None,
+            "asset_id": None,
+            "asset_type": asset_type,
+            "confirmed_cause": ", ".join(
+                sorted({h["likely_cause"] for h in draft["heuristics"]})
+            ),
+            "expert_name": expert_name,
+            "expert_role": expert_role,
+            "heuristics": draft["heuristics"],
+            "provider": draft.get("provider"),
+            "warnings": draft.get("warnings", []),
+            "submitted_by": submitted_by,
     def record_expert_knowledge(self, knowledge: dict[str, Any], *, source: str = "expert_interview") -> dict[str, Any]:
         """Create a pending expert knowledge proposal for stewardship review."""
         proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"
@@ -206,11 +251,19 @@ class LearningStore:
             raise ValueError(f"proposal {proposal_id} not found")
         if p["status"] != "pending":
             raise ValueError(f"proposal {proposal_id} is {p['status']}, not pending")
+        if decided_by == p.get("submitted_by"):
+            raise SelfApprovalError(
+                f"{decided_by} proposed {proposal_id} and cannot also approve it; "
+                "a different knowledge steward must review it"
+            )
         p["status"] = "approved"
         p["decided_by"] = decided_by
         p["decided_at"] = _now()
         self._kb_version += 1
         p["kb_version"] = self._kb_version
+        if p.get("kind") == "expert_capture":
+            self._ingest_expert_capture(p)
+            return p
 
         if p.get("proposal_type") == "EXPERT_CAPTURE":
             vc = ValidatedCase(
@@ -255,6 +308,51 @@ class LearningStore:
         p["validated_case_id"] = vc.id
         return p
 
+    def _ingest_expert_capture(self, p: dict[str, Any]) -> None:
+        """Make approved expert heuristics live.
+
+        Heuristics on a known cause also enter the validated library, which
+        raises that cause's empirical prior and so the confidence of future
+        diagnoses that land on it. Heuristics proposing a new cause are kept
+        as knowledge only: a new cause needs an engineered decision-tree
+        branch before the engine can ever diagnose it.
+        """
+        from .decision_tree import KNOWN_CAUSE_IDS
+
+        added: list[str] = []
+        for i, h in enumerate(p["heuristics"]):
+            hid = f"KB-EXP-{p['proposal_id'][5:]}-{i + 1}"
+            entry = {
+                **h,
+                "id": hid,
+                "expert_name": p["expert_name"],
+                "expert_role": p["expert_role"],
+                "asset_type": p["asset_type"],
+                "proposal_id": p["proposal_id"],
+                "approved_by": p["decided_by"],
+                "kb_version": self._kb_version,
+            }
+            self.expert_heuristics.append(entry)
+            added.append(hid)
+            if h["likely_cause"] in KNOWN_CAUSE_IDS:
+                self._ingest(ValidatedCase(
+                    id=hid,
+                    case_id="EXPERT",
+                    asset_id="EXPERT",
+                    asset_type=p["asset_type"],
+                    fault_signature=h["symptom_pattern"].lower(),
+                    proposed_cause=h["likely_cause"],
+                    confirmed_cause=h["likely_cause"],
+                    action_taken="; ".join(h.get("checks", [])),
+                    outcome="resolved",
+                    confidence=0.0,
+                    validated_by=p["expert_name"],
+                    corrected=False,
+                    created_at=_now(),
+                    kb_version=self._kb_version,
+                ))
+        p["expert_heuristic_ids"] = added
+
     def approve_by_feedback_id(self, feedback_id: str, *, decided_by: str) -> dict[str, Any]:
         """Convenience: approve the proposal created from a given feedback_id."""
         p = self._find_by_feedback_id(feedback_id)
@@ -298,6 +396,9 @@ class LearningStore:
             if p.get("kb_version") and p["kb_version"] > target_version:
                 p["status"] = "rolled_back"
                 rolled_back.append(p["proposal_id"])
+        self.expert_heuristics = [
+            h for h in self.expert_heuristics if h["kb_version"] <= target_version
+        ]
         self._kb_version = target_version
         return {
             "rolled_back_to": target_version,
@@ -307,6 +408,11 @@ class LearningStore:
 
     def get_kb_version(self) -> int:
         return self._kb_version
+
+    def get_kb_version_label(self) -> str:
+        """Human-facing semantic version. Seed knowledge is 1.3.0; each
+        steward-approved proposal bumps the minor version (1.3.0 -> 1.4.0)."""
+        return kb_version_label(self._kb_version)
 
     # ------------------------------------------------------------------ #
     def get_similar(self, fault_signature: str, asset_type: str | None = None, k: int = 3) -> list[ValidatedCase]:
@@ -355,10 +461,14 @@ class LearningStore:
     def stats(self) -> dict[str, Any]:
         return {
             "total_validated_cases": len(self.validated),
-            "feedback_added": sum(1 for vc in self.validated if vc.case_id != "SEED"),
+            "feedback_added": sum(
+                1 for vc in self.validated if vc.case_id not in ("SEED", "EXPERT")
+            ),
+            "expert_heuristics": len(self.expert_heuristics),
             "corrected_count": sum(1 for vc in self.validated if vc.corrected),
             "pending_proposals": len(self.list_pending_proposals()),
             "kb_version": self._kb_version,
+            "kb_version_label": self.get_kb_version_label(),
             "expert_knowledge_entries": len(self._expert_knowledge),
             "cause_priors": {
                 cause: {"confirmed": st["confirmed"], "total": st["total"], "rate": round(st["confirmed"] / st["total"], 3)}

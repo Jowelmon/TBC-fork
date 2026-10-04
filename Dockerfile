@@ -9,8 +9,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code only
 COPY technical_services_pill/ ./technical_services_pill/
+COPY frontend/ ./frontend/
 
 EXPOSE 8000
 
-# Default: run the API server. Override CMD to run demo.
-CMD ["uvicorn", "technical_services_pill.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default: run the API + UI (open /ui). Override CMD to run demo.
+CMD ["uvicorn", "frontend.serve:app", "--host", "0.0.0.0", "--port", "8000"]

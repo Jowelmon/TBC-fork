@@ -10,7 +10,7 @@ specifics). It models the CRAH "temperature measurement missing" scenario:
 
 * ``CRAH-DC1-02`` — the entire Modbus bus/controller is unreachable, so ALL
   tags (``SA-TEMP-02`` + ``RA-TEMP-02``) are dead.
-  => escalation scenario: ``communication_bus_controller_failure`` (spec TC2).
+  => escalation scenario: ``comm_bus_failure`` (spec TC2).
 
 No external I/O, no network — fully deterministic. ``get_registry()`` returns
 the whole structure so tools can read it.
@@ -385,7 +385,7 @@ KNOWLEDGE_BASE: dict[str, list[dict]] = {
         },
         {
             "id": "KB-CM2",
-            "cause": "communication_bus_controller_failure",
+            "cause": "comm_bus_failure",
             "decision_tree_node": "Q2",
             "description": "All tags on the bus dead; controller unreachable.",
             "action_hint": "escalate_bms_vendor",
@@ -422,7 +422,7 @@ KNOWLEDGE_BASE: dict[str, list[dict]] = {
             "asset_type": "CRAH",
             "fault_signature": "all_tags_dead bus_unreachable "
                                 "controller_unreachable",
-            "root_cause": "communication_bus_controller_failure",
+            "root_cause": "comm_bus_failure",
             "action_taken": "controller_swap_and_bus_re_init",
             "outcome": "resolved",
             "validated": True,
