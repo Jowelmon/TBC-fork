@@ -8,16 +8,13 @@ install:  ## Install runtime + test dependencies
 test:  ## Run the repository unit test suite
 	PYTHONPATH=. python -m pytest -q tests
 
-test:  ## Run the full test suite
-	PYTHONPATH=. python3 -m pytest tests/ -q
-
 demo:  ## Run the end-to-end console demo
 	PYTHONPATH=. python3 -m technical_services_pill.demo
 
 serve:  ## Start the app with the UI on :8000 (open http://localhost:8000/ui)
 	PYTHONPATH=. uvicorn frontend.serve:app --port 8000
 
-reset:  ## Wipe persisted state (data/tbc.sqlite) for a clean demo
+reset:  ## Remove app-level snapshots (keeps the separate per-case SQLite store)
 	rm -f data/tbc.sqlite
 
 docker-up:  ## Build and start the API container

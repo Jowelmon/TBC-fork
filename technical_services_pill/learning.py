@@ -108,6 +108,10 @@ class LearningStore:
             self._ingest(vc)
 
     def _ingest(self, vc: ValidatedCase) -> None:
+        from .cause_registry import canonicalize_cause_id
+
+        vc.proposed_cause = canonicalize_cause_id(vc.proposed_cause) or vc.proposed_cause
+        vc.confirmed_cause = canonicalize_cause_id(vc.confirmed_cause) or vc.confirmed_cause
         self.validated.append(vc)
         st = self._cause_stats.setdefault(vc.confirmed_cause, {"confirmed": 0, "total": 0})
         st["total"] += 1

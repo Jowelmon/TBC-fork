@@ -1,12 +1,15 @@
 """End-to-end demo of the Technical Services Fault Diagnosis lifecycle.
 
-Runs the full agent loop for both demo CRAH units:
+Runs the core lifecycle, learning loop, multi-asset route, and an AI HARVEST
+expert-capture-to-reuse scenario:
 
   * CRAH-DC1-01 / SA-TEMP-01  — happy path: sensor_hardware_failure ->
       recommendation (replace sensor) -> manager APPROVE -> work order ->
       outcome resolved -> feedback -> CLOSED.
   * CRAH-DC1-02 / SA-TEMP-02  — escalation: comm_bus_failure -> guardrail
       G3 escalates -> expert closes.
+  * AI HARVEST                 — grounded interview -> second-steward approval
+      -> matching expert heuristic reused by a new diagnosis -> validated outcome.
 
 Deterministic, prints a readable trace. Run:
 
@@ -413,19 +416,136 @@ def _run_multi_asset() -> bool:
     return ok and loop_ok
 
 
+def _run_expert_harvest() -> bool:
+    """Demonstrate expert capture, steward approval, reuse, and feedback."""
+    from fastapi.testclient import TestClient
+
+    from .app import app
+    from .capture import SAMPLE_INTERVIEW
+
+    _hr("CASE 5 — AI HARVEST: expert interview to reused knowledge")
+    client = TestClient(app)
+
+    response = client.post(
+        "/capture/interview",
+        params={"user": "steward1"},
+        json={
+            "expert_name": "R. Tan",
+            "expert_role": "Senior M&E Technician",
+            "asset_type": "CRAH",
+            "transcript": SAMPLE_INTERVIEW,
+        },
+    )
+    response.raise_for_status()
+    draft = response.json()
+    print(
+        f"1. Interview extracted by {draft['provider']}: "
+        f"{len(draft['heuristics'])} grounded heuristics, "
+        f"{draft['dropped']} dropped"
+    )
+    for heuristic in draft["heuristics"]:
+        print(f"   {heuristic['likely_cause']}: {heuristic['evidence_quote']}")
+
+    approval = client.post(
+        f"/kb/proposals/{draft['proposal_id']}/approve",
+        params={"user": "steward2"},
+    )
+    approval.raise_for_status()
+    print(
+        f"2. Different steward approved {draft['proposal_id']}; "
+        f"KB version {approval.json()['kb_version']}"
+    )
+
+    created = client.post("/cases", params={
+        "asset_id": "CRAH-DC1-01",
+        "sensor_id": "SA-TEMP-01",
+        "user": "tech1",
+        "reading_status": "absent",
+    })
+    created.raise_for_status()
+    case_id = created.json()["case_id"]
+    advanced = client.post(
+        f"/cases/{case_id}/advance", params={"user": "tech1"},
+    )
+    advanced.raise_for_status()
+    case = client.get(f"/cases/{case_id}", params={"user": "tech1"})
+    case.raise_for_status()
+    cause_id = case.json()["diagnosis"]["top_cause_id"]
+
+    reused = client.get(
+        f"/cases/{case_id}/expert-knowledge", params={"user": "tech1"},
+    )
+    reused.raise_for_status()
+    matches = reused.json()["matches"]
+    if not matches:
+        print(f"3. No approved expert heuristic matched {cause_id}; demo failed")
+        return False
+    match = matches[0]
+    print(
+        f"3. New incident diagnosed as {cause_id}; reused {match['knowledge_id']} "
+        f"from {match['expert_name']} (KB {match['kb_version_label']})"
+    )
+
+    decision = client.post(
+        f"/cases/{case_id}/approval",
+        params={"user": "mgr1", "decision": "approve",
+                "rationale": "Approved after reviewing expert context and guardrails"},
+    )
+    decision.raise_for_status()
+    work_order = client.post(
+        f"/cases/{case_id}/work-order", params={"user": "mgr1"},
+    )
+    work_order.raise_for_status()
+    outcome = client.post(
+        f"/cases/{case_id}/outcome",
+        params={"user": "tech1", "result": "resolved",
+                "root_cause_confirmed": cause_id,
+                "notes": "Reading restored after the recommended maintenance check"},
+    )
+    outcome.raise_for_status()
+    feedback = client.post(
+        f"/cases/{case_id}/feedback", params={"user": "mgr1"},
+    )
+    feedback.raise_for_status()
+    print(
+        f"4. Human approved, work order {work_order.json()['work_order_id']} "
+        f"resolved; feedback {feedback.json()['feedback_id']} queued"
+    )
+
+    queue = client.get("/kb/queue", params={"user": "steward1"})
+    queue.raise_for_status()
+    feedback_proposal = next(
+        (item for item in queue.json()["queue"]
+         if item.get("feedback_id") == feedback.json()["feedback_id"]),
+        None,
+    )
+    if feedback_proposal is None:
+        print("5. Feedback proposal missing from steward queue; demo failed")
+        return False
+    learned = client.post(
+        f"/kb/proposals/{feedback_proposal['proposal_id']}/approve",
+        params={"user": "steward1"},
+    )
+    learned.raise_for_status()
+    print(f"5. Steward validated outcome; KB is now {learned.json()['kb_version']}")
+    return True
+
+
 def main() -> None:
     c1 = _run_happy_path()
     c2 = _run_escalation()
     c3, conf1, conf2 = _run_learning_loop()
     c4 = _run_multi_asset()
+    c5 = _run_expert_harvest()
     _hr("SUMMARY")
     print(f"Case 1 final state: {c1}  (expected CLOSED)")
     print(f"Case 2 final state: {c2}  (expected ESCALATED)")
     print(f"Case 3 learning:    {c3}  (confidence {conf1:.2f} -> {conf2:.2f})")
     print(f"Case 4 multi-asset: {'PASSED' if c4 else 'FAILED'}")
+    print(f"Case 5 AI HARVEST:  {'PASSED' if c5 else 'FAILED'}")
     ok = (c1 == AgentStateName.CLOSED.value
           and c2 == AgentStateName.ESCALATED.value
-          and c3 == "LEARNED" and c4)
+          and c3 == "LEARNED" and c4 and c5)
     print(f"DEMO {'PASSED' if ok else 'FAILED'}")
 
 

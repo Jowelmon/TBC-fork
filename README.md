@@ -18,7 +18,7 @@ Keppel **AI HARVEST** hackathon.
 ```
                          ┌──────────────────────────────────┐
                          │           FastAPI App             │
-                         │   (14 endpoints, RBAC-enforced)   │
+                         │      (RBAC-enforced routes)       │
                          └───────────────┬──────────────────┘
                                          │ HTTP
          ┌───────────────────────────────┼───────────────────────────┐
@@ -62,12 +62,12 @@ work order → outcome → feedback → **validated case written back to KB**
 | `confidence.py` | ~40 | Confidence scorer: `w1·coverage + w2·peer + w3·kb_match − w4·staleness − w5·conflict`. |
 | `tools.py` | ~470 | Agent tool layer: evidence gatherer, diagnosis orchestrator, guardrail checker, recommendation proposer, work-order creator, feedback submitter. |
 | `rbac.py` | ~117 | 5-role RBAC matrix (technician, asset_ops_manager, knowledge_steward, auditor, admin). Permission checks via `can()` / `require()`. |
-| `store.py` | ~104 | In-memory `CaseStore` with hash-chain snapshot / audit trace. |
+| `store.py` | ~104 | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace. |
 | `learning.py` | ~120 | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back. |
 | `audit.py` | ~48 | `canonical_json`, SHA-256 `compute_hash`, `GENESIS_HASH` for hash-chain integrity. |
 | `mock_registry.py` | ~363 | Demo data: 2 CRAH assets, seed KB (3 validated cases), maintenance history, sensor metadata, BMS status. |
-| `app.py` | ~310 | FastAPI app with 14 endpoints, RBAC enforcement, agent-loop driver. |
-| `demo.py` | ~212 | 3-case end-to-end demo: happy path → CLOSED, bus failure → ESCALATED, learning loop (kb_match 0.24 → 1.00). |
+| `app.py` | — | FastAPI app with RBAC, persistence lifecycle, and the agent-loop driver. |
+| `demo.py` | — | End-to-end lifecycle, multi-asset routing, and AI HARVEST capture-to-reuse demo. |
 
 ## Quick Start
 
@@ -81,7 +81,7 @@ docker compose up --build -d
 # Interactive docs at http://localhost:8000/docs
 # Health check at http://localhost:8000/kb/stats
 
-# Run the 3-case demo inside a container
+# Run the end-to-end demo, including the AI HARVEST loop, inside a container
 docker compose run --rm demo
 
 # Teardown
@@ -97,7 +97,7 @@ pip install -r requirements.txt
 # Run the test suite
 make test
 
-# Run the 3-case demo
+# Run the console demo, including expert capture → approval → reuse
 make demo
 
 # Start the API server with hot reload
@@ -111,14 +111,17 @@ pip install -r requirements.txt
 make serve          # = PYTHONPATH=. uvicorn frontend.serve:app --port 8000
 ```
 
-Open `http://localhost:8000/ui`. On first load, **3 demo cases are
-auto-seeded** (one CLOSED, one ESCALATED, one AWAITING_APPROVAL) so the
-dashboard is never empty. Use the role switcher (top right) to see RBAC
-in action. See `frontend/README.md` for details.
+Open `http://localhost:8000/ui`, then click **Seed Demo Cases** to populate
+the dashboard with one CLOSED, one ESCALATED, and one AWAITING_APPROVAL
+example. Cases are not seeded automatically. Use the role switcher (top
+right) to see RBAC in action. See `frontend/README.md` for details.
 
-State persists to `data/tbc.sqlite` across restarts (cases, proposals, KB
-versions; audit chains are re-verified on load). Run `make reset` for a
-clean demo, or set `TBC_PERSIST=0` to keep everything in memory.
+The FastAPI app restores state at startup and snapshots successful mutations
+to `data/tbc.sqlite` (cases, proposals, KB versions, tool audit log); audit
+chains are re-verified on load. This applies to both the API and UI entry
+points. `make reset` removes this snapshot database; the separate per-case
+SQLite store remains intact. Set `TBC_PERSIST=0` to disable these app-level
+snapshots.
 
 ### Makefile Targets
 
@@ -142,6 +145,7 @@ clean demo, or set `TBC_PERSIST=0` to keep everything in memory.
 | `POST` | `/cases` | Create a new case from an observation (triggers agent) |
 | `GET` | `/cases` | List all cases |
 | `GET` | `/cases/{id}` | Get case snapshot (full agent state) |
+| `GET` | `/cases/{id}/expert-knowledge` | Show approved interview heuristics matching the diagnosed cause and asset type |
 | `POST` | `/cases/{id}/advance` | Drive the agent loop one transition forward |
 | `GET` | `/cases/{id}/evidence` | Retrieve gathered evidence |
 | `GET` | `/cases/{id}/diagnosis` | Retrieve diagnosis + candidate causes |
@@ -360,6 +364,10 @@ Approved heuristics on known causes enter the validated library, raising
 that cause's empirical prior and so the confidence of future diagnoses.
 Heuristics proposing a *new* cause stay as knowledge only: the engine cannot
 diagnose a cause until an engineer adds a decision-tree branch for it.
+On the diagnosis screen, **Expert Knowledge Reused** shows matching approved
+heuristics with the source expert, knowledge ID, KB version, interview quote,
+and checks. A match requires the same asset type and diagnosed cause; the
+decision tree and guardrails remain authoritative.
 
 **Providers** (`TBC_LLM_PROVIDER`):
 
@@ -375,6 +383,13 @@ is active.
 
 **Demo guide:** the "Demo guide" button in the top bar walks an eight-step
 tour of the whole loop, setting the role and screen for each step.
+
+**Console AI HARVEST proof:** `make demo` also runs a complete interview-to-
+reuse scenario: the offline mock extractor drafts grounded heuristics, a
+different steward approves them, a new CRAH case reuses matching expert
+knowledge, a manager approves the recommendation, and a steward validates
+the maintenance outcome into the KB. Set `TBC_LLM_PROVIDER=adp` to use the
+configured Tencent ADP provider instead of the default offline mock.
 
 ## RBAC Roles
 
@@ -392,8 +407,8 @@ tour of the whole loop, setting the role and screen for each step.
 make test        # = PYTHONPATH=. python3 -m pytest tests/ -q
 ```
 
-**43 tests**, mapping to spec §8 test cases, the F1-F7 acceptance tests, and
-the governance, persistence and expert-capture tests added since:
+**50 tests** (verified with `make test`) cover spec §8 cases, F1-F7
+acceptance, governance, persistence, and expert capture:
 
 | Test | Spec | Verifies |
 |---|---|---|
@@ -421,6 +436,8 @@ the governance, persistence and expert-capture tests added since:
 | `test_f2_rollback_removes_approved_cases` | F2 | Rollback removes cases added after target version |
 | `test_f2_rbac_kb_queue_requires_steward` | F2 | Only steward/admin can view the queue |
 | `test_f2_rbac_rollback_requires_steward` | F2 | Only admin can rollback |
+| `test_fastapi_runtime_restores_and_saves_state` | Persistence | FastAPI restores at startup and snapshots successful mutations |
+| `test_case_surfaces_approved_expert_knowledge_for_matching_diagnosis` | AI HARVEST | Diagnosis exposes approved heuristics matching cause + asset type |
 | `test_f3_refrigerant_leak_routes_to_awaiting_approval` | F3 | Chiller refrigerant leak → AWAITING_APPROVAL (not ESCALATED) |
 | `test_f3_guardrail_names_g2b` | F3 | G2b in rule_ids, requires_approval=True, must_escalate=False |
 | `test_enforced_capabilities_are_declared` | RBAC | Declared capabilities match enforced set |
@@ -451,12 +468,13 @@ technical_services_pill/
 ├── confidence.py        # W1-W5 scoring formula
 ├── tools.py            # Agent tool layer
 ├── rbac.py             # 5-role RBAC matrix
-├── store.py            # CaseStore (in-memory)
+├── store.py            # SQLite-backed CaseStore + in-memory cache
 ├── learning.py         # LearningStore (validated KB + Jaccard RAG)
 ├── audit.py             # SHA-256 hash-chain primitives
 ├── mock_registry.py     # Demo data: assets, seed KB, telemetry
-├── app.py               # FastAPI: 14 endpoints
-├── demo.py              # 3-case end-to-end demo
+├── persistence.py       # FastAPI lifecycle snapshots for cases, KB, proposals, audit
+├── app.py               # FastAPI routes, RBAC, persistence lifecycle
+├── demo.py              # End-to-end demo, including AI HARVEST
 └── __init__.py          # Public API exports
 
 tests/

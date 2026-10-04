@@ -558,6 +558,13 @@ textarea:focus-visible,
 .kh-quote { margin: 10px 0 0; padding: 6px 12px; border-left: 3px solid var(--purple); color: var(--text-bright); font-style: italic; font-size: 14px; }
 .kh-new { font-size: 12px; color: var(--yellow); }
 
+/* Approved interview heuristics reused as diagnosis context */
+.expert-reuse-intro { margin-bottom: 12px; }
+.expert-match { padding: 14px; border: 1px solid var(--purple); border-radius: var(--radius); background: var(--purple-bg); margin-bottom: 12px; }
+.expert-meta { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; font-size: 13px; }
+.expert-list { margin: 4px 0 8px 20px; }
+.expert-quote { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid var(--purple); color: var(--text-bright); font-style: italic; }
+
 /* Accessibility: skip link, keyboard focus on clickable rows */
 .skip-link { position: absolute; left: -9999px; top: 8px; z-index: 1000; background: var(--blue); color: #fff; padding: 8px 14px; border-radius: var(--radius); }
 .skip-link:focus { left: 8px; }

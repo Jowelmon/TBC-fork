@@ -288,7 +288,10 @@ export function renderDiagnosis(el, state, h) {
 
   async function load() {
     try {
-      const s = await api.get(`/cases/${cid}`);
+      const [s, expertKnowledge] = await Promise.all([
+        api.get(`/cases/${cid}`),
+        api.get(`/cases/${cid}/expert-knowledge`),
+      ]);
       const obs = s.observation || {};
       const cb = confBand(s.confidence);
 
@@ -318,6 +321,8 @@ export function renderDiagnosis(el, state, h) {
           <div id="diag-body"></div>
         </div></div>
       </div>`;
+
+      html += `<div class="card"><div class="card-header"><h3>Expert Knowledge Reused</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="expert-knowledge-body"></div></div>`;
 
       // Confidence breakdown
       html += `<div class="card"><div class="card-header"><h3>Confidence Breakdown (W1-W5)</h3></div><div class="card-body" id="conf-body"></div></div>`;
@@ -380,6 +385,35 @@ export function renderDiagnosis(el, state, h) {
           ${diag.kb_refs && diag.kb_refs.length ? `<div class="muted" style="margin-bottom:8px">KB: ${diag.kb_refs.map(r => `<code>${esc(r)}</code>`).join(' ')}</div>` : ''}
           <h4 style="margin:14px 0 8px">Candidate Causes</h4>
           ${causes}
+        `;
+      }
+
+      const expertBody = document.getElementById('expert-knowledge-body');
+      if (!s.diagnosis) {
+        expertBody.innerHTML = `<div class="banner banner-info"><p>Approved expert heuristics will appear here when they match the diagnosed cause and asset type.</p></div>`;
+      } else if (!expertKnowledge.matches.length) {
+        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the decision-tree cause <code>${esc(expertKnowledge.cause_id || 'unresolved')}</code>.</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
+      } else {
+        expertBody.innerHTML = `
+          <p class="muted expert-reuse-intro">Supporting knowledge from a steward-approved expert interview. Match basis: ${esc(expertKnowledge.match_basis)}. The decision tree remains authoritative.</p>
+          ${expertKnowledge.matches.map(item => `
+            <article class="expert-match">
+              <div class="flex justify-between align-center flex-wrap gap-8">
+                <div><strong>${esc(item.expert_name)}</strong> <span class="muted">— ${esc(item.expert_role)}</span></div>
+                <span class="badge badge-green">Cause + asset matched</span>
+              </div>
+              <div class="expert-meta">
+                <span><strong>Knowledge ID:</strong> <code>${esc(item.knowledge_id)}</code></span>
+                <span><strong>KB version:</strong> ${esc(item.kb_version_label)}</span>
+                <span><strong>Cause:</strong> <code>${esc(item.likely_cause)}</code></span>
+              </div>
+              <p><strong>Matched pattern:</strong> ${esc(item.symptom_pattern)}</p>
+              ${item.checks.length ? `<div><strong>Expert checks:</strong><ul class="expert-list">${item.checks.map(check => `<li>${esc(check)}</li>`).join('')}</ul></div>` : ''}
+              ${item.do_not.length ? `<div><strong>Expert cautions:</strong><ul class="expert-list">${item.do_not.map(caution => `<li>${esc(caution)}</li>`).join('')}</ul></div>` : ''}
+              <blockquote class="expert-quote">“${esc(item.evidence_quote)}”</blockquote>
+            </article>
+          `).join('')}
+          <div class="muted" style="margin-top:10px">Current KB: ${esc(expertKnowledge.kb_version)} · Expert knowledge informs context; it does not override the deterministic diagnosis or guardrails.</div>
         `;
       }
 

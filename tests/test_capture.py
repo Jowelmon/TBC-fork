@@ -95,6 +95,48 @@ def test_approval_needs_second_steward_and_bumps_version(client):
     assert not [h for h in live if h["proposal_id"] == pid]
 
 
+def test_case_surfaces_approved_expert_knowledge_for_matching_diagnosis(client):
+    capture_response = client.post(
+        "/capture/interview",
+        params={"user": "steward1"},
+        json=_body(),
+    )
+    assert capture_response.status_code == 200, capture_response.text
+    proposal_id = capture_response.json()["proposal_id"]
+    approval = client.post(
+        f"/kb/proposals/{proposal_id}/approve",
+        params={"user": "steward2"},
+    )
+    assert approval.status_code == 200, approval.text
+
+    created = client.post("/cases", params={
+        "user": "tech1",
+        "asset_id": "CRAH-DC1-01",
+        "sensor_id": "SA-TEMP-01",
+        "reading_status": "absent",
+    })
+    assert created.status_code == 200, created.text
+    case_id = created.json()["case_id"]
+    advanced = client.post(
+        f"/cases/{case_id}/advance", params={"user": "tech1"},
+    )
+    assert advanced.status_code == 200, advanced.text
+
+    response = client.get(
+        f"/cases/{case_id}/expert-knowledge", params={"user": "tech1"},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["cause_id"] == "sensor_hardware_failure"
+    assert result["matches"]
+    match = result["matches"][0]
+    assert match["likely_cause"] == result["cause_id"]
+    assert match["asset_type"] == result["asset_type"] == "CRAH"
+    assert match["knowledge_id"].startswith("KB-EXP-")
+    assert match["evidence_quote"]
+    assert match["kb_version_label"].startswith("1.")
+
+
 def test_unconfigured_adp_fails_loudly(client, monkeypatch):
     monkeypatch.setenv("TBC_LLM_PROVIDER", "adp")
     monkeypatch.delenv("ADP_APP_KEY", raising=False)

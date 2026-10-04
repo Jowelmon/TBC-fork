@@ -50,9 +50,12 @@ def _create_closed_case(client: TestClient, asset_id: str = "CRAH-DC1-01", corre
     resp = client.post(f"/cases/{case_id}/outcome", params={
         "user": "tech1", "result": "resolved",
         "root_cause_confirmed": "sensor_hardware_failure",
-        "verified_by": "tech1",
+        "verified_by": "admin1",
     })
     assert resp.status_code == 200
+
+    outcome = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()["outcome"]
+    assert outcome["verified_by"] == "tech1"
 
     # Feedback (creates a pending proposal)
     resp = client.post(f"/cases/{case_id}/feedback", params={

@@ -17,6 +17,9 @@ RBAC via ``?user=<demo_user_id>`` query param (mapped in rbac.DEMO_USERS).
 """
 from __future__ import annotations
 
+import logging
+import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -38,7 +41,45 @@ from .models import (
 from .rbac import DEMO_USERS, require
 from .store import STORE
 
-app = FastAPI(title="Technical Services Fault Diagnosis Pill", version="1.0.0")
+_log = logging.getLogger("tbc.persistence")
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    from . import persistence
+
+    persistent = os.environ.get("TBC_PERSIST", "1") != "0"
+    if persistent:
+        summary = persistence.load_state()
+        _log.info("persistence restore: %s", summary)
+        if summary.get("audit_chain_failures"):
+            _log.error("invalid audit chains on restore: %s", summary["audit_chain_failures"])
+    try:
+        yield
+    finally:
+        if persistent:
+            persistence.save_state()
+
+
+app = FastAPI(
+    title="Technical Services Fault Diagnosis Pill",
+    version="1.0.0",
+    lifespan=_lifespan,
+)
+
+
+@app.middleware("http")
+async def _snapshot_after_write(request, call_next):
+    response = await call_next(request)
+    if (
+        os.environ.get("TBC_PERSIST", "1") != "0"
+        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and response.status_code < 400
+    ):
+        from . import persistence
+
+        persistence.save_state()
+    return response
 
 
 # --- auth helper ----------------------------------------------------------
@@ -426,7 +467,6 @@ def post_outcome(
     result: str,
     user: str,
     root_cause_confirmed: str | None = None,
-    verified_by: str | None = None,
     notes: str | None = None,
 ) -> dict:
     _need(user, "record_outcome")
@@ -450,7 +490,7 @@ def post_outcome(
             )
     outcome = Outcome(
         result=res, root_cause_confirmed=root_cause_confirmed,
-        verified_by=verified_by or user, notes=notes,
+        verified_by=user, notes=notes,
     )
     try:
         state.record_outcome(outcome)
@@ -563,6 +603,47 @@ def get_expert_heuristics(user: str) -> dict:
     _need(user, "view_case")
     from .learning import STORE as _LSTORE
     return {"heuristics": _LSTORE.expert_heuristics}
+
+
+@app.get("/cases/{case_id}/expert-knowledge")
+def get_case_expert_knowledge(case_id: str, user: str) -> dict:
+    """Return approved expert heuristics matching this diagnosis and asset."""
+    _need(user, "view_case")
+    state = _get_case(case_id)
+    from .cause_registry import canonicalize_cause_id
+    from .learning import STORE as _LSTORE, kb_version_label
+
+    diagnosis = state.diagnosis
+    cause_id = canonicalize_cause_id(diagnosis.top_cause_id) if diagnosis else None
+    asset_type = _asset_type(state.asset_id)
+    matches = []
+    if cause_id and cause_id != "unresolvable":
+        matches = [
+            {
+                "knowledge_id": item["id"],
+                "expert_name": item["expert_name"],
+                "expert_role": item["expert_role"],
+                "asset_type": item["asset_type"],
+                "likely_cause": item["likely_cause"],
+                "symptom_pattern": item["symptom_pattern"],
+                "checks": item.get("checks", []),
+                "do_not": item.get("do_not", []),
+                "escalate_when": item.get("escalate_when", []),
+                "evidence_quote": item["evidence_quote"],
+                "kb_version": item["kb_version"],
+                "kb_version_label": kb_version_label(item["kb_version"]),
+                "approved_by": item["approved_by"],
+            }
+            for item in _LSTORE.expert_heuristics
+            if item["likely_cause"] == cause_id and item["asset_type"] == asset_type
+        ]
+    return {
+        "matches": matches,
+        "match_basis": "exact asset type and diagnosed cause",
+        "asset_type": asset_type,
+        "cause_id": cause_id,
+        "kb_version": _LSTORE.get_kb_version_label(),
+    }
 
 
 @app.get("/kb/stats")

@@ -18,7 +18,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-import logging
 import os
 
 
@@ -36,28 +35,10 @@ def _load_dotenv(path: str = ".env") -> None:
 
 _load_dotenv()
 
-from technical_services_pill import persistence
 from technical_services_pill.app import app
 from technical_services_pill.rbac import DEMO_USERS
 
-_log = logging.getLogger("tbc.persistence")
-
 _BASE = Path(__file__).resolve().parent
-
-# --- persistence: restore on boot, snapshot after every state change -------
-# Disable with TBC_PERSIST=0 (e.g. for a throwaway demo run).
-_PERSIST = os.environ.get("TBC_PERSIST", "1") != "0"
-
-if _PERSIST:
-    _restore = persistence.load_state()
-    _log.warning("persistence restore: %s", _restore)
-
-    @app.middleware("http")
-    async def _snapshot_after_write(request: Request, call_next):
-        response = await call_next(request)
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and response.status_code < 400:
-            persistence.save_state()
-        return response
 
 
 # --- mount static files on the existing app ---------------------------------
