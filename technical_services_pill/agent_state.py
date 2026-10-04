@@ -72,6 +72,7 @@ class AgentState:
     case_id: str | None
     current_state: AgentStateName
     guardrail_result: GuardrailResult | None
+    ai_hypothesis: dict | None
     work_order_id: str | None
     feedback_id: str | None
     history: list[HistoryEntry]
@@ -100,6 +101,7 @@ class AgentState:
         self.case_id = case_id
         self.current_state = AgentStateName.TRIGGERED
         self.guardrail_result: GuardrailResult | None = None
+        self.ai_hypothesis: dict | None = None
         self.work_order_id = None
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
@@ -458,6 +460,7 @@ class AgentState:
                 if self.guardrail_result
                 else None
             ),
+            "ai_hypothesis": self.ai_hypothesis,
             "human_decision": (
                 self.human_decision.model_dump(mode="json")
                 if self.human_decision
