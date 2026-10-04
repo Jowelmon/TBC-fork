@@ -5,6 +5,8 @@ help:  ## Show available commands
 
 install:  ## Install runtime + test dependencies
 	pip install -r requirements.txt
+test:  ## Run the repository unit test suite
+	PYTHONPATH=. python -m pytest -q tests
 
 test:  ## Run the full test suite
 	PYTHONPATH=. python3 -m pytest tests/ -q

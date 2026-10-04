@@ -23,6 +23,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 
 from .agent_state import AgentState
+from .ai_reasoning import generate_diagnostic_hypothesis
+from .capture import capture_expert_knowledge
 from .models import (
     AgentStateName,
     HumanDecision,
@@ -145,6 +147,28 @@ def list_cases(user: str) -> dict:
     return {"cases": STORE.list()}
 
 
+@app.post("/capture/interview")
+def capture_interview(
+    expert_text: str,
+    user: str,
+    asset_id: str | None = None,
+    asset_type: str | None = None,
+) -> dict:
+    """Capture expert knowledge as structured evidence for stewardship review."""
+    _need(user, "submit_feedback")
+    if not expert_text or not expert_text.strip():
+        raise HTTPException(400, "expert_text is required")
+    from .learning import STORE as _LSTORE
+
+    knowledge = capture_expert_knowledge(
+        expert_text,
+        asset_type=asset_type or ("CRAH" if asset_id and asset_id.startswith("CRAH") else None),
+    )
+    knowledge["asset_id"] = asset_id
+    proposal = _LSTORE.record_expert_knowledge(knowledge, source="expert_interview")
+    return {"proposal": proposal, "knowledge": knowledge}
+
+
 @app.post("/cases/{case_id}/advance")
 def advance_case(case_id: str, user: str) -> dict:
     """Drive the agent loop to a terminal or waiting state in one call.
@@ -226,6 +250,17 @@ def advance_case(case_id: str, user: str) -> dict:
         kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id))
         conf = score_confidence(evidence_coverage=coverage, peer_agreement=1.0,
                                 kb_match=kb_match)
+        state.ai_hypothesis = generate_diagnostic_hypothesis(
+            asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
+            observations={
+                "type": state.observation.type,
+                "sensor_id": state.observation.sensor_id,
+                "reading_status": state.observation.reading_status.value,
+            },
+            evidence=[{"source": ev.source, "finding": ev.type, "summary": str(ev.payload)} for ev in state.evidence],
+            candidate_causes=[r.cause_id for r in results],
+            knowledge=[{"cause": top.cause_id, "kb_ref": ref} for ref in top.kb_refs],
+        )
         new_st = state.complete_diagnosis(diag, conf, actor="agent")
         if new_st == AgentStateName.RECOMMENDING:
             rec = Recommendation(

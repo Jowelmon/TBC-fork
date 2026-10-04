@@ -72,6 +72,7 @@ class LearningStore:
         self.validated: list[ValidatedCase] = []
         self._cause_stats: dict[str, dict[str, int]] = {}  # cause -> {confirmed, total}
         self._proposals: list[dict[str, Any]] = []
+        self._expert_knowledge: list[dict[str, Any]] = []
         self._kb_version: int = 0  # 0 = seeded registry only
         # Expert heuristics captured from interviews, live once approved.
         self.expert_heuristics: list[dict[str, Any]] = []
@@ -141,6 +142,7 @@ class LearningStore:
         proposal: dict[str, Any] = {
             "proposal_id": proposal_id,
             "kind": "outcome_feedback",
+            "proposal_type": "CASE_FEEDBACK",
             "feedback_id": fb.feedback_id,
             "case_id": fb.case_id,
             "asset_id": fb.asset_id,
@@ -193,6 +195,24 @@ class LearningStore:
             "provider": draft.get("provider"),
             "warnings": draft.get("warnings", []),
             "submitted_by": submitted_by,
+    def record_expert_knowledge(self, knowledge: dict[str, Any], *, source: str = "expert_interview") -> dict[str, Any]:
+        """Create a pending expert knowledge proposal for stewardship review."""
+        proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"
+        proposal: dict[str, Any] = {
+            "proposal_id": proposal_id,
+            "proposal_type": "EXPERT_CAPTURE",
+            "knowledge_id": f"KB-EXP-{uuid.uuid4().hex[:8].upper()}",
+            "source": source,
+            "asset_id": knowledge.get("asset_id"),
+            "asset_type": knowledge.get("asset_type") or "UNKNOWN",
+            "symptoms": knowledge.get("symptoms") or [],
+            "evidence_pattern": knowledge.get("evidence_pattern") or [],
+            "likely_cause": knowledge.get("likely_cause"),
+            "recommended_check": knowledge.get("recommended_check"),
+            "recommended_action": knowledge.get("recommended_action"),
+            "expert_reasoning": knowledge.get("expert_reasoning"),
+            "confidence": float(knowledge.get("confidence", 0.0) or 0.0),
+            "submitted_by": knowledge.get("submitted_by", "expert"),
             "status": "pending",
             "created_at": _now(),
             "decided_by": None,
@@ -200,6 +220,7 @@ class LearningStore:
             "reason": None,
             "kb_version": None,
         }
+        self._expert_knowledge.append(knowledge)
         self._proposals.append(proposal)
         return proposal
 
@@ -243,6 +264,29 @@ class LearningStore:
         if p.get("kind") == "expert_capture":
             self._ingest_expert_capture(p)
             return p
+
+        if p.get("proposal_type") == "EXPERT_CAPTURE":
+            vc = ValidatedCase(
+                id=p["knowledge_id"],
+                case_id=p["knowledge_id"],
+                asset_id=p.get("asset_id") or "UNKNOWN",
+                asset_type=p.get("asset_type") or "UNKNOWN",
+                fault_signature=" ".join(p.get("symptoms") or []),
+                proposed_cause=p.get("likely_cause") or "unknown",
+                confirmed_cause=p.get("likely_cause") or "unknown",
+                action_taken=p.get("recommended_action") or "",
+                outcome="resolved",
+                confidence=p.get("confidence", 0.0),
+                validated_by=decided_by,
+                corrected=False,
+                weight=1.0,
+                created_at=_now(),
+                kb_version=self._kb_version,
+            )
+            self._ingest(vc)
+            p["validated_case_id"] = vc.id
+            return p
+
         vc = ValidatedCase(
             id=f"KB-FB-{p['feedback_id']}",
             case_id=p["case_id"],
@@ -425,6 +469,7 @@ class LearningStore:
             "pending_proposals": len(self.list_pending_proposals()),
             "kb_version": self._kb_version,
             "kb_version_label": self.get_kb_version_label(),
+            "expert_knowledge_entries": len(self._expert_knowledge),
             "cause_priors": {
                 cause: {"confirmed": st["confirmed"], "total": st["total"], "rate": round(st["confirmed"] / st["total"], 3)}
                 for cause, st in self._cause_stats.items()
