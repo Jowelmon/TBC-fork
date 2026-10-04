@@ -1,105 +1,112 @@
-"""In-memory case store for the Technical Services Fault Diagnosis pill.
+"""Case store with a SQLite-backed persistence layer and a memory cache.
 
-Holds ``AgentState`` instances keyed by ``case_id`` and exposes the read
-surfaces the spec §5 API needs: create, get, list, snapshot, audit trace.
-A module-level singleton ``STORE`` is provided for the FastAPI app; all
-state is process-local and deterministic.
-
-Thread-safety: for the hackathon demo (single-worker FastAPI) no locking is
-needed. If this moves behind a multi-worker deployment, wrap ``_cases`` in a
-``threading.Lock`` or move to an external store.
+The repository originally used a process-local in-memory store. This version
+adds persisted storage without breaking the existing public API: the app still
+works with ``CaseStore().create(...)``, ``get()``, ``list()``, and
+``snapshot()`` semantics, but state survives a restart.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
 from .agent_state import AgentState
+from .database import SQLiteStore
+from .models import (
+    AgentStateName,
+    Diagnosis,
+    EvidenceItem,
+    GuardrailResult,
+    HistoryEntry,
+    HumanDecisionRecord,
+    Observation,
+    Outcome,
+    Recommendation,
+)
 
 
 class CaseStore:
-    """In-memory store of ``AgentState`` by case id."""
+    """Persistent store of ``AgentState`` by case id."""
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: str | None = None) -> None:
+        self._db = SQLiteStore(db_path)
         self._cases: dict[str, AgentState] = {}
+        for case_id in self._db.list_case_ids():
+            data = self._db.get_case_state(case_id)
+            if data is not None:
+                self._cases[case_id] = self._restore_from_snapshot(data)
 
-    # ------------------------------------------------------------------ #
-    # Write
-    # ------------------------------------------------------------------ #
+    def _restore_from_snapshot(self, data: dict[str, Any]) -> AgentState:
+        obs = Observation.model_validate(data["observation"])
+        state = AgentState(asset_id=data["asset_id"], observation=obs, case_id=data["case_id"])
+        state.evidence = [EvidenceItem.model_validate(item) for item in data.get("evidence", [])]
+        state.diagnosis = Diagnosis.model_validate(data["diagnosis"]) if data.get("diagnosis") else None
+        state.confidence = float(data.get("confidence", 0.0))
+        state.recommendation = Recommendation.model_validate(data["recommendation"]) if data.get("recommendation") else None
+        state.human_decision = HumanDecisionRecord.model_validate(data["human_decision"]) if data.get("human_decision") else None
+        state.outcome = Outcome.model_validate(data["outcome"]) if data.get("outcome") else None
+        state.guardrail_result = GuardrailResult.model_validate(data["guardrail_result"]) if data.get("guardrail_result") else None
+        state.work_order_id = data.get("work_order_id")
+        state.feedback_id = data.get("feedback_id")
+        state.history = [HistoryEntry.model_validate(item) for item in data.get("history", [])]
+        state.current_state = AgentStateName(data.get("current_state", state.current_state.value))
+        state._gathering_loops = int(data.get("_gathering_loops", 0))
+        state._retrieval_rounds = int(data.get("_retrieval_rounds", 0))
+        return state
+
     def create(self, state: AgentState) -> str:
-        """Persist ``state``. Assigns a case id if none, sets it on the state,
-        and returns it."""
         case_id = state.case_id or f"CASE-{uuid.uuid4().hex[:8]}"
         state.case_id = case_id
         self._cases[case_id] = state
+        self._db.save_case_state(case_id, state.snapshot())
         return case_id
 
-    # ------------------------------------------------------------------ #
-    # Read
-    # ------------------------------------------------------------------ #
     def get(self, case_id: str) -> AgentState | None:
-        return self._cases.get(case_id)
+        state = self._cases.get(case_id)
+        if state is None:
+            data = self._db.get_case_state(case_id)
+            if data is None:
+                return None
+            state = self._restore_from_snapshot(data)
+            self._cases[case_id] = state
+        return state
 
     def list(self) -> list[str]:
-        """All stored case ids."""
         return list(self._cases.keys())
 
     def snapshot(self, case_id: str) -> dict | None:
-        """Full state snapshot for the HITL UI (spec §5 GET /cases/{id})."""
-        state = self._cases.get(case_id)
-        return state.snapshot() if state is not None else None
+        state = self.get(case_id)
+        if state is None:
+            return None
+        snap = state.snapshot()
+        self._db.save_case_state(case_id, snap)
+        return snap
 
-    # ------------------------------------------------------------------ #
-    # Audit
-    # ------------------------------------------------------------------ #
     def audit_trace(self, case_id: str) -> list[dict]:
-        """History entries for one case as dicts, each tagged with the
-        per-chain ``chain_valid`` flag from ``AgentState.verify_audit_chain``.
-
-        Returns an empty list if the case is unknown.
-        """
-        state = self._cases.get(case_id)
+        state = self.get(case_id)
         if state is None:
             return []
         chain_valid = state.verify_audit_chain()
-        return [
-            {**entry.model_dump(mode="json"), "chain_valid": chain_valid}
-            for entry in state.history
-        ]
+        return [{**entry.model_dump(mode="json"), "chain_valid": chain_valid} for entry in state.history]
 
-    def all_audit_traces(
-        self,
-        *,
-        actor: str | None = None,
-        case_id: str | None = None,
-    ) -> list[dict]:
-        """Audit entries across all cases (spec §5 GET /audit/trace).
-
-        Optional filters:
-          actor   — keep only entries whose ``actor`` matches exactly.
-          case_id — restrict to a single case (None = all cases).
-
-        Each returned dict is a history entry with the owning ``case_id``
-        and the chain-validity flag merged in.
-        """
+    def all_audit_traces(self, *, actor: str | None = None, case_id: str | None = None) -> list[dict]:
         out: list[dict] = []
-        targets = (
-            [case_id] if case_id is not None else list(self._cases.keys())
-        )
+        targets = [case_id] if case_id is not None else list(self._cases.keys())
         for cid in targets:
-            state = self._cases.get(cid)
+            state = self.get(cid)
             if state is None:
                 continue
-            chain_valid = state.verify_audit_chain()
             for entry in state.history:
                 d: dict[str, Any] = entry.model_dump(mode="json")
                 d["case_id"] = cid
-                d["chain_valid"] = chain_valid
+                d["chain_valid"] = state.verify_audit_chain()
                 if actor is not None and d.get("actor") != actor:
                     continue
                 out.append(d)
         return out
 
 
-# Module-level singleton for the FastAPI app.
 STORE = CaseStore()
+
+__all__ = ["CaseStore", "STORE"]

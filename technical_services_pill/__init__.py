@@ -10,7 +10,17 @@ Public surface:
     constants: MIN_RECO_CONFIDENCE, ESCALATE_CONFIDENCE, ...
 """
 from .agent_state import AgentState
+from .ai_reasoning import generate_diagnostic_hypothesis
 from .audit import GENESIS_HASH, canonical_json, compute_hash
+from .cause_registry import (
+    CAUSE_BATTERY_EOL,
+    CAUSE_COMM_BUS_FAILURE,
+    CAUSE_COMMUNICATION_BUS_CONTROLLER_FAILURE,
+    CAUSE_CONFIG_DRIFT,
+    CAUSE_SENSOR_HARDWARE_FAILURE,
+    CANONICAL_CAUSE_IDS,
+    canonicalize_cause_id,
+)
 from .confidence import score_confidence, evidence_coverage_score
 from .decision_tree import evaluate_decision_tree, DecisionResult
 from .guardrails import check_guardrails, sanitize_metadata
@@ -61,6 +71,15 @@ __all__ = [
     "GuardrailContext",
     "check_guardrails",
     "sanitize_metadata",
+    # ai / cause registry
+    "generate_diagnostic_hypothesis",
+    "CANONICAL_CAUSE_IDS",
+    "canonicalize_cause_id",
+    "CAUSE_COMMUNICATION_BUS_CONTROLLER_FAILURE",
+    "CAUSE_COMM_BUS_FAILURE",
+    "CAUSE_SENSOR_HARDWARE_FAILURE",
+    "CAUSE_CONFIG_DRIFT",
+    "CAUSE_BATTERY_EOL",
     # reasoning
     "evaluate_decision_tree",
     "DecisionResult",
