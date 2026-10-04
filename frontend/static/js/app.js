@@ -1,7 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=2';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, seedDemoCases } from './screens.js?v=2';
+import { api } from './api.js?v=3';
+import { initGuide } from './guide.js?v=3';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=3';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -12,7 +13,8 @@ const state = {
 
 const SCREEN_TITLES = {
   dashboard: 'Asset and Fault Dashboard',
-  diagnosis: 'AI Diagnosis and Recommendation',
+  capture: 'Expert Knowledge Capture',
+  diagnosis: 'Diagnosis and Recommendation',
   decision: 'AOM Decision',
   outcome: 'Outcome and Feedback',
   governance: 'Pill Summary and Governance',
@@ -60,6 +62,7 @@ const ROLE_NAMES = {
   tech1:    { name: 'Technician',            cap: 'technician' },
   mgr1:     { name: 'Asset Ops Manager',      cap: 'asset_ops_manager' },
   steward1: { name: 'Knowledge Steward',     cap: 'knowledge_steward' },
+  steward2: { name: 'Knowledge Steward 2',   cap: 'knowledge_steward' },
   auditor1: { name: 'Auditor',                cap: 'auditor' },
   admin1:   { name: 'Admin',                  cap: 'admin' },
 };
@@ -107,8 +110,19 @@ function esc(s) {
 }
 
 // ── Navigation ─────────────────────────────────────────────
+// Keep the nav footer in step with the live KB version (same source as Governance).
+async function refreshKbVersion() {
+  const el = document.getElementById('nav-kb-version');
+  if (!el) return;
+  try {
+    const stats = await api.get('/kb/stats');
+    if (stats.kb_version_label) el.textContent = `KB v${stats.kb_version_label}`;
+  } catch (_) { /* leave last known value */ }
+}
+
 function navigate(screen, caseId = null) {
   state.screen = screen;
+  refreshKbVersion();
   if (caseId) state.caseId = caseId;
 
   // Update nav items
@@ -162,12 +176,21 @@ function renderScreen() {
     case 'governance':
       renderGovernance(content, state, h);
       break;
+    case 'capture':
+      renderCapture(content, state, h);
+      break;
   }
 }
 
 // ── Role switcher ──────────────────────────────────────────
 roleSelect.value = state.role;
 roleBadge.textContent = roleDisplayName(state.role);
+function setRole(role) {
+  if (roleSelect.value === role) return;
+  roleSelect.value = role;
+  roleSelect.dispatchEvent(new Event('change'));
+}
+
 roleSelect.addEventListener('change', () => {
   state.role = roleSelect.value;
   localStorage.setItem('tbc_user', state.role);
@@ -184,9 +207,23 @@ navItems.forEach(item => {
   });
 });
 
+// ── Model chip (which model drafts expert knowledge) ───────
+(async () => {
+  const chip = document.getElementById('model-chip');
+  try {
+    const info = await api.get('/system/info');
+    chip.textContent = `Capture model: ${info.llm_label}`;
+    if (info.llm_provider === 'adp' && !info.adp_configured) {
+      chip.textContent += ' (key missing)';
+      chip.className = 'badge badge-red';
+    }
+  } catch (_) { chip.hidden = true; }
+})();
+
 // ── Init ───────────────────────────────────────────────────
+initGuide({ api, navigate, setRole, showToast });
 navigate('dashboard');
 updateKbFooter();
 
 // Expose for debugging
-window.__app__ = { state, navigate, showToast, copyToClipboard };
+window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion };

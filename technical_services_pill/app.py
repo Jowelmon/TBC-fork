@@ -147,28 +147,6 @@ def list_cases(user: str) -> dict:
     return {"cases": STORE.list()}
 
 
-@app.post("/capture/interview")
-def capture_interview(
-    expert_text: str,
-    user: str,
-    asset_id: str | None = None,
-    asset_type: str | None = None,
-) -> dict:
-    """Capture expert knowledge as structured evidence for stewardship review."""
-    _need(user, "submit_feedback")
-    if not expert_text or not expert_text.strip():
-        raise HTTPException(400, "expert_text is required")
-    from .learning import STORE as _LSTORE
-
-    knowledge = capture_expert_knowledge(
-        expert_text,
-        asset_type=asset_type or ("CRAH" if asset_id and asset_id.startswith("CRAH") else None),
-    )
-    knowledge["asset_id"] = asset_id
-    proposal = _LSTORE.record_expert_knowledge(knowledge, source="expert_interview")
-    return {"proposal": proposal, "knowledge": knowledge}
-
-
 @app.post("/cases/{case_id}/advance")
 def advance_case(case_id: str, user: str) -> dict:
     """Drive the agent loop to a terminal or waiting state in one call.
@@ -188,11 +166,30 @@ def advance_case(case_id: str, user: str) -> dict:
     state = _get_case(case_id)
 
     while state.current_state == AgentStateName.GATHERING_EVIDENCE:
-        from .confidence import score_confidence, evidence_coverage_score
+        from .confidence import derive_confidence_signals, score_confidence, evidence_coverage_score
         from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
         from .models import CandidateCause, Diagnosis, Recommendation
 
-        state.begin_diagnosing(actor="agent")
+        # G5: an asset outside the registry is out of this pill's scope.
+        # Escalate before diagnosing instead of stalling in GATHERING_EVIDENCE.
+        from .mock_registry import ASSETS
+        from .models import GuardrailResult
+
+        if state.asset_id not in ASSETS:
+            gr = GuardrailResult()
+            gr.add("G5", "asset not in registry; cannot diagnose unknown asset",
+                   escalate=True, block=True)
+            state.guardrail_result = gr
+            state.escalate_for_evidence(
+                actor="agent", reason="[G5] unknown asset; outside pill scope")
+            break
+
+        try:
+            state.begin_diagnosing(actor="agent")
+        except ValueError as exc:
+            # Evidence can never reach the minimum: escalate, never stall.
+            state.escalate_for_evidence(actor="agent", reason=str(exc))
+            break
         results = evaluate_decision_tree(state.observation, state.evidence)
         if not results:
             from .models import CandidateCause, Diagnosis
@@ -229,8 +226,14 @@ def advance_case(case_id: str, user: str) -> dict:
         from .learning import STORE as _LSTORE
 
         kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id))
-        conf = score_confidence(evidence_coverage=coverage, peer_agreement=1.0,
-                                kb_match=kb_match)
+        signals = derive_confidence_signals(state.evidence)
+        conf = score_confidence(
+            evidence_coverage=coverage,
+            peer_agreement=signals["peer_agreement"],
+            kb_match=kb_match,
+            data_staleness=signals["data_staleness"],
+            conflict_penalty=signals["conflict_penalty"],
+        )
         state.ai_hypothesis = generate_diagnostic_hypothesis(
             asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
             observations={
@@ -423,7 +426,7 @@ def post_outcome(
     result: str,
     user: str,
     root_cause_confirmed: str | None = None,
-    verified_by: str = "tech1",
+    verified_by: str | None = None,
     notes: str | None = None,
 ) -> dict:
     _need(user, "record_outcome")
@@ -447,7 +450,7 @@ def post_outcome(
             )
     outcome = Outcome(
         result=res, root_cause_confirmed=root_cause_confirmed,
-        verified_by=verified_by, notes=notes,
+        verified_by=verified_by or user, notes=notes,
     )
     try:
         state.record_outcome(outcome)
@@ -466,7 +469,10 @@ def post_feedback(
     state = _get_case(case_id)
     from .tools import submit_feedback as _fb
     corrections = corrections or {}
-    corrections.setdefault("submitted_by", user)
+    # The proposer is always the authenticated caller; a client-supplied
+    # submitted_by would let anyone pin a proposal on someone else and then
+    # approve it themselves.
+    corrections["submitted_by"] = user
     fb_id = _fb(case_id, corrections, state=state)
     try:
         state.queue_feedback(fb_id, actor=user)
@@ -480,6 +486,83 @@ def post_feedback(
             "kb_cases_total": stats["total_validated_cases"],
             "kb_feedback_added": stats["feedback_added"],
             "pending_proposals": stats["pending_proposals"]}
+
+
+# --------------------------------------------------------------------------- #
+# Expert knowledge capture (LLM drafts, steward approves)
+# --------------------------------------------------------------------------- #
+from pydantic import BaseModel as _BaseModel, Field as _Field
+
+
+class CaptureInterviewRequest(_BaseModel):
+    expert_name: str = _Field(min_length=1, max_length=120)
+    expert_role: str = _Field(min_length=1, max_length=120)
+    asset_type: str = _Field(min_length=1, max_length=40)
+    transcript: str = _Field(min_length=1)
+
+
+@app.get("/system/info")
+def get_system_info(user: str) -> dict:
+    """Which model drafts expert knowledge, for the UI badge. Never returns secrets."""
+    _need(user, "view_case")
+    from . import llm
+    provider = llm.provider_name()
+    return {
+        "llm_provider": provider,
+        "llm_label": "Tencent Cloud ADP" if provider == "adp" else "Offline mock model",
+        "adp_configured": llm.adp_configured(),
+        "diagnosis": "deterministic decision tree",
+    }
+
+
+@app.get("/capture/sample")
+def get_capture_sample(user: str) -> dict:
+    """A sample technician interview for the demo."""
+    _need(user, "view_case")
+    from .capture import SAMPLE_INTERVIEW
+    return {"expert_name": "R. Tan", "expert_role": "Senior M&E Technician, 22 years",
+            "asset_type": "CRAH", "transcript": SAMPLE_INTERVIEW}
+
+
+@app.post("/capture/interview")
+def post_capture_interview(user: str, body: CaptureInterviewRequest) -> dict:
+    """Turn an expert interview into a pending knowledge proposal.
+
+    The LLM drafts structured heuristics; capture.py drops anything not
+    quoted verbatim from the transcript; the result is queued for a
+    different knowledge steward to approve. Nothing enters the KB here.
+    """
+    _need(user, "capture_expert_knowledge")
+    from . import capture, llm
+    from .learning import STORE as _LSTORE
+    from .tools import _log
+
+    try:
+        draft = capture.draft_from_transcript(body.transcript, body.asset_type)
+    except capture.CaptureError as exc:
+        raise HTTPException(422, str(exc))
+    except llm.LLMError as exc:
+        raise HTTPException(502, f"knowledge extraction failed: {exc}")
+
+    proposal = _LSTORE.record_expert_capture(
+        draft=draft, submitted_by=user, expert_name=body.expert_name,
+        expert_role=body.expert_role, asset_type=body.asset_type,
+    )
+    _log("capture_expert_knowledge",
+         {"expert": body.expert_name, "asset_type": body.asset_type,
+          "provider": draft["provider"], "submitted_by": user},
+         proposal)
+    return {"proposal_id": proposal["proposal_id"], "status": "pending",
+            "provider": draft["provider"], "heuristics": draft["heuristics"],
+            "warnings": draft["warnings"], "dropped": draft["dropped"]}
+
+
+@app.get("/kb/expert-heuristics")
+def get_expert_heuristics(user: str) -> dict:
+    """Approved, live expert heuristics with provenance."""
+    _need(user, "view_case")
+    from .learning import STORE as _LSTORE
+    return {"heuristics": _LSTORE.expert_heuristics}
 
 
 @app.get("/kb/stats")
@@ -512,9 +595,11 @@ def approve_proposal(proposal_id: str, user: str) -> dict:
     ValidatedCase retrievable by future diagnoses.
     """
     _need(user, "approve_knowledge_version")
-    from .learning import STORE as _LSTORE
+    from .learning import STORE as _LSTORE, SelfApprovalError
     try:
         proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user)
+    except SelfApprovalError as exc:
+        raise HTTPException(403, str(exc))
     except ValueError as exc:
         raise HTTPException(404, str(exc))
     return {"proposal_id": proposal_id, "status": "approved",

@@ -30,6 +30,39 @@ W4 = 0.10  # data_staleness     (penalty: telemetry older than freshness SLA)
 W5 = 0.15  # conflict_penalty   (penalty: contradictions in evidence)
 
 
+def derive_confidence_signals(evidence: list[EvidenceItem]) -> dict[str, float]:
+    """Derive runtime peer corroboration and penalty signals from evidence.
+
+    This keeps the scoring model from silently assuming perfect corroboration
+    when the live evidence does not support it.
+    """
+    peer_agreement = 1.0
+    data_staleness = 0.0
+    conflict_penalty = 0.0
+
+    for ev in evidence:
+        payload = ev.payload or {}
+        if ev.source == "bms" and isinstance(payload, dict):
+            other_tags = payload.get("other_tags_reporting")
+            bus_alive = payload.get("bus_alive")
+            if isinstance(other_tags, bool):
+                peer_agreement = 1.0 if other_tags else 0.0
+            if isinstance(bus_alive, bool) and not bus_alive:
+                peer_agreement = min(peer_agreement, 0.5)
+        if isinstance(payload, dict):
+            stale_minutes = payload.get("stale_minutes")
+            if isinstance(stale_minutes, (int, float)):
+                data_staleness = max(data_staleness, min(1.0, stale_minutes / 180.0))
+            if payload.get("conflict") is True:
+                conflict_penalty = max(conflict_penalty, 0.5)
+
+    return {
+        "peer_agreement": max(0.0, min(1.0, peer_agreement)),
+        "data_staleness": max(0.0, min(1.0, data_staleness)),
+        "conflict_penalty": max(0.0, min(1.0, conflict_penalty)),
+    }
+
+
 def score_confidence(
     *,
     evidence_coverage: float,

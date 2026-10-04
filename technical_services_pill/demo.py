@@ -268,7 +268,7 @@ def _run_learning_loop() -> tuple[str, float, float]:
         state=st1,
     )
     # F2: steward approves the proposal to ingest it into the live KB
-    _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward1")
+    _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward2")
     print(f"feedback {fb_id} proposal approved -> promoted to KB")
     print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, version={_LSTORE.get_kb_version()}")
     # re-diagnose identical signature -> should reuse the new validated case
