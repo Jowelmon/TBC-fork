@@ -24,6 +24,7 @@ from typing import Any
 
 from . import llm
 from .decision_tree import KNOWN_CAUSE_IDS
+from .cause_registry import canonicalize_cause_id, cause_asset_type, cause_label
 from .guardrails import sanitize_metadata
 
 MAX_TRANSCRIPT_CHARS = 20_000
@@ -44,70 +45,119 @@ def _clean_list(value: Any) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()][:8]
 
 
-def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
-    """Return a validated knowledge draft. Raises CaptureError / llm.LLMError."""
+def _validate_items(
+    sanitized: str, items: list[Any], asset_type: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Grounding + cause checks shared by the AI draft and the reviewed submit.
+
+    Every item must quote the (sanitised) transcript verbatim; anything else
+    is dropped. Causes are stored as canonical IDs with a plain-English label
+    and the asset type whose decision tree owns them, so approved knowledge
+    lands on the right pill even when one interview covers several assets.
+    """
+    haystack = _norm(sanitized)
+    kept: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for idx, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            warnings.append(f"Item {idx} was not a heuristic object and was dropped.")
+            continue
+        quote = str(item.get("evidence_quote", "")).strip()
+        if not quote or _norm(quote) not in haystack:
+            warnings.append(
+                f"Item {idx} was dropped as ungrounded: its supporting quote is "
+                "not in the transcript word for word."
+            )
+            continue
+
+        cause_raw = str(item.get("likely_cause", "")).strip()
+        canonical = canonicalize_cause_id(cause_raw.removeprefix("new:")) or cause_raw
+        is_new = canonical not in KNOWN_CAUSE_IDS
+        if is_new:
+            slug = re.sub(r"[^a-z0-9_]+", "_", cause_raw.lower().removeprefix("new:")).strip("_")
+            cause = f"new:{slug or 'unnamed'}"
+            owner = asset_type
+        else:
+            cause = canonical
+            owner = cause_asset_type(canonical) or asset_type
+        if owner != asset_type:
+            warnings.append(
+                f"\"{cause_label(cause)}\" belongs to the {owner} pill, so it will be "
+                f"filed under {owner}, not {asset_type}."
+            )
+
+        kept.append({
+            "symptom_pattern": str(item.get("symptom_pattern", "")).strip()[:300],
+            "likely_cause": cause,
+            "cause_label": cause_label(cause),
+            "asset_type": owner,
+            "new_cause": is_new,
+            **{f: _clean_list(item.get(f)) for f in _LIST_FIELDS},
+            "evidence_quote": quote,
+        })
+    return kept, warnings
+
+
+def _sanitize(transcript: str) -> tuple[str, list[str]]:
     if not transcript or not transcript.strip():
         raise CaptureError("transcript is empty")
     if len(transcript) > MAX_TRANSCRIPT_CHARS:
         raise CaptureError(f"transcript exceeds {MAX_TRANSCRIPT_CHARS} characters")
-
     sanitized = sanitize_metadata(transcript)
-    injection_found = sanitized != transcript
+    warnings = []
+    if sanitized != transcript:
+        warnings.append(
+            "[G7] Instruction-like text was removed from the transcript before "
+            "the model saw it."
+        )
+    return sanitized, warnings
 
+
+def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
+    """Return a validated knowledge draft. Raises CaptureError / llm.LLMError."""
+    sanitized, warnings = _sanitize(transcript)
     raw = llm.complete_json(sanitized, asset_type, sorted(KNOWN_CAUSE_IDS))
     items = raw.get("heuristics")
     if not isinstance(items, list):
         raise CaptureError("model output has no 'heuristics' list")
 
-    haystack = _norm(sanitized)
-    kept: list[dict[str, Any]] = []
-    warnings: list[str] = []
-    if injection_found:
-        warnings.append(
-            "[G7] instruction-like text was redacted from the transcript before "
-            "the model saw it"
-        )
-
-    for idx, item in enumerate(items, start=1):
-        if not isinstance(item, dict):
-            warnings.append(f"item {idx}: not an object, dropped")
-            continue
-        quote = str(item.get("evidence_quote", "")).strip()
-        if not quote or _norm(quote) not in haystack:
-            warnings.append(
-                f"item {idx}: supporting quote not found verbatim in the transcript, "
-                "dropped as ungrounded"
-            )
-            continue
-
-        cause_raw = str(item.get("likely_cause", "")).strip()
-        canonical_cause = canonicalize_cause_id(cause_raw) or cause_raw
-        is_new = canonical_cause not in KNOWN_CAUSE_IDS
-        if is_new:
-            slug = re.sub(r"[^a-z0-9_]+", "_", cause_raw.lower().removeprefix("new:")).strip("_")
-            cause = f"new:{slug or 'unnamed'}"
-        else:
-            cause = cause_raw
-
-        kept.append({
-            "symptom_pattern": str(item.get("symptom_pattern", "")).strip()[:300],
-            "likely_cause": cause,
-            "new_cause": is_new,
-            **{f: _clean_list(item.get(f)) for f in _LIST_FIELDS},
-            "evidence_quote": quote,
-        })
-
+    kept, item_warnings = _validate_items(sanitized, items, asset_type)
+    warnings += item_warnings
     if not kept:
         raise CaptureError(
             "no grounded heuristics could be extracted; "
             + ("; ".join(warnings) if warnings else "the model returned none")
         )
-
     return {
         "provider": llm.provider_name(),
         "heuristics": kept,
         "warnings": warnings,
         "dropped": len(items) - len(kept),
+    }
+
+
+def reviewed_draft(
+    transcript: str, asset_type: str, heuristics: list[Any], provider: str,
+) -> dict[str, Any]:
+    """Re-validate a draft the capturer has reviewed before it is queued.
+
+    The capturer may drop heuristics or correct a cause, but cannot add
+    anything the expert did not say: every surviving item is grounded again
+    against the transcript, exactly like the model's output.
+    """
+    sanitized, warnings = _sanitize(transcript)
+    if not heuristics:
+        raise CaptureError("select at least one heuristic to submit")
+    kept, item_warnings = _validate_items(sanitized, heuristics, asset_type)
+    if len(kept) != len(heuristics):
+        raise CaptureError(
+            "reviewed draft failed grounding: " + "; ".join(item_warnings)
+        )
+    return {
+        "provider": provider if provider in ("adp", "mock") else llm.provider_name(),
+        "heuristics": kept,
+        "warnings": warnings + item_warnings,
+        "dropped": 0,
     }
 
 

@@ -229,9 +229,12 @@ def _mock_extract(transcript: str) -> dict[str, Any]:
         heuristics.append({
             "symptom_pattern": bare[0],
             "likely_cause": cause,
-            "checks": [s for s in bare if any(w in s.lower() for w in _CHECK_WORDS)],
+            # The trigger sentence is already the symptom; only repeat it as a
+            # check when the expert gave no separate check.
+            "checks": [s for s in bare[1:] if any(w in s.lower() for w in _CHECK_WORDS)]
+                      or [s for s in bare[:1] if any(w in s.lower() for w in _CHECK_WORDS)],
             "do_not": [s for s in bare if s.lower().startswith(_DONT_STARTS)],
             "escalate_when": [s for s in bare if any(w in s.lower() for w in _ESCALATE_WORDS)],
-            "evidence_quote": window[0],
+            "evidence_quote": bare[0],
         })
     return {"heuristics": heuristics}

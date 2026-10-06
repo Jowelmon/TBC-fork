@@ -539,6 +539,26 @@ class CaptureInterviewRequest(_BaseModel):
     expert_role: str = _Field(min_length=1, max_length=120)
     asset_type: str = _Field(min_length=1, max_length=40)
     transcript: str = _Field(min_length=1)
+    # Optional: the heuristics the capturer kept after reviewing a draft from
+    # /capture/draft. They are re-grounded against the transcript server-side.
+    heuristics: list[dict] | None = None
+    provider: str | None = None
+
+
+class CaptureDraftRequest(_BaseModel):
+    asset_type: str = _Field(min_length=1, max_length=40)
+    transcript: str = _Field(min_length=1)
+
+
+@app.get("/causes")
+def get_causes(user: str, asset_type: str | None = None) -> dict:
+    """Canonical causes with plain-English labels and owning asset type."""
+    _need(user, "view_case")
+    from .cause_registry import list_causes
+    causes = list_causes()
+    if asset_type:
+        causes = [c for c in causes if c["asset_type"] == asset_type]
+    return {"causes": causes}
 
 
 @app.get("/system/info")
@@ -578,7 +598,13 @@ def post_capture_interview(user: str, body: CaptureInterviewRequest) -> dict:
     from .tools import _log
 
     try:
-        draft = capture.draft_from_transcript(body.transcript, body.asset_type)
+        if body.heuristics is not None:
+            draft = capture.reviewed_draft(
+                body.transcript, body.asset_type, body.heuristics,
+                body.provider or llm.provider_name(),
+            )
+        else:
+            draft = capture.draft_from_transcript(body.transcript, body.asset_type)
     except capture.CaptureError as exc:
         raise HTTPException(422, str(exc))
     except llm.LLMError as exc:
@@ -595,6 +621,24 @@ def post_capture_interview(user: str, body: CaptureInterviewRequest) -> dict:
     return {"proposal_id": proposal["proposal_id"], "status": "pending",
             "provider": draft["provider"], "heuristics": draft["heuristics"],
             "warnings": draft["warnings"], "dropped": draft["dropped"]}
+
+
+@app.post("/capture/draft")
+def post_capture_draft(user: str, body: CaptureDraftRequest) -> dict:
+    """Draft heuristics for review WITHOUT queuing anything.
+
+    The capturer reviews the draft (drop items, correct a cause) and then
+    submits it to /capture/interview with ``heuristics`` set.
+    """
+    _need(user, "capture_expert_knowledge")
+    from . import capture, llm
+    try:
+        draft = capture.draft_from_transcript(body.transcript, body.asset_type)
+    except capture.CaptureError as exc:
+        raise HTTPException(422, str(exc))
+    except llm.LLMError as exc:
+        raise HTTPException(502, f"knowledge extraction failed: {exc}")
+    return {"status": "draft", **draft}
 
 
 @app.get("/kb/expert-heuristics")
@@ -635,7 +679,8 @@ def get_case_expert_knowledge(case_id: str, user: str) -> dict:
                 "approved_by": item["approved_by"],
             }
             for item in _LSTORE.expert_heuristics
-            if item["likely_cause"] == cause_id and item["asset_type"] == asset_type
+            if canonicalize_cause_id(item["likely_cause"]) == cause_id
+            and item["asset_type"] == asset_type
         ]
     return {
         "matches": matches,

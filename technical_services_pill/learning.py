@@ -332,17 +332,23 @@ class LearningStore:
         as knowledge only: a new cause needs an engineered decision-tree
         branch before the engine can ever diagnose it.
         """
+        from .cause_registry import canonicalize_cause_id
         from .decision_tree import KNOWN_CAUSE_IDS
 
         added: list[str] = []
         for i, h in enumerate(p["heuristics"]):
             hid = f"KB-EXP-{p['proposal_id'][5:]}-{i + 1}"
+            # Store canonical IDs and the owning pill's asset type, so the
+            # diagnosis screen can match approved knowledge reliably (older
+            # drafts stored aliases and the interview-level asset type).
+            h = {**h, "likely_cause": canonicalize_cause_id(h["likely_cause"]) or h["likely_cause"]}
+            asset_type = h.get("asset_type") or p["asset_type"]
             entry = {
                 **h,
                 "id": hid,
                 "expert_name": p["expert_name"],
                 "expert_role": p["expert_role"],
-                "asset_type": p["asset_type"],
+                "asset_type": asset_type,
                 "proposal_id": p["proposal_id"],
                 "approved_by": p["decided_by"],
                 "kb_version": self._kb_version,
@@ -354,7 +360,7 @@ class LearningStore:
                     id=hid,
                     case_id="EXPERT",
                     asset_id="EXPERT",
-                    asset_type=p["asset_type"],
+                    asset_type=asset_type,
                     fault_signature=h["symptom_pattern"].lower(),
                     proposed_cause=h["likely_cause"],
                     confirmed_cause=h["likely_cause"],
