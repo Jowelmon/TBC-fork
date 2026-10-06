@@ -201,8 +201,10 @@ export function renderDashboard(el, state, h) {
             <option value="CRAH-DC1-01">CRAH-DC1-01 (CRAH)</option>
             <option value="CRAH-DC1-02">CRAH-DC1-02 (CRAH)</option>
             <option value="CHILLER-DC1-01">CHILLER-DC1-01 (Chiller)</option>
+            <option value="CHILLER-DC1-02">CHILLER-DC1-02 (Chiller)</option>
             <option value="UPS-DC1-01">UPS-DC1-01 (UPS)</option>
             <option value="PUMP-DC1-01">PUMP-DC1-01 (Pump)</option>
+            <option value="PUMP-DC1-02">PUMP-DC1-02 (Pump)</option>
           </select></div>
           <div class="form-group"><label>Sensor ID</label><input id="nc-sensor" type="text" value="SA-TEMP-01" placeholder="e.g. SA-TEMP-01"></div>
           <div class="form-group"><label>Fault Type</label><select id="nc-fault">
@@ -995,8 +997,47 @@ export function renderGovernance(el, state, h) {
     </div>
     <div class="card"><div class="card-header"><h3>Knowledge Approval Queue</h3></div><div class="card-body" id="queue-body"></div></div>
     <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>
+    <div class="card"><div class="card-header"><h3>Rollback</h3></div><div class="card-body" id="rollback-body"></div></div>
     <div class="card"><div class="card-header"><h3>SHA-256 Audit Trace</h3></div><div class="card-body" id="trace-body"></div></div>
   `;
+
+  // Rollback -- admin only. Lets anyone see the addressable versions even
+  // if they can't act on them, so the mapping from "v1.4.0" on screen to
+  // the integer /kb/rollback/{N} takes is never a guess. A named function
+  // (not a fire-and-forget IIFE) so an approval/rejection elsewhere on this
+  // same screen can refresh it too -- otherwise it shows a stale "current".
+  async function loadRollback() {
+    const body = document.getElementById('rollback-body');
+    if (!body) return;
+    const role = api.user();
+    const canRollback = role === 'admin1';
+    try {
+      const { versions, current_version, current_label } = await api.get('/kb/versions');
+      const options = versions.map(v => `<option value="${v.version}" ${v.version === current_version ? 'selected' : ''}>v${esc(v.label)} (version ${v.version})${v.version === current_version ? ' — current' : ''}</option>`).join('');
+      body.innerHTML = `
+        <p class="muted" style="margin-bottom:10px">Current KB: <strong>v${esc(current_label)}</strong> (version ${current_version}). Rolling back removes every case added after the chosen version.</p>
+        ${canRollback ? `
+          <div class="flex gap-8 flex-wrap align-center">
+            <select id="rb-version">${options}</select>
+            <button class="btn btn-red btn-sm" id="rb-go">Roll back</button>
+          </div>
+        ` : `<p class="muted">Rolling back requires the Admin role. Switch role in the top bar to see the control.</p>`}
+      `;
+      if (canRollback) {
+        document.getElementById('rb-go').onclick = async () => {
+          const target = document.getElementById('rb-version').value;
+          try {
+            const r = await api.post(`/kb/rollback/${target}`);
+            showToast(`Rolled back to version ${r.rolled_back_to} (${r.removed_cases} case(s) removed)`, 'success');
+            loadStats(); loadQueue(); loadRollback(); window.__app__?.refreshKbVersion?.();
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+      }
+    } catch (e) {
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  }
+  loadRollback();
 
   // Pill Registry — all four pills, who owns review, and how their KB is doing
   (async () => {
@@ -1083,7 +1124,7 @@ export function renderGovernance(el, state, h) {
           try {
             await api.post(`/kb/proposals/${id}/approve`);
             showToast(`${id} approved and live in the knowledge base`, 'success');
-            loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.();
+            loadQueue(); loadStats(); loadRollback(); window.__app__?.refreshKbVersion?.();
             if (p.kind !== 'expert_capture' && p.confirmed_cause) {
               await loadRerunCandidates(p.confirmed_cause, p.asset_type);
             }

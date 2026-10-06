@@ -927,6 +927,25 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
             "decided_by": user, "reason": reason}
 
 
+@app.get("/kb/versions")
+def list_kb_versions(user: str = Depends(resolve_user)) -> dict:
+    """Addressable KB versions, each with the raw int `/kb/rollback/{N}`
+    takes AND the semver label every screen displays (e.g. version 1 ->
+    "1.4.0") -- so a UI control can roll back to what's actually on
+    screen instead of making someone guess the mapping.
+    """
+    _need(user, "view_case")
+    from .learning import STORE as _LSTORE, kb_version_label
+    current = _LSTORE.get_kb_version()
+    return {
+        "current_version": current,
+        "current_label": _LSTORE.get_kb_version_label(),
+        "versions": [
+            {"version": v, "label": kb_version_label(v)} for v in range(current + 1)
+        ],
+    }
+
+
 @app.post("/kb/rollback/{target_version}")
 def rollback_kb(target_version: int, user: str = Depends(resolve_user)) -> dict:
     """Roll back the KB to a prior version, removing cases added after it (F2).

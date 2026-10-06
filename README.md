@@ -70,7 +70,7 @@ work order → outcome → feedback → **validated case written back to KB**
 | `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace. |
 | `learning.py` | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back, proposal workflow. |
 | `audit.py` | `canonical_json`, SHA-256 `compute_hash`, `GENESIS_HASH` for hash-chain integrity. |
-| `mock_registry.py` | Demo data: 5 assets across 4 pills, seed KB, maintenance history, sensor metadata, BMS status. |
+| `mock_registry.py` | Demo data: 7 assets across 4 pills (2 CRAH, 2 chiller, 1 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
 | `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit. |
 | `app.py` | FastAPI app: RBAC-enforced routes, identity, persistence lifecycle, the agent-loop driver, and `/pills`. |
 | `demo.py` | End-to-end lifecycle, multi-asset routing, and AI HARVEST capture-to-reuse demo. |
@@ -171,7 +171,9 @@ snapshots.
 | `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
 | `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
 | `POST` | `/kb/proposals/{id}/reject` | Reject a proposal (steward/admin) |
+| `GET` | `/kb/versions` | Every addressable KB version, each with its integer **and** its displayed semver label (e.g. version 1 = "1.4.0") |
 | `POST` | `/kb/rollback/{version}` | Roll back KB to a target version (admin only) |
+| `GET` | `/pills` | Pill Registry: owner steward, KB version, knowledge count, approval rate per pill |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
 
 > Interactive Swagger docs at `/docs`, ReDoc at `/redoc` once the server is running.
@@ -355,7 +357,10 @@ write-back** loop (spec §7, enhanced in F2):
 4. A higher `kb_match` feeds into the W3 term, raising `confidence` — so
    recurring faults are diagnosed faster and with more confidence.
 5. An admin can **roll back** the KB to a prior version via `/kb/rollback/{version}`,
-   removing all cases added after that version.
+   removing all cases added after that version — reachable from the UI via
+   the **Rollback** panel on Governance (admin role), which lists every
+   addressable version by its displayed label so there's no guessing which
+   integer corresponds to "v1.4.0" on screen.
 
 **Demo proof:** the learning-loop case shows `kb_match` rising from **0.73 →
 1.00** and confidence from **0.43 → 0.50** after one approved feedback cycle
@@ -487,7 +492,7 @@ make test        # = PYTHONPATH=. python -m pytest -q tests
 make eval         # = PYTHONPATH=. python3 tests/evals/run_evals.py
 ```
 
-**115 tests** (verified with `make test`; this count is a snapshot — run the
+**120 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases, F1-F3
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
@@ -508,6 +513,7 @@ checks:
 | `test_no_contradictions.py` | Phase 4: no developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
 | `test_contrast.py` | Phase 5: every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
 | `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
+| `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
 
 **`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
 pass/fail table, independent of the pytest suite: ADP call shape, AI cannot
@@ -569,11 +575,13 @@ tests/
 ├── test_no_contradictions.py    # Phase 4: no on-screen contradictions
 ├── test_contrast.py             # Phase 5: WCAG contrast, both themes
 ├── test_pill_registry.py        # Phase 6: /pills
+├── test_judge_fixes.py          # Rollback UI/label reconciliation, new asset fixtures
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/
 ├── ADP_SETUP.md             # Tencent ADP agent configuration
-└── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
+├── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
+└── JUDGE_REPORT_*.md        # Independent judge regrades (Part C), scores never edited
 
 DEMO.md                   # 6-minute click-through script
 api_preview.html          # Self-contained API explorer (open in browser)

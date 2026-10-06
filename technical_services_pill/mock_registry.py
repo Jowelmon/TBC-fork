@@ -69,6 +69,24 @@ ASSETS: dict[str, dict] = {
             "refrigerant": "R134a",
         },
     },
+    # A second chiller with a DIFFERENT fault signature (condenser fouling,
+    # not refrigerant leak) so expert knowledge captured about condenser
+    # fouling -- e.g. from the built-in SAMPLE_INTERVIEW -- has somewhere it
+    # can actually be reused by a live diagnosis, not just filed and stranded.
+    "CHILLER-DC1-02": {
+        "id": "CHILLER-DC1-02",
+        "type": "Chiller",
+        "site_id": "DC-SINGAPORE-1",
+        "location": "Plant Room A",
+        "criticality": "high",
+        "parent_system_id": "CHW-LOOP-A",
+        "commissioned_at": "2019-11-02",
+        "specs": {
+            "cooling_capacity_kw": 800,
+            "compressor_type": "centrifugal",
+            "refrigerant": "R134a",
+        },
+    },
     # --- UPS (spec §4.2 multi-asset) -------------------------------------
     "UPS-DC1-01": {
         "id": "UPS-DC1-01",
@@ -93,6 +111,22 @@ ASSETS: dict[str, dict] = {
         "criticality": "medium",
         "parent_system_id": "CHW-LOOP-B",
         "commissioned_at": "2022-06-20",
+        "specs": {
+            "flow_rate_m3h": 120,
+            "head_m": 35,
+            "rpm": 2950,
+        },
+    },
+    # A second pump with a different fault signature (cavitation, not shaft
+    # misalignment) for the same reason as CHILLER-DC1-02 above.
+    "PUMP-DC1-02": {
+        "id": "PUMP-DC1-02",
+        "type": "Pump",
+        "site_id": "DC-SINGAPORE-1",
+        "location": "Plant Room B",
+        "criticality": "medium",
+        "parent_system_id": "CHW-LOOP-B",
+        "commissioned_at": "2021-09-10",
         "specs": {
             "flow_rate_m3h": 120,
             "head_m": 35,
@@ -296,6 +330,26 @@ TELEMETRY: dict[str, list[tuple]] = {
             "starter_ok": True, "contactor_ok": True, "winding_resistance": 2.4,
         }, []),
     ],
+    # CHILLER-DC1-02: high approach temp, fans running, low-pressure switch
+    # NOT tripped -> condenser_fouling (distinct from CHILLER-DC1-01's
+    # refrigerant_leak, so that captured knowledge has somewhere to land).
+    "CHILLER-DC1-02": [
+        ("chiller", "status", {
+            "compressor_running": True, "low_pressure_switch": False,
+            "high_pressure_switch": True, "motor_overcurrent": False,
+            "oil_level": "normal",
+        }, ["KB-CH2"]),
+        ("chiller", "refrigerant", {
+            "charge_pct": 95, "leak_detected": False,
+            "superheat": 8.0, "subcooling": 6.0,
+        }, []),
+        ("chiller", "condenser", {
+            "approach_temp": 4.2, "fans_running": True, "fouling_factor": 0.6,
+        }, ["KB-CH2"]),
+        ("chiller", "electrical", {
+            "starter_ok": True, "contactor_ok": True, "winding_resistance": 2.6,
+        }, []),
+    ],
     # UPS: low SoH + aged bank -> battery_eol
     "UPS-DC1-01": [
         ("ups", "battery", {
@@ -324,6 +378,23 @@ TELEMETRY: dict[str, list[tuple]] = {
         }, []),
         ("pump", "bearing", {
             "temp_c": 62.0, "greasing_overdue": False,
+        }, []),
+        ("pump", "base", {
+            "soft_foot_detected": False, "directional_dominant": False,
+        }, []),
+    ],
+    # PUMP-DC1-02: broadband vibration + low NPSH margin -> cavitation
+    # (distinct from PUMP-DC1-01's shaft_misalignment).
+    "PUMP-DC1-02": [
+        ("pump", "vibration", {
+            "dominant_order": "broadband", "axial_mm_s": 2.0,
+            "bearing_freq_present": False,
+        }, ["KB-PMP2"]),
+        ("pump", "status", {
+            "running": True, "rpm": 2900, "flow_pct": 70, "npsh_margin": 0.15,
+        }, ["KB-PMP2"]),
+        ("pump", "bearing", {
+            "temp_c": 58.0, "greasing_overdue": False,
         }, []),
         ("pump", "base", {
             "soft_foot_detected": False, "directional_dominant": False,
