@@ -332,7 +332,10 @@ write-back** loop (spec §7, enhanced in F2):
    removing all cases added after that version.
 
 **Demo proof:** the learning-loop case shows `kb_match` rising from **0.73 →
-1.00** and confidence from **0.63 → 0.70** after one approved feedback cycle.
+1.00** and confidence from **0.43 → 0.50** after one approved feedback cycle
+(`make demo`, CASE 3; the exact numbers move if `mock_registry`'s peer
+sensors change, since `peer_agreement` is now computed from them live —
+see "Confidence breakdown" below).
 
 **Separation of actors:** whoever proposes a change can never approve it.
 `approve_proposal` returns 403 if the approver is the proposer, and the

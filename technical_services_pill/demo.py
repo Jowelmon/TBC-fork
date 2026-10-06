@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .agent_state import AgentState
-from .confidence import score_confidence, evidence_coverage_score
+from .confidence import peer_agreement_from_registry, score_confidence, evidence_coverage_score
 from .decision_tree import evaluate_decision_tree
 from .models import (
     AgentStateName,
@@ -112,7 +112,7 @@ def _run_happy_path() -> str:
     cases = get_similar_cases("supply_air_temp_absent", "CRAH", 1)
     confidence = score_confidence(
         evidence_coverage=coverage,
-        peer_agreement=1.0,
+        peer_agreement=peer_agreement_from_registry("CRAH-DC1-01", "SA-TEMP-01"),
         kb_match=0.9 if cases else 0.0,
     )
     new_state = state.complete_diagnosis(diagnosis, confidence, actor="agent")
@@ -258,7 +258,11 @@ def _run_learning_loop() -> tuple[str, float, float]:
         )
         coverage = evidence_coverage_score(st.evidence, 6)
         kb_match = _LSTORE.kb_match_score(sig, top.cause_id, "CRAH")
-        confidence = score_confidence(evidence_coverage=coverage, peer_agreement=1.0, kb_match=kb_match)
+        confidence = score_confidence(
+            evidence_coverage=coverage,
+            peer_agreement=peer_agreement_from_registry("CRAH-DC1-02", "SA-TEMP-02"),
+            kb_match=kb_match,
+        )
         st.complete_diagnosis(diagnosis, confidence, actor="agent")
         print(f"{label}: cause={top.cause_id} | kb_match={kb_match:.3f} | confidence={confidence:.3f}")
         return st, confidence, kb_match
@@ -364,13 +368,16 @@ def _run_multi_asset() -> bool:
         candidate_causes=candidates, top_cause_id=top.cause_id,
         reasoning_trace=f"decision tree -> {top.cause_id}", kb_refs=top.kb_refs,
     )
-    from .confidence import evidence_coverage_score, score_confidence
     from .decision_tree import FAULT_BRANCH_COUNTS
     from .learning import STORE as _LSTORE
     coverage = evidence_coverage_score(st.evidence, FAULT_BRANCH_COUNTS.get(fault_type, 6))
     sig = " ".join([fault_type.replace("_", " "), top.cause_id.replace("_", " ")])
     kb_match = _LSTORE.kb_match_score(sig, top.cause_id, "Chiller")
-    confidence = score_confidence(evidence_coverage=coverage, peer_agreement=1.0, kb_match=kb_match)
+    confidence = score_confidence(
+        evidence_coverage=coverage,
+        peer_agreement=peer_agreement_from_registry(asset_id, obs.sensor_id),
+        kb_match=kb_match,
+    )
     new_st = st.complete_diagnosis(diagnosis, confidence, actor="agent")
     print(f"diagnosis: {top.cause_id} | confidence={confidence:.2f} -> {new_st.value}")
     if new_st != AgentStateName.RECOMMENDING:

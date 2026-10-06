@@ -307,6 +307,9 @@ textarea { resize: vertical; min-height: 70px; }
 .conf-w { font-size: 13px; font-weight: 700; color: var(--text-bright); }
 .conf-v { font-size: 20px; font-weight: 800; margin-top: 4px; }
 .conf-l { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.conf-bar-track { height: 6px; background: var(--bg-input); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.conf-bar-fill { height: 100%; background: var(--blue); }
+.conf-bar-fill.penalty { background: var(--red); }
 
 /* ── Pipeline ───────────────────────────────────────────────────────────────── */
 .pipeline { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
@@ -611,6 +614,10 @@ tr.clickable:focus-visible { outline: 2px solid var(--blue); outline-offset: -2p
 .kh-label { font-size: 12px; }
 .cap-submit { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0 4px; background: var(--bg-card); border-top: 1px solid var(--border); margin-top: 8px; }
 .cap-submit .muted { font-size: 13px; }
+
+/* ── Re-run diagnosis on similar open cases ────────────────────────────── */
+.rerun-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.rerun-row:last-child { border-bottom: none; }
 
 /* ── Governance queue ──────────────────────────────────────────────────── */
 .q-card { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }

@@ -1,8 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
 import { api } from './api.js?v=4';
-import { initGuide } from './guide.js?v=6';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=6';
+import { initGuide } from './guide.js?v=7';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=7';
 
 // ── State ──────────────────────────────────────────────────
 const state = {

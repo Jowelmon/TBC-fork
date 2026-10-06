@@ -73,6 +73,7 @@ class AgentState:
     current_state: AgentStateName
     guardrail_result: GuardrailResult | None
     ai_hypothesis: dict | None
+    confidence_breakdown: dict | None
     work_order_id: str | None
     feedback_id: str | None
     history: list[HistoryEntry]
@@ -102,6 +103,7 @@ class AgentState:
         self.current_state = AgentStateName.TRIGGERED
         self.guardrail_result: GuardrailResult | None = None
         self.ai_hypothesis: dict | None = None
+        self.confidence_breakdown: dict | None = None
         self.work_order_id = None
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
@@ -267,6 +269,7 @@ class AgentState:
         *,
         actor: str = "agent",
         guardrail_ctx: GuardrailContext | None = None,
+        confidence_breakdown: dict | None = None,
     ) -> AgentStateName:
         """DIAGNOSING -> RECOMMENDING | GATHERING_EVIDENCE | ESCALATED.
 
@@ -274,12 +277,18 @@ class AgentState:
           - confidence < ESCALATE_CONFIDENCE       -> ESCALATED (G4)
           - confidence < MIN_RECO_CONFIDENCE       -> GATHERING_EVIDENCE (max 2 loops)
           - confidence >= MIN_RECO_CONFIDENCE      -> RECOMMENDING
+
+        ``confidence_breakdown`` (W1-W5 + the KB version used) is stored
+        alongside ``confidence`` purely for display (Diagnosis screen,
+        Governance's before/after re-run) — nothing routes on it.
         """
         if self.current_state != AgentStateName.DIAGNOSING:
             raise ValueError("complete_diagnosis only valid in DIAGNOSING")
 
         self.diagnosis = diagnosis
         self.confidence = confidence
+        if confidence_breakdown is not None:
+            self.confidence_breakdown = confidence_breakdown
 
         if confidence < ESCALATE_CONFIDENCE:
             self._transition(
@@ -502,6 +511,7 @@ class AgentState:
                 else None
             ),
             "ai_hypothesis": self.ai_hypothesis,
+            "confidence_breakdown": self.confidence_breakdown,
             "human_decision": (
                 self.human_decision.model_dump(mode="json")
                 if self.human_decision

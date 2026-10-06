@@ -48,6 +48,7 @@ class CaseStore:
         state.outcome = Outcome.model_validate(data["outcome"]) if data.get("outcome") else None
         state.guardrail_result = GuardrailResult.model_validate(data["guardrail_result"]) if data.get("guardrail_result") else None
         state.ai_hypothesis = data.get("ai_hypothesis")
+        state.confidence_breakdown = data.get("confidence_breakdown")
         state.work_order_id = data.get("work_order_id")
         state.feedback_id = data.get("feedback_id")
         state.history = [HistoryEntry.model_validate(item) for item in data.get("history", [])]

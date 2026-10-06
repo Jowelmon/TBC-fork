@@ -119,14 +119,13 @@ def _asset_type(asset_id: str) -> str:
 def _fault_signature(state: AgentState, top_cause_id: str, kb_refs: list[str]) -> str:
     """Deterministic, asset-agnostic fault signature for KB retrieval.
 
-    Built from the observation type, resolved cause and grounding kb_refs —
-    not from CRAH-specific token names — so chiller/UPS/pump diagnoses query
-    the KB with their own signature (which honestly starts empty in a cold
-    KB, yielding a low ``kb_match`` and a conservative confidence).
+    Delegates to ``tools.build_fault_signature`` so diagnosis time (here)
+    and feedback time (``tools.submit_feedback``) build it identically —
+    a validated case must match the next identical fault's query signature.
     """
-    parts = [state.observation.type.replace("_", " "), top_cause_id.replace("_", " ")]
-    parts.extend(r.replace(":", " ").replace("_", " ") for r in kb_refs)
-    return " ".join(parts)
+    from .tools import build_fault_signature
+
+    return build_fault_signature(state.observation.type, top_cause_id, kb_refs)
 
 
 # ========================================================================== #
@@ -292,7 +291,9 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
         from .learning import STORE as _LSTORE
 
         kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id))
-        signals = derive_confidence_signals(state.evidence)
+        signals = derive_confidence_signals(
+            state.evidence, asset_id=state.asset_id, sensor_id=state.observation.sensor_id,
+        )
         conf = score_confidence(
             evidence_coverage=coverage,
             peer_agreement=signals["peer_agreement"],
@@ -300,6 +301,14 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
             data_staleness=signals["data_staleness"],
             conflict_penalty=signals["conflict_penalty"],
         )
+        breakdown = {
+            "evidence_coverage": coverage,
+            "peer_agreement": signals["peer_agreement"],
+            "kb_match": kb_match,
+            "data_staleness": signals["data_staleness"],
+            "conflict_penalty": signals["conflict_penalty"],
+            "kb_version_label": _LSTORE.get_kb_version_label(),
+        }
         hypothesis = generate_diagnostic_hypothesis(
             asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
             observations={
@@ -319,7 +328,7 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
             knowledge=[{"cause": top.cause_id, "kb_ref": ref} for ref in top.kb_refs],
         )
         state.record_ai_second_opinion(hypothesis, actor="agent")
-        new_st = state.complete_diagnosis(diag, conf, actor="agent")
+        new_st = state.complete_diagnosis(diag, conf, actor="agent", confidence_breakdown=breakdown)
         if new_st == AgentStateName.RECOMMENDING:
             rec = Recommendation(
                 actions=[top.action], kb_refs=top.kb_refs,
@@ -377,6 +386,35 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
             "confidence": state.confidence}
 
 
+@app.get("/cases/similar")
+def list_similar_cases(
+    cause: str, asset_type: str | None = None, user: str = Depends(resolve_user),
+) -> dict:
+    """Open (not CLOSED) cases currently diagnosed with ``cause`` — the
+    candidates a steward can re-score after approving a proposal for that
+    cause.
+
+    Registered before ``/cases/{case_id}`` below: a literal path must be
+    declared ahead of a param route with the same shape, or the param
+    route shadows it and every call here 404s as case_id="similar".
+    """
+    _need(user, "view_case")
+    matches = []
+    for case_id in STORE.list():
+        state = STORE.get(case_id)
+        if state is None or state.current_state == AgentStateName.CLOSED:
+            continue
+        if not state.diagnosis or state.diagnosis.top_cause_id != cause:
+            continue
+        if asset_type and _asset_type(state.asset_id) != asset_type:
+            continue
+        matches.append({
+            "case_id": case_id, "asset_id": state.asset_id,
+            "current_state": state.current_state.value, "confidence": state.confidence,
+        })
+    return {"matches": matches}
+
+
 @app.get("/cases/{case_id}")
 def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
@@ -411,6 +449,56 @@ def get_recommendation(case_id: str, user: str = Depends(resolve_user)) -> dict:
     return {"recommendation": rec.model_dump(mode="json") if rec else None,
             "guardrail_result": gr.model_dump(mode="json") if gr else None,
             "guardrail_route_explanation": _route_explanation(state)}
+
+
+@app.get("/cases/{case_id}/confidence-preview")
+def preview_confidence(case_id: str, user: str = Depends(resolve_user)) -> dict:
+    """Non-destructive: re-score this case's EXISTING evidence against the
+    CURRENT KB and registry, without mutating the case.
+
+    Lets Governance show a steward the before/after effect a just-approved
+    proposal has on a similar still-open case ("Re-run diagnosis on similar
+    open cases"). Nothing here changes ``current_state`` or ``confidence``
+    on the stored case -- it's a preview, not a re-diagnosis.
+    """
+    _need(user, "view_case")
+    state = _get_case(case_id)
+    if not state.diagnosis or not state.diagnosis.top_cause_id or state.diagnosis.top_cause_id == "unresolvable":
+        raise HTTPException(409, "case has no resolvable diagnosis to re-score")
+
+    from .confidence import derive_confidence_signals, evidence_coverage_score, score_confidence
+    from .decision_tree import FAULT_BRANCH_COUNTS
+    from .learning import STORE as _LSTORE
+
+    coverage = evidence_coverage_score(
+        state.evidence, FAULT_BRANCH_COUNTS.get(state.observation.type, 6),
+    )
+    sig = _fault_signature(state, state.diagnosis.top_cause_id, state.diagnosis.kb_refs)
+    kb_match = _LSTORE.kb_match_score(sig, state.diagnosis.top_cause_id, _asset_type(state.asset_id))
+    signals = derive_confidence_signals(
+        state.evidence, asset_id=state.asset_id, sensor_id=state.observation.sensor_id,
+    )
+    after = score_confidence(
+        evidence_coverage=coverage,
+        peer_agreement=signals["peer_agreement"],
+        kb_match=kb_match,
+        data_staleness=signals["data_staleness"],
+        conflict_penalty=signals["conflict_penalty"],
+    )
+    return {
+        "case_id": case_id,
+        "before": state.confidence,
+        "after": after,
+        "delta": after - state.confidence,
+        "breakdown": {
+            "evidence_coverage": coverage,
+            "peer_agreement": signals["peer_agreement"],
+            "kb_match": kb_match,
+            "data_staleness": signals["data_staleness"],
+            "conflict_penalty": signals["conflict_penalty"],
+            "kb_version_label": _LSTORE.get_kb_version_label(),
+        },
+    }
 
 
 @app.post("/cases/{case_id}/approval")

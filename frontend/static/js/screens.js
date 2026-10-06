@@ -57,11 +57,11 @@ const GUARDRAILS = [
 
 // ── Confidence weights for W1-W5 breakdown ────────────────
 const WEIGHTS = [
-  { id: 'W1', val: 0.30, label: 'Evidence Coverage', sign: '+' },
-  { id: 'W2', val: 0.20, label: 'Peer Agreement', sign: '+' },
-  { id: 'W3', val: 0.25, label: 'KB Match', sign: '+' },
-  { id: 'W4', val: 0.10, label: 'Data Staleness', sign: '-' },
-  { id: 'W5', val: 0.15, label: 'Conflict Penalty', sign: '-' },
+  { id: 'W1', val: 0.30, key: 'evidence_coverage', label: 'Evidence Coverage', sign: '+' },
+  { id: 'W2', val: 0.20, key: 'peer_agreement', label: 'Peer Agreement', sign: '+' },
+  { id: 'W3', val: 0.25, key: 'kb_match', label: 'KB Match', sign: '+' },
+  { id: 'W4', val: 0.10, key: 'data_staleness', label: 'Data Staleness', sign: '-' },
+  { id: 'W5', val: 0.15, key: 'conflict_penalty', label: 'Conflict Penalty', sign: '-' },
 ];
 
 // F5: Evidence display toggle state (plain English vs raw JSON)
@@ -485,15 +485,22 @@ export function renderDiagnosis(el, state, h) {
           </div>
         </div>
         <div class="conf-breakdown">
-          ${WEIGHTS.map(w => `
+          ${WEIGHTS.map(w => {
+            const breakdown = s.confidence_breakdown || {};
+            const factor = breakdown[w.key];
+            const hasFactor = typeof factor === 'number';
+            return `
             <div class="conf-item">
-              <div class="conf-w">${w.id} = ${w.val.toFixed(2)}</div>
-              <div class="conf-v">${w.sign}</div>
+              <div class="conf-w">${w.id} ${w.sign} ${w.val.toFixed(2)}</div>
+              <div class="conf-v">${hasFactor ? factor.toFixed(2) : '—'}</div>
+              <div class="conf-bar-track"><div class="conf-bar-fill ${w.sign === '-' ? 'penalty' : ''}" style="width:${hasFactor ? (factor * 100).toFixed(0) : 0}%"></div></div>
               <div class="conf-l">${w.label}</div>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
         <div class="muted" style="margin-top:12px">confidence = W1*evidence_coverage + W2*peer_agreement + W3*kb_match - W4*staleness - W5*conflict</div>
+        <div class="muted" style="margin-top:4px">KB version used: <strong>${esc((s.confidence_breakdown && s.confidence_breakdown.kb_version_label) || 'not yet diagnosed')}</strong></div>
       `;
 
       // Render recommendation
@@ -860,6 +867,7 @@ export function renderGovernance(el, state, h) {
       <div class="card"><div class="card-header"><h3>Governance Pipeline</h3></div><div class="card-body" id="pipeline-body"></div></div>
     </div>
     <div class="card"><div class="card-header"><h3>Knowledge Approval Queue</h3></div><div class="card-body" id="queue-body"></div></div>
+    <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>
     <div class="card"><div class="card-header"><h3>SHA-256 Audit Trace</h3></div><div class="card-body" id="trace-body"></div></div>
   `;
 
@@ -924,7 +932,14 @@ export function renderGovernance(el, state, h) {
         const box = document.getElementById(`rj-${id}`);
         if (aBtn) aBtn.onclick = async () => {
           aBtn.disabled = true;
-          try { await api.post(`/kb/proposals/${id}/approve`); showToast(`${id} approved and live in the knowledge base`, 'success'); loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.(); }
+          try {
+            await api.post(`/kb/proposals/${id}/approve`);
+            showToast(`${id} approved and live in the knowledge base`, 'success');
+            loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.();
+            if (p.kind !== 'expert_capture' && p.confirmed_cause) {
+              await loadRerunCandidates(p.confirmed_cause, p.asset_type);
+            }
+          }
           catch (e) { aBtn.disabled = false; showToast(`Error: ${e.message}`, 'error'); }
         };
         if (rBtn) rBtn.onclick = () => { box.hidden = false; document.getElementById(`rj-reason-${id}`).focus(); };
@@ -942,6 +957,53 @@ export function renderGovernance(el, state, h) {
       qb.innerHTML = isForbidden(e)
         ? rbacNote('Reviewing knowledge proposals', 'knowledge stewards (steward1, steward2)')
         : `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  }
+
+  // Re-run diagnosis on similar still-open cases after a proposal approves
+  // (Phase 3: "confidence the KB can move" — show the before/after, live).
+  async function loadRerunCandidates(cause, assetType) {
+    const card = document.getElementById('rerun-card');
+    const body = document.getElementById('rerun-body');
+    if (!card || !body) return;
+    try {
+      const params = new URLSearchParams({ cause });
+      if (assetType) params.set('asset_type', assetType);
+      const { matches } = await api.get(`/cases/similar?${params}`);
+      card.hidden = false;
+      if (!matches.length) {
+        body.innerHTML = `<p class="muted">No other open case is currently diagnosed as <strong>${esc(causeLabel(cause))}</strong> to re-score.</p>`;
+        return;
+      }
+      body.innerHTML = `
+        <p class="muted" style="margin-bottom:10px">These open cases were diagnosed as <strong>${esc(causeLabel(cause))}</strong> before this approval. Re-run shows what the KB update just changed, without touching the case.</p>
+        ${matches.map(m => `
+          <div class="rerun-row" id="rerun-row-${esc(m.case_id)}">
+            <div><code>${esc(m.case_id)}</code> <span class="muted">${esc(m.asset_id)} · ${esc(m.current_state)}</span></div>
+            <button class="btn btn-secondary btn-sm" id="rerun-btn-${esc(m.case_id)}">Re-run diagnosis</button>
+            <span id="rerun-result-${esc(m.case_id)}"></span>
+          </div>
+        `).join('')}
+      `;
+      matches.forEach(m => {
+        const btn = document.getElementById(`rerun-btn-${m.case_id}`);
+        if (!btn) return;
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            const preview = await api.get(`/cases/${m.case_id}/confidence-preview`);
+            const before = (preview.before * 100).toFixed(1);
+            const after = (preview.after * 100).toFixed(1);
+            const up = preview.after >= preview.before;
+            document.getElementById(`rerun-result-${m.case_id}`).innerHTML =
+              ` <span class="badge ${up ? 'badge-green' : 'badge-grey'}">${before}% &rarr; ${after}%</span>`;
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          btn.disabled = false;
+        };
+      });
+    } catch (e) {
+      card.hidden = false;
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
     }
   }
 
