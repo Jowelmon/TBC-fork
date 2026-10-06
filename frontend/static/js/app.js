@@ -2,7 +2,7 @@
 
 import { api } from './api.js?v=4';
 import { initGuide } from './guide.js?v=7';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=9';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=10';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -174,6 +174,25 @@ function renderScreen() {
       break;
   }
 }
+
+// ── Theme toggle (light by default; dark is explicit opt-in) ──────────
+const themeToggle = document.getElementById('theme-toggle');
+function applyThemeButtonLabel() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  themeToggle.textContent = isDark ? 'Light theme' : 'Dark theme';
+  themeToggle.setAttribute('aria-pressed', String(isDark));
+}
+applyThemeButtonLabel();
+themeToggle.addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  if (next === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('tbc_theme', next);
+  applyThemeButtonLabel();
+});
 
 // ── Role switcher ──────────────────────────────────────────
 // Switching role means logging in as that demo user (sets the signed

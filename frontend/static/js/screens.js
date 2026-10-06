@@ -12,6 +12,11 @@ function setHTML(id, html) {
 const isForbidden = e => /403|lacks capability|forbidden/i.test(e?.message || '');
 const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Role-based access:</strong> ${what} is limited to ${roles}. Switch role in the top bar to see it.</p></div>`;
 
+// A one-line orientation cue at the top of every screen, so someone who
+// just landed on it (or is watching over a shoulder) knows what to do or
+// expect next without reading the whole card stack first.
+const nextHint = text => `<p class="next-hint">${_esc(text)}</p>`;
+
 // F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
   if (s === null || s === undefined) return '';
@@ -147,6 +152,7 @@ export function renderDashboard(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate, seedDemoCases } = h;
 
   el.innerHTML = `
+    ${nextHint('click a case to see its diagnosis, or seed demo cases / create a new one to get started.')}
     <div class="flex justify-between align-center" style="margin-bottom:20px">
       <div></div>
       <div class="flex gap-8">
@@ -318,8 +324,21 @@ export function renderDiagnosis(el, state, h) {
       const obs = s.observation || {};
       const cb = confBand(s.confidence);
 
+      const nextHintText = {
+        GATHERING_EVIDENCE: 'click Advance Agent to run the decision tree.',
+        DIAGNOSING: 'the agent is diagnosing; refresh in a moment.',
+        RECOMMENDING: 'a recommendation is being prepared.',
+        AWAITING_APPROVAL: 'move to AOM Decision to approve, reject or modify it.',
+        EXECUTING: 'a work order is being raised; check the Outcome screen.',
+        MONITORING_OUTCOME: 'record the outcome once work is complete, on the Outcome screen.',
+        RECORDING_OUTCOME: 'outcome recording is in progress.',
+        FEEDBACK_QUEUED: 'feedback is queued for a knowledge steward to review.',
+        ESCALATED: 'move to AOM Decision to see why, and to resolve it.',
+        CLOSED: 'this case is closed; nothing further is needed.',
+      }[s.current_state] || 'check back as the case progresses.';
+
       // Header
-      let html = `<div class="flex justify-between align-center" style="margin-bottom:16px">
+      let html = `${nextHint(nextHintText)}<div class="flex justify-between align-center" style="margin-bottom:16px">
         <div>
           <h2 style="font-size:20px;font-weight:700">${esc(s.case_id)}</h2>
           <div class="flex gap-8 flex-wrap" style="margin-top:6px;font-size:15px;color:var(--text-dim)">
@@ -616,7 +635,12 @@ export function renderDecision(el, state, h) {
       const role = api.user();
       const canApprove = ['mgr1', 'admin1'].includes(role);
 
-      let html = `<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
+      const decisionHint = s.current_state === 'ESCALATED'
+        ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
+        : s.current_state === 'AWAITING_APPROVAL'
+        ? (canApprove ? 'approve, reject or modify sends the case to execution.' : 'an Asset Ops Manager needs to approve, reject or modify this.')
+        : 'this case has no pending decision right now.';
+      let html = `${nextHint(decisionHint)}<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
 
       // Show recommendation (read-only). A G3-escalated case can carry a
       // bookkeeping Recommendation with no actions (see app.py's
@@ -805,7 +829,10 @@ export function renderOutcome(el, state, h) {
   async function load() {
     try {
       const s = await api.get(`/cases/${cid}`);
-      let html = `<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
+      const outcomeHint = s.outcome
+        ? 'submit feedback so a knowledge steward can validate it into the knowledge base.'
+        : 'raise the work order, then record the outcome once the work is done.';
+      let html = `${nextHint(outcomeHint)}<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
 
       // Work order
       html += `<div class="grid-2">
@@ -942,6 +969,7 @@ export function renderGovernance(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
 
   el.innerHTML = `
+    ${nextHint('approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.')}
     <div class="stats-row" id="gov-stats"></div>
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>Cause Distribution</h3></div><div class="card-body" id="cause-dist"></div></div>
@@ -1243,6 +1271,7 @@ export function renderCapture(el, state, h) {
   let submitted = null;  // proposal after submit
 
   el.innerHTML = `
+    ${nextHint('a different knowledge steward must approve this draft before it is reused in diagnoses.')}
     <ol class="cap-steps" id="cap-steps" aria-label="Capture progress">
       <li data-step="1">Interview</li>
       <li data-step="2">AI draft</li>
