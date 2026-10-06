@@ -14,8 +14,8 @@ demo:  ## Run the end-to-end console demo
 serve:  ## Start the app with the UI on :8000 (open http://localhost:8000/ui)
 	PYTHONPATH=. uvicorn frontend.serve:app --port 8000
 
-reset:  ## Remove app-level snapshots (keeps the separate per-case SQLite store)
-	rm -f data/tbc.sqlite
+reset:  ## Remove all demo state (cases, proposals, KB); the UI re-seeds demo cases on next load
+	rm -f data/tbc.sqlite technical_services_pill.sqlite3
 
 docker-up:  ## Build and start the API container
 	docker compose up --build -d
