@@ -42,7 +42,7 @@ function causeOptions(causes, selected = '') {
     `<optgroup label="${_esc(at)}">${cs.map(c => `<option value="${_esc(c.id)}" ${c.id === (ALIASES[selected] || selected) ? 'selected' : ''}>${_esc(c.label)}</option>`).join('')}</optgroup>`).join('');
 }
 
-// ── Guardrail definitions for G1-G8 grid ───────────────────
+// ── Guardrail definitions for G1-G9 grid ───────────────────
 const GUARDRAILS = [
   { id: 'G1', desc: 'BMS setpoint/interlock block' },
   { id: 'G2', desc: 'Safety-critical escalate' },
@@ -52,6 +52,7 @@ const GUARDRAILS = [
   { id: 'G6', desc: 'Force approval' },
   { id: 'G7', desc: 'Sanitize injection' },
   { id: 'G8', desc: 'Ungrounded reject' },
+  { id: 'G9', desc: 'AI disagreement flag (advisory)' },
 ];
 
 // ── Confidence weights for W1-W5 breakdown ────────────────
@@ -303,9 +304,11 @@ export function renderDiagnosis(el, state, h) {
 
   async function load() {
     try {
-      const [s, expertKnowledge] = await Promise.all([
+      const [s, expertKnowledge, sysInfo] = await Promise.all([
         api.get(`/cases/${cid}`),
         api.get(`/cases/${cid}/expert-knowledge`),
+        api.get('/system/info'),
+        loadCauses(),
       ]);
       const obs = s.observation || {};
       const cb = confBand(s.confidence);
@@ -332,10 +335,12 @@ export function renderDiagnosis(el, state, h) {
           <div id="ev-body"></div>
         </div></div>
         <div class="card"><div class="card-header"><h3>Decision-Tree Diagnosis</h3></div><div class="card-body">
-          <span class="tier-label tier-ai">Tier 2 - Decision-Tree Diagnosis + Confidence</span>
+          <span class="tier-label tier-fact">Rule-based diagnosis (expert decision tree)</span>
           <div id="diag-body"></div>
         </div></div>
       </div>`;
+
+      html += `<div class="card"><div class="card-header"><h3>AI Second Opinion</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="ai-opinion-body"></div></div>`;
 
       html += `<div class="card"><div class="card-header"><h3>Expert Knowledge Reused</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="expert-knowledge-body"></div></div>`;
 
@@ -349,7 +354,7 @@ export function renderDiagnosis(el, state, h) {
       </div></div>`;
 
       // Guardrail grid
-      html += `<div class="card"><div class="card-header"><h3>Guardrail Engine (G1-G8)</h3></div><div class="card-body" id="gr-body"></div></div>`;
+      html += `<div class="card"><div class="card-header"><h3>Guardrail Engine (G1-G9)</h3></div><div class="card-body" id="gr-body"></div></div>`;
 
       el.innerHTML = html;
 
@@ -400,6 +405,30 @@ export function renderDiagnosis(el, state, h) {
           ${diag.kb_refs && diag.kb_refs.length ? `<div class="muted" style="margin-bottom:8px">KB: ${diag.kb_refs.map(r => `<code>${esc(r)}</code>`).join(' ')}</div>` : ''}
           <h4 style="margin:14px 0 8px">Candidate Causes</h4>
           ${causes}
+        `;
+      }
+
+      // Render AI second opinion (advisory, never affects routing)
+      const aiBody = document.getElementById('ai-opinion-body');
+      const hyp = s.ai_hypothesis;
+      if (!hyp) {
+        aiBody.innerHTML = `<div class="banner banner-info"><p>No AI second opinion yet. It runs alongside the decision tree when the agent is advanced.</p></div>`;
+      } else {
+        const modelLabel = hyp.status === 'unavailable' ? 'AI offline' : (sysInfo.llm_label || 'AI model');
+        const agrees = hyp.agrees_with_rules;
+        aiBody.innerHTML = `
+          <span class="tier-label tier-advisory">Advisory only — does not affect routing</span>
+          <div class="flex gap-8 align-center flex-wrap" style="margin:8px 0">
+            <span class="badge ${hyp.status === 'unavailable' ? 'badge-red' : 'badge-purple'}">${esc(modelLabel)}</span>
+            ${hyp.status === 'ok' ? `<span class="badge ${agrees ? 'badge-green' : 'badge-yellow'}">${agrees ? 'Agrees with rule-based diagnosis' : 'Disagrees with rule-based diagnosis (G9)'}</span>` : ''}
+          </div>
+          ${hyp.hypothesis ? `<div style="margin-bottom:8px"><span class="muted">AI hypothesis:</span> <strong>${esc(causeLabel(hyp.hypothesis))}</strong></div>` : ''}
+          <p class="muted" style="margin-bottom:8px">${esc(hyp.summary || '')}</p>
+          ${hyp.supporting_evidence && hyp.supporting_evidence.length ? `<div><strong>Supporting:</strong><ul class="expert-list">${hyp.supporting_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.conflicting_evidence && hyp.conflicting_evidence.length ? `<div><strong>Conflicting:</strong><ul class="expert-list">${hyp.conflicting_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.missing_evidence && hyp.missing_evidence.length ? `<div><strong>Would help:</strong><ul class="expert-list">${hyp.missing_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.recommended_next_check ? `<div class="muted" style="margin-top:8px"><strong>Suggested next check:</strong> ${esc(hyp.recommended_next_check)}</div>` : ''}
+          <div class="muted" style="margin-top:10px">The AOM decides. This card never approves, executes or changes the case.</div>
         `;
       }
 

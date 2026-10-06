@@ -470,6 +470,8 @@ textarea { resize: vertical; min-height: 70px; }
 .tier-action::before  { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
 .tier-human   { background: var(--green-bg); color: #4ADE80; }
 .tier-human::before   { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.tier-advisory    { background: var(--purple-bg); color: #C084FC; }
+.tier-advisory::before    { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--purple); }
 
 /* ── Loading Skeleton ─────────────────────────────────────────────────────────── */
 .skeleton {

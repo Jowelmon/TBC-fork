@@ -275,17 +275,25 @@ def advance_case(case_id: str, user: str) -> dict:
             data_staleness=signals["data_staleness"],
             conflict_penalty=signals["conflict_penalty"],
         )
-        state.ai_hypothesis = generate_diagnostic_hypothesis(
+        hypothesis = generate_diagnostic_hypothesis(
             asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
             observations={
                 "type": state.observation.type,
                 "sensor_id": state.observation.sensor_id,
                 "reading_status": state.observation.reading_status.value,
             },
-            evidence=[{"source": ev.source, "finding": ev.type, "summary": str(ev.payload)} for ev in state.evidence],
+            evidence=[
+                {
+                    "source": ev.source, "finding": ev.type, "summary": str(ev.payload),
+                    "conflict": isinstance(ev.payload, dict) and ev.payload.get("conflict") is True,
+                }
+                for ev in state.evidence
+            ],
             candidate_causes=[r.cause_id for r in results],
+            rule_top_cause=top.cause_id,
             knowledge=[{"cause": top.cause_id, "kb_ref": ref} for ref in top.kb_refs],
         )
+        state.record_ai_second_opinion(hypothesis, actor="agent")
         new_st = state.complete_diagnosis(diag, conf, actor="agent")
         if new_st == AgentStateName.RECOMMENDING:
             rec = Recommendation(
@@ -328,6 +336,17 @@ def advance_case(case_id: str, user: str) -> dict:
         if gr.must_escalate or not gr.allowed:
             state.guardrail_result = gr
             state.recommendation = rec
+
+    # G9: surface an AI/rules disagreement, if any, on whatever guardrail
+    # result exists by now. Advisory only — never changes current_state.
+    if state.guardrail_result is not None:
+        from .guardrails import flag_ai_disagreement
+
+        flag_ai_disagreement(
+            state.guardrail_result,
+            ai_hypothesis=state.ai_hypothesis,
+            rule_cause=state.diagnosis.top_cause_id if state.diagnosis else None,
+        )
 
     return {"case_id": case_id, "current_state": state.current_state.value,
             "confidence": state.confidence}

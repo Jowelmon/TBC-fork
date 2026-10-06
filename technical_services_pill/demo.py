@@ -113,7 +113,7 @@ def _run_happy_path() -> str:
         evidence_refs=[ev.type for ev in state.evidence],
     )
     gr = state.propose_recommendation(rec, actor="agent")
-    print(f"guardrail G1-G8 -> allowed={gr.allowed} escalate={gr.must_escalate} -> {state.current_state.value}")
+    print(f"guardrail G1-G9 -> allowed={gr.allowed} escalate={gr.must_escalate} -> {state.current_state.value}")
 
     # AWAITING_APPROVAL -> manager APPROVE -> EXECUTING
     approval = HumanDecisionRecord(
@@ -371,7 +371,7 @@ def _run_multi_asset() -> bool:
         evidence_refs=[ev.type for ev in st.evidence],
     )
     gr = st.propose_recommendation(rec, actor="agent")
-    print(f"guardrail G1-G8 -> allowed={gr.allowed} escalate={gr.must_escalate} -> {st.current_state.value}")
+    print(f"guardrail G1-G9 -> allowed={gr.allowed} escalate={gr.must_escalate} -> {st.current_state.value}")
     if st.current_state != AgentStateName.AWAITING_APPROVAL:
         print(f"  chiller full-loop: guardrail did not route to AWAITING_APPROVAL ({st.current_state.value})")
         return False
