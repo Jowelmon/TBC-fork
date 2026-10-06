@@ -30,7 +30,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
 from .auth import clear_cookie, demo_insecure, issue_cookie, resolve_user
-from .capture import capture_expert_knowledge
 from .models import (
     AgentStateName,
     HumanDecision,

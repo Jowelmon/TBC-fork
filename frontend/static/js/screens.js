@@ -1437,6 +1437,18 @@ export function renderCapture(el, state, h) {
       document.querySelectorAll('.kh-item').forEach(card => card.classList.toggle('kh-excluded', !kept().includes(+card.dataset.i)));
     };
     document.querySelectorAll('.kh-keep').forEach(c => c.addEventListener('change', refresh));
+    // Correcting the cause changes which pill owns it -- update the "Files
+    // under" chip (and the cause badge) live, not only once the review is
+    // sent and the server's response comes back.
+    document.querySelectorAll('.kh-cause-sel').forEach(sel => sel.addEventListener('change', () => {
+      const info = causes.find(c => c.id === sel.value);
+      if (!info) return;
+      const card = sel.closest('.kh-item');
+      const filedBadge = card.querySelector('.kh-head .badge-grey');
+      if (filedBadge) filedBadge.textContent = `Files under: ${info.asset_type}`;
+      const causeBadge = card.querySelector('.kh-head .badge-blue, .kh-head .badge-yellow');
+      if (causeBadge) { causeBadge.textContent = info.label; causeBadge.className = 'badge badge-blue'; }
+    }));
     btn.onclick = submit;
   }
 
