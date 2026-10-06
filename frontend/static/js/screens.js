@@ -1,6 +1,6 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
-import { api } from './api.js?v=3';
+import { api } from './api.js?v=4';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -1021,26 +1021,33 @@ export function renderGovernance(el, state, h) {
 // Demo case seeder
 // ═══════════════════════════════════════════════════════════
 export async function seedDemoCases(h) {
-  const { showToast, navigate } = h;
+  const { api, showToast, navigate } = h;
+  const originalRole = api.user(); // restore this session once seeding is done
 
+  // Seeding plays several actors in turn (tech1, mgr1, ...). Identity is
+  // the signed session cookie now, so each actor switch is a real login —
+  // not a ?user= param, which would be ignored outside insecure mode.
   async function apiAs(user, method, path, params) {
+    await api.login(user);
     const url = new URL(path, window.location.origin);
-    url.searchParams.set('user', user);
     if (method === 'POST' && params) {
       for (const [k, v] of Object.entries(params)) {
         if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
       }
     }
-    const res = await fetch(url, { method });
+    const res = await fetch(url, { method, credentials: 'same-origin' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
     return body;
   }
 
   async function apiJsonAs(user, path, jsonBody) {
+    await api.login(user);
     const url = new URL(path, window.location.origin);
-    url.searchParams.set('user', user);
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody || {}) });
+    const res = await fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody || {}),
+    });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
     return body;
@@ -1069,9 +1076,11 @@ export async function seedDemoCases(h) {
     await apiAs('tech1', 'POST', `/cases/${c3}/advance`);
 
     showToast('Seeded 3 cases: 1 CLOSED, 1 ESCALATED, 1 AWAITING_APPROVAL', 'success');
-    navigate('dashboard');
   } catch (e) {
     showToast(`Seed error: ${e.message}`, 'error');
+  } finally {
+    await api.login(originalRole); // seeding plays several actors; restore the real one
+    navigate('dashboard');
   }
 }
 

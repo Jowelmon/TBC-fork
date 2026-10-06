@@ -13,7 +13,9 @@ Endpoints:
     POST   /cases/{id}/feedback            submit feedback             (steward)
     GET    /audit/trace                    tamper-evident audit trail   (auditor)
 
-RBAC via ``?user=<demo_user_id>`` query param (mapped in rbac.DEMO_USERS).
+Identity via a signed session cookie set by ``POST /login`` (see ``auth.py``);
+``?user=<demo_user_id>`` is a fallback only under ``TBC_DEMO_INSECURE=1``.
+RBAC capabilities are mapped per role in ``rbac.DEMO_USERS``.
 """
 from __future__ import annotations
 
@@ -23,10 +25,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
+from .auth import clear_cookie, demo_insecure, issue_cookie, resolve_user
 from .capture import capture_expert_knowledge
 from .models import (
     AgentStateName,
@@ -127,13 +130,35 @@ def _fault_signature(state: AgentState, top_cause_id: str, kb_refs: list[str]) -
 
 
 # ========================================================================== #
+# Identity: a signed session cookie, not a spoofable ?user= param (see auth.py)
+# ========================================================================== #
+@app.post("/login")
+def login(user_id: str, response: Response) -> dict:
+    """Set a signed session cookie for one of the fixed demo users.
+
+    The top-bar role switcher calls this. Everything downstream reads the
+    caller from the cookie, so switching role here is the only way to
+    change who you act as — appending ``?user=`` to a URL no longer does.
+    """
+    u = _user(user_id)
+    issue_cookie(response, u.user_id)
+    return {"user": u.user_id, "role": u.role.value}
+
+
+@app.post("/logout")
+def logout(response: Response) -> dict:
+    clear_cookie(response)
+    return {"status": "logged out"}
+
+
+# ========================================================================== #
 # Case lifecycle
 # ========================================================================== #
 @app.post("/cases")
 def create_case(
     asset_id: str,
     sensor_id: str,
-    user: str,
+    user: str = Depends(resolve_user),
     observation_type: str = "temperature_measurement_missing",
     reading_status: str = "absent",
     raw_value: float | None = None,
@@ -183,13 +208,13 @@ def create_case(
 
 
 @app.get("/cases")
-def list_cases(user: str) -> dict:
+def list_cases(user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     return {"cases": STORE.list()}
 
 
 @app.post("/cases/{case_id}/advance")
-def advance_case(case_id: str, user: str) -> dict:
+def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     """Drive the agent loop to a terminal or waiting state in one call.
 
     Loops through GATHERING_EVIDENCE -> DIAGNOSING -> (RECOMMENDING |
@@ -353,7 +378,7 @@ def advance_case(case_id: str, user: str) -> dict:
 
 
 @app.get("/cases/{case_id}")
-def get_case(case_id: str, user: str) -> dict:
+def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     snap = STORE.snapshot(case_id)
     if snap is None:
@@ -362,14 +387,14 @@ def get_case(case_id: str, user: str) -> dict:
 
 
 @app.get("/cases/{case_id}/evidence")
-def get_evidence(case_id: str, user: str) -> dict:
+def get_evidence(case_id: str, user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     state = _get_case(case_id)
     return {"evidence": [e.model_dump(mode="json") for e in state.evidence]}
 
 
 @app.get("/cases/{case_id}/diagnosis")
-def get_diagnosis(case_id: str, user: str) -> dict:
+def get_diagnosis(case_id: str, user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     state = _get_case(case_id)
     diag = state.diagnosis
@@ -378,7 +403,7 @@ def get_diagnosis(case_id: str, user: str) -> dict:
 
 
 @app.get("/cases/{case_id}/recommendation")
-def get_recommendation(case_id: str, user: str) -> dict:
+def get_recommendation(case_id: str, user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     state = _get_case(case_id)
     rec = state.recommendation
@@ -392,7 +417,7 @@ def get_recommendation(case_id: str, user: str) -> dict:
 def post_approval(
     case_id: str,
     decision: str,
-    user: str,
+    user: str = Depends(resolve_user),
     rationale: str | None = None,
     modified_action_type: str | None = None,
     modified_action_target: str | None = None,
@@ -455,14 +480,14 @@ def post_approval(
 
 
 @app.get("/cases/{case_id}/work-order")
-def get_work_order(case_id: str, user: str) -> dict:
+def get_work_order(case_id: str, user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     state = _get_case(case_id)
     return {"work_order_id": state.work_order_id}
 
 
 @app.post("/cases/{case_id}/work-order")
-def create_work_order(case_id: str, user: str) -> dict:
+def create_work_order(case_id: str, user: str = Depends(resolve_user)) -> dict:
     """Raise + acknowledge the CMMS work order (EXECUTING -> MONITORING_OUTCOME).
 
     Spec §3 guardrail: refused unless an approve/modify decision is recorded.
@@ -484,7 +509,7 @@ def create_work_order(case_id: str, user: str) -> dict:
 def post_outcome(
     case_id: str,
     result: str,
-    user: str,
+    user: str = Depends(resolve_user),
     root_cause_confirmed: str | None = None,
     notes: str | None = None,
 ) -> dict:
@@ -521,7 +546,7 @@ def post_outcome(
 @app.post("/cases/{case_id}/feedback")
 def post_feedback(
     case_id: str,
-    user: str,
+    user: str = Depends(resolve_user),
     corrections: dict | None = None,
 ) -> dict:
     _need(user, "submit_feedback")
@@ -570,7 +595,7 @@ class CaptureDraftRequest(_BaseModel):
 
 
 @app.get("/causes")
-def get_causes(user: str, asset_type: str | None = None) -> dict:
+def get_causes(user: str = Depends(resolve_user), asset_type: str | None = None) -> dict:
     """Canonical causes with plain-English labels and owning asset type."""
     _need(user, "view_case")
     from .cause_registry import list_causes
@@ -581,7 +606,7 @@ def get_causes(user: str, asset_type: str | None = None) -> dict:
 
 
 @app.get("/system/info")
-def get_system_info(user: str) -> dict:
+def get_system_info(user: str = Depends(resolve_user)) -> dict:
     """Which model drafts expert knowledge, for the UI badge. Never returns secrets."""
     _need(user, "view_case")
     from . import llm
@@ -591,11 +616,12 @@ def get_system_info(user: str) -> dict:
         "llm_label": "Tencent Cloud ADP" if provider == "adp" else "Offline mock model",
         "adp_configured": llm.adp_configured(),
         "diagnosis": "deterministic decision tree",
+        "demo_insecure": demo_insecure(),
     }
 
 
 @app.get("/capture/sample")
-def get_capture_sample(user: str) -> dict:
+def get_capture_sample(user: str = Depends(resolve_user)) -> dict:
     """A sample technician interview for the demo."""
     _need(user, "view_case")
     from .capture import SAMPLE_INTERVIEW
@@ -604,7 +630,7 @@ def get_capture_sample(user: str) -> dict:
 
 
 @app.post("/capture/interview")
-def post_capture_interview(user: str, body: CaptureInterviewRequest) -> dict:
+def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(resolve_user)) -> dict:
     """Turn an expert interview into a pending knowledge proposal.
 
     The LLM drafts structured heuristics; capture.py drops anything not
@@ -643,7 +669,7 @@ def post_capture_interview(user: str, body: CaptureInterviewRequest) -> dict:
 
 
 @app.post("/capture/draft")
-def post_capture_draft(user: str, body: CaptureDraftRequest) -> dict:
+def post_capture_draft(body: CaptureDraftRequest, user: str = Depends(resolve_user)) -> dict:
     """Draft heuristics for review WITHOUT queuing anything.
 
     The capturer reviews the draft (drop items, correct a cause) and then
@@ -661,7 +687,7 @@ def post_capture_draft(user: str, body: CaptureDraftRequest) -> dict:
 
 
 @app.get("/kb/expert-heuristics")
-def get_expert_heuristics(user: str) -> dict:
+def get_expert_heuristics(user: str = Depends(resolve_user)) -> dict:
     """Approved, live expert heuristics with provenance."""
     _need(user, "view_case")
     from .learning import STORE as _LSTORE
@@ -669,7 +695,7 @@ def get_expert_heuristics(user: str) -> dict:
 
 
 @app.get("/cases/{case_id}/expert-knowledge")
-def get_case_expert_knowledge(case_id: str, user: str) -> dict:
+def get_case_expert_knowledge(case_id: str, user: str = Depends(resolve_user)) -> dict:
     """Return approved expert heuristics matching this diagnosis and asset."""
     _need(user, "view_case")
     state = _get_case(case_id)
@@ -711,7 +737,7 @@ def get_case_expert_knowledge(case_id: str, user: str) -> dict:
 
 
 @app.get("/kb/stats")
-def get_kb_stats(user: str) -> dict:
+def get_kb_stats(user: str = Depends(resolve_user)) -> dict:
     """Knowledge-base learning stats: validated cases, cause priors."""
     _need(user, "view_case")
     from .learning import STORE as _LSTORE
@@ -719,7 +745,7 @@ def get_kb_stats(user: str) -> dict:
 
 
 @app.get("/kb/queue")
-def get_kb_queue(user: str) -> dict:
+def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
     """List pending knowledge proposals awaiting steward approval (F2).
 
     Requires ``approve_knowledge_version`` capability (knowledge steward
@@ -732,7 +758,7 @@ def get_kb_queue(user: str) -> dict:
 
 
 @app.post("/kb/proposals/{proposal_id}/approve")
-def approve_proposal(proposal_id: str, user: str) -> dict:
+def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dict:
     """Approve a pending knowledge proposal and ingest it into the live KB (F2).
 
     Requires ``approve_knowledge_version`` capability. On approval the KB
@@ -753,7 +779,7 @@ def approve_proposal(proposal_id: str, user: str) -> dict:
 
 
 @app.post("/kb/proposals/{proposal_id}/reject")
-def reject_proposal(proposal_id: str, user: str, reason: str) -> dict:
+def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
     """Reject a pending knowledge proposal (F2).
 
     Requires ``approve_knowledge_version`` capability. The rejected
@@ -770,7 +796,7 @@ def reject_proposal(proposal_id: str, user: str, reason: str) -> dict:
 
 
 @app.post("/kb/rollback/{target_version}")
-def rollback_kb(target_version: int, user: str) -> dict:
+def rollback_kb(target_version: int, user: str = Depends(resolve_user)) -> dict:
     """Roll back the KB to a prior version, removing cases added after it (F2).
 
     Requires ``rollback_knowledge_version`` capability. Seed cases
@@ -790,7 +816,7 @@ def rollback_kb(target_version: int, user: str) -> dict:
 
 
 @app.post("/cases/{case_id}/escalation/close")
-def close_escalation(case_id: str, user: str, reason: str) -> dict:
+def close_escalation(case_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
     """Close an escalated case (ESCALATED -> CLOSED) by an expert/manager.
 
     Resolves the only state with no prior HTTP exit path: until now an
@@ -808,7 +834,7 @@ def close_escalation(case_id: str, user: str, reason: str) -> dict:
 
 
 @app.post("/cases/{case_id}/escalation/evidence")
-def request_more_evidence(case_id: str, user: str, reason: str) -> dict:
+def request_more_evidence(case_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
     """Request more evidence on an escalated case (ESCALATED -> GATHERING_EVIDENCE).
 
     The only HTTP re-entry path from ESCALATED back into the diagnosis loop
@@ -828,7 +854,7 @@ def request_more_evidence(case_id: str, user: str, reason: str) -> dict:
 
 @app.get("/audit/trace")
 def get_audit_trace(
-    user: str,
+    user: str = Depends(resolve_user),
     actor: str | None = None,
     case_id: str | None = None,
 ) -> dict:

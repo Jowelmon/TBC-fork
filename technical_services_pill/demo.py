@@ -54,6 +54,18 @@ def _hr(label: str) -> str:
     print("=" * 70)
 
 
+def _login(client, user_id: str):
+    """Authenticate `client` as `user_id` via the real /login flow.
+
+    Identity is a signed session cookie (auth.py), not a ?user= param, so
+    every TestClient-driven scenario below logs in before acting — the same
+    thing the top-bar role switcher does in /ui.
+    """
+    resp = client.post("/login", params={"user_id": user_id})
+    resp.raise_for_status()
+    return client
+
+
 def _run_happy_path() -> str:
     """Spec TC1: CRAH-DC1-01 sensor_hardware_failure -> full lifecycle."""
     _hr("CASE 1 — CRAH-DC1-01 / SA-TEMP-01 (happy path)")
@@ -167,12 +179,12 @@ def _run_escalation() -> str:
     from .app import app
 
     client = TestClient(app)
+    _login(client, "tech1")
 
     # Create the case through the API (same path as real callers).
     resp = client.post("/cases", params={
         "asset_id": "CRAH-DC1-02",
         "sensor_id": "SA-TEMP-02",
-        "user": "tech1",
         "observation_type": "temperature_measurement_missing",
         "reading_status": "absent",
     })
@@ -182,7 +194,7 @@ def _run_escalation() -> str:
     print(f"case created -> {case_id}  state={body['current_state']}  evidence={body['evidence_count']}")
 
     # Advance through the real agent loop (no hardcoded confidence).
-    resp = client.post(f"/cases/{case_id}/advance", params={"user": "tech1"})
+    resp = client.post(f"/cases/{case_id}/advance")
     resp.raise_for_status()
     adv = resp.json()
     final_state = adv["current_state"]
@@ -190,7 +202,7 @@ def _run_escalation() -> str:
     print(f"advance -> {final_state}  confidence={confidence:.2f}")
 
     # Verify guardrail G3 fired and names the target domain.
-    resp = client.get(f"/cases/{case_id}/recommendation", params={"user": "tech1"})
+    resp = client.get(f"/cases/{case_id}/recommendation")
     resp.raise_for_status()
     gr = resp.json().get("guardrail_result")
     if gr:
@@ -201,7 +213,7 @@ def _run_escalation() -> str:
         print("guardrail_result: None (G3 did not fire)")
 
     # Audit chain check.
-    snap = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()
+    snap = client.get(f"/cases/{case_id}").json()
     print(f"audit chain valid: {snap.get('audit_chain_valid')}  entries: {len(snap.get('history', []))}")
     return final_state
 
@@ -426,9 +438,9 @@ def _run_expert_harvest() -> bool:
     _hr("CASE 5 — AI HARVEST: expert interview to reused knowledge")
     client = TestClient(app)
 
+    _login(client, "steward1")
     response = client.post(
         "/capture/interview",
-        params={"user": "steward1"},
         json={
             "expert_name": "R. Tan",
             "expert_role": "Senior M&E Technician",
@@ -446,35 +458,29 @@ def _run_expert_harvest() -> bool:
     for heuristic in draft["heuristics"]:
         print(f"   {heuristic['likely_cause']}: {heuristic['evidence_quote']}")
 
-    approval = client.post(
-        f"/kb/proposals/{draft['proposal_id']}/approve",
-        params={"user": "steward2"},
-    )
+    _login(client, "steward2")  # a DIFFERENT steward must approve
+    approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve")
     approval.raise_for_status()
     print(
         f"2. Different steward approved {draft['proposal_id']}; "
         f"KB version {approval.json()['kb_version']}"
     )
 
+    _login(client, "tech1")
     created = client.post("/cases", params={
         "asset_id": "CRAH-DC1-01",
         "sensor_id": "SA-TEMP-01",
-        "user": "tech1",
         "reading_status": "absent",
     })
     created.raise_for_status()
     case_id = created.json()["case_id"]
-    advanced = client.post(
-        f"/cases/{case_id}/advance", params={"user": "tech1"},
-    )
+    advanced = client.post(f"/cases/{case_id}/advance")
     advanced.raise_for_status()
-    case = client.get(f"/cases/{case_id}", params={"user": "tech1"})
+    case = client.get(f"/cases/{case_id}")
     case.raise_for_status()
     cause_id = case.json()["diagnosis"]["top_cause_id"]
 
-    reused = client.get(
-        f"/cases/{case_id}/expert-knowledge", params={"user": "tech1"},
-    )
+    reused = client.get(f"/cases/{case_id}/expert-knowledge")
     reused.raise_for_status()
     matches = reused.json()["matches"]
     if not matches:
@@ -486,33 +492,35 @@ def _run_expert_harvest() -> bool:
         f"from {match['expert_name']} (KB {match['kb_version_label']})"
     )
 
+    _login(client, "mgr1")
     decision = client.post(
         f"/cases/{case_id}/approval",
-        params={"user": "mgr1", "decision": "approve",
+        params={"decision": "approve",
                 "rationale": "Approved after reviewing expert context and guardrails"},
     )
     decision.raise_for_status()
-    work_order = client.post(
-        f"/cases/{case_id}/work-order", params={"user": "mgr1"},
-    )
+    work_order = client.post(f"/cases/{case_id}/work-order")
     work_order.raise_for_status()
+
+    _login(client, "tech1")
     outcome = client.post(
         f"/cases/{case_id}/outcome",
-        params={"user": "tech1", "result": "resolved",
+        params={"result": "resolved",
                 "root_cause_confirmed": cause_id,
                 "notes": "Reading restored after the recommended maintenance check"},
     )
     outcome.raise_for_status()
-    feedback = client.post(
-        f"/cases/{case_id}/feedback", params={"user": "mgr1"},
-    )
+
+    _login(client, "mgr1")
+    feedback = client.post(f"/cases/{case_id}/feedback")
     feedback.raise_for_status()
     print(
         f"4. Human approved, work order {work_order.json()['work_order_id']} "
         f"resolved; feedback {feedback.json()['feedback_id']} queued"
     )
 
-    queue = client.get("/kb/queue", params={"user": "steward1"})
+    _login(client, "steward1")
+    queue = client.get("/kb/queue")
     queue.raise_for_status()
     feedback_proposal = next(
         (item for item in queue.json()["queue"]
@@ -522,10 +530,7 @@ def _run_expert_harvest() -> bool:
     if feedback_proposal is None:
         print("5. Feedback proposal missing from steward queue; demo failed")
         return False
-    learned = client.post(
-        f"/kb/proposals/{feedback_proposal['proposal_id']}/approve",
-        params={"user": "steward1"},
-    )
+    learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve")
     learned.raise_for_status()
     print(f"5. Steward validated outcome; KB is now {learned.json()['kb_version']}")
     return True

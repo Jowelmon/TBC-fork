@@ -93,7 +93,7 @@ export function initGuide({ api, navigate, setRole, showToast }) {
 
   async function go() {
     const s = STEPS[idx];
-    setRole(s.role);
+    await setRole(s.role);
     let caseId = null;
     if (s.asset) {
       try { caseId = await findCaseId(api, s.asset); } catch (_) { /* fall through */ }
