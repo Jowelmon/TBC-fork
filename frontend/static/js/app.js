@@ -1,8 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
 import { api } from './api.js?v=3';
-import { initGuide } from './guide.js?v=3';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=3';
+import { initGuide } from './guide.js?v=5';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=5';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -30,15 +30,8 @@ const navItems = document.querySelectorAll('.nav-item');
 
 // ── Helpers ────────────────────────────────────────────────
 async function updateKbFooter() {
-  const footer = document.getElementById('kb-footer');
-  if (!footer) return;
-  try {
-    const stats = await api.get('/kb/stats');
-    const version = stats && stats.kb_version !== undefined ? stats.kb_version : 0;
-    footer.innerHTML = `v${version}<br><span class="nav-footer-sub">Keppel AI Harvest</span>`;
-  } catch (err) {
-    footer.innerHTML = `v0<br><span class="nav-footer-sub">KB unavailable</span>`;
-  }
+  // Single footer, single source: the live KB version label from /kb/stats.
+  return refreshKbVersion();
 }
 
 function showToast(msg, type = 'info') {
@@ -116,8 +109,8 @@ async function refreshKbVersion() {
   if (!el) return;
   try {
     const stats = await api.get('/kb/stats');
-    if (stats.kb_version_label) el.textContent = `KB v${stats.kb_version_label}`;
-  } catch (_) { /* leave last known value */ }
+    el.textContent = stats.kb_version_label ? `KB v${stats.kb_version_label}` : 'KB version unavailable';
+  } catch (_) { if (el.textContent.includes('loading')) el.textContent = 'KB version unavailable'; }
 }
 
 function navigate(screen, caseId = null) {

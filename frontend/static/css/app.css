@@ -585,3 +585,64 @@ tr.clickable:focus-visible { outline: 2px solid var(--blue); outline-offset: -2p
 #model-chip { white-space: nowrap; }
 @media (max-width: 768px) { #model-chip { display: none; } }
 #guide-toggle { white-space: nowrap; }
+
+/* ── Harvester (Capture) review flow ─────────────────────────────────────── */
+.cap-steps { list-style: none; display: flex; gap: 8px; margin: 0 0 16px; padding: 0; flex-wrap: wrap; counter-reset: step; }
+.cap-steps li { counter-increment: step; flex: 1 1 160px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim); font-size: 14px; font-weight: 600; }
+.cap-steps li::before { content: counter(step); display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 8px; border-radius: 50%; background: var(--border); color: var(--text-bright); font-size: 13px; }
+.cap-steps li.current { border-color: var(--blue); color: var(--text-bright); background: var(--blue-bg); }
+.cap-steps li.current::before { background: var(--blue); }
+.cap-steps li.done { color: var(--text); }
+.cap-steps li.done::before { content: '✓'; background: var(--green); }
+.cap-grid { align-items: start; }
+.cap-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cap-hint { margin-bottom: 12px; font-size: 14px; }
+.field-help { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+.kh-include { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--text-bright); cursor: pointer; }
+.kh-include input { width: 18px; height: 18px; accent-color: var(--blue); }
+.kh-editable { transition: opacity .15s; }
+.kh-excluded { opacity: .45; }
+.kh-excluded .kh-quote { border-left-color: var(--border); }
+.kh-cause { margin: 8px 0 4px; }
+.kh-cause label { font-size: 13px; }
+.kh-new { font-size: 13px; color: #FBBF24; margin-bottom: 6px; }
+.kh-label { font-size: 12px; }
+.cap-submit { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0 4px; background: var(--bg-card); border-top: 1px solid var(--border); margin-top: 8px; }
+.cap-submit .muted { font-size: 13px; }
+
+/* ── Governance queue ──────────────────────────────────────────────────── */
+.q-card { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.q-body { flex: 1 1 420px; min-width: 0; }
+.q-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.q-meta { font-size: 14px; color: var(--text-dim); margin-top: 4px; }
+.q-list { margin: 8px 0 0 18px; font-size: 14px; }
+.q-list li { margin-bottom: 6px; }
+.q-quote { font-style: italic; color: var(--text); }
+.q-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; max-width: 320px; }
+.q-own { flex-basis: 100%; font-size: 13px; color: #FBBF24; }
+.q-reject { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
+.q-reject label { font-size: 13px; color: var(--text-dim); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Header: keep the role controls on one line ─────────────────────────── */
+#topbar { height: auto; min-height: 64px; gap: 16px; padding-top: 8px; padding-bottom: 8px; }
+#topbar h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#role-switcher { flex-wrap: nowrap; }
+.role-badge, .role-label { white-space: nowrap; }
+.nav-item:disabled { opacity: .6; }
+
+/* Visible keyboard focus everywhere (WCAG 2.4.7) */
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid #60A5FA; outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  .cap-row { grid-template-columns: 1fr; }
+  #topbar { flex-wrap: wrap; }
+  #role-switcher { flex-wrap: wrap; }
+  .q-actions { max-width: none; }
+}
+@media (max-width: 768px) {
+  .role-badge { display: none; }
+  #role-select { max-width: 100%; }
+  .cap-steps li { flex-basis: calc(50% - 4px); font-size: 13px; }
+}
+.q-reject[hidden] { display: none; }

@@ -18,14 +18,29 @@ function _esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── Known cause IDs for validated root-cause dropdown ──────
-const KNOWN_CAUSES = [
-  'comm_bus_failure', 'config_drift', 'loose_wiring', 'sensor_hardware_failure',
-  'data_path_drop', 'intermittent_fault', 'sensor_drift', 'sensor_fault_noise',
-  'refrigerant_leak', 'low_refrigerant_charge', 'condenser_fouling', 'compressor_motor_fault', 'chiller_electrical_fault',
-  'thermal_runaway_risk', 'battery_eol', 'charger_failure', 'ground_fault', 'inverter_fault',
-  'cavitation', 'shaft_misalignment', 'foundation_looseness', 'bearing_wear', 'impeller_imbalance',
-];
+// ── Causes: canonical IDs with plain-English labels, from /causes ──
+// One source of truth for every cause dropdown and cause label on screen.
+let _causes = null;
+async function loadCauses() {
+  if (_causes) return _causes;
+  try { _causes = (await api.get('/causes')).causes || []; }
+  catch (_) { _causes = []; }
+  return _causes;
+}
+const ALIASES = { comm_bus_failure: 'communication_bus_controller_failure', config_drift: 'configuration_drift', loose_wiring: 'loose_wiring_after_service' };
+function causeLabel(id) {
+  if (!id) return 'Unknown cause';
+  if (id.startsWith('new:')) return 'Proposed new cause: ' + id.slice(4).replace(/_/g, ' ');
+  const c = (_causes || []).find(x => x.id === (ALIASES[id] || id));
+  return c ? c.label : id.replace(/_/g, ' ');
+}
+// <option>s grouped by asset type; `selected` is pre-selected.
+function causeOptions(causes, selected = '') {
+  const groups = {};
+  causes.forEach(c => (groups[c.asset_type] = groups[c.asset_type] || []).push(c));
+  return Object.entries(groups).map(([at, cs]) =>
+    `<optgroup label="${_esc(at)}">${cs.map(c => `<option value="${_esc(c.id)}" ${c.id === (ALIASES[selected] || selected) ? 'selected' : ''}>${_esc(c.label)}</option>`).join('')}</optgroup>`).join('');
+}
 
 // ── Guardrail definitions for G1-G8 grid ───────────────────
 const GUARDRAILS = [
@@ -405,7 +420,7 @@ export function renderDiagnosis(el, state, h) {
               <div class="expert-meta">
                 <span><strong>Knowledge ID:</strong> <code>${esc(item.knowledge_id)}</code></span>
                 <span><strong>KB version:</strong> ${esc(item.kb_version_label)}</span>
-                <span><strong>Cause:</strong> <code>${esc(item.likely_cause)}</code></span>
+                <span><strong>Cause:</strong> ${esc(causeLabel(item.likely_cause))}</span>
               </div>
               <p><strong>Matched pattern:</strong> ${esc(item.symptom_pattern)}</p>
               ${item.checks.length ? `<div><strong>Expert checks:</strong><ul class="expert-list">${item.checks.map(check => `<li>${esc(check)}</li>`).join('')}</ul></div>` : ''}
@@ -724,7 +739,7 @@ export function renderOutcome(el, state, h) {
           if (canFB) {
             ocBody.innerHTML += `<div class="mt-16">
               <h4>Submit Feedback</h4>
-              <div class="form-group"><label>Confirmed Root Cause</label><select id="fb-cause"><option value="">-- select --</option>${KNOWN_CAUSES.map(c => `<option value="${c}">${c.replace(/_/g,' ')}</option>`).join('')}</select></div>
+              <div class="form-group"><label>Confirmed Root Cause</label><select id="fb-cause"><option value="">-- select --</option>${causeOptions(await loadCauses())}</select></div>
               <div class="form-group"><label>Notes</label><textarea id="fb-notes" placeholder="Optional notes..."></textarea></div>
               <button class="btn btn-primary" id="btn-fb">Submit Feedback</button>
             </div>`;
@@ -745,7 +760,7 @@ export function renderOutcome(el, state, h) {
         if (canRec) {
           ocBody.innerHTML = `
             <div class="form-group"><label>Result</label><select id="oc-result"><option value="resolved">resolved</option><option value="partial">partial</option><option value="unresolved">unresolved</option></select></div>
-            <div class="form-group"><label>Confirmed Root Cause</label><select id="oc-cause"><option value="">-- select --</option>${KNOWN_CAUSES.map(c => `<option value="${c}">${c.replace(/_/g,' ')}</option>`).join('')}</select></div>
+            <div class="form-group"><label>Confirmed Root Cause</label><select id="oc-cause"><option value="">-- select --</option>${causeOptions(await loadCauses())}</select></div>
             <div class="form-group"><label>Verified By</label><input id="oc-verified" type="text" value="tech1"></div>
             <div class="form-group"><label>Notes</label><textarea id="oc-notes" placeholder="Optional notes..."></textarea></div>
             <button class="btn btn-primary" id="btn-oc">Record Outcome</button>
@@ -828,7 +843,7 @@ export function renderGovernance(el, state, h) {
       <div class="pipeline-arrow">-></div>
       <div class="pipeline-step"><div class="pipeline-circle">3</div><div class="pipeline-label">Validated</div><div class="pipeline-desc">Written to KB</div></div>
       <div class="pipeline-arrow">-></div>
-      <div class="pipeline-step"><div class="pipeline-circle">4</div><div class="pipeline-label">Version Bump</div><div class="pipeline-desc">1.3.0 -> 1.4.0</div></div>
+      <div class="pipeline-step"><div class="pipeline-circle">4</div><div class="pipeline-label">Version Bump</div><div class="pipeline-desc" id="pipe-version">Each approval bumps the KB version</div></div>
     </div>
     <div class="banner banner-info mt-16"><p>A candidate must <strong>never</strong> appear as already-approved knowledge.</p></div>
   `);
@@ -844,32 +859,53 @@ export function renderGovernance(el, state, h) {
         qb.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[ ]</div><div class="empty-state-title">No pending proposals</div><div class="empty-state-desc">Expert interviews from the Capture screen and feedback on closed cases appear here for review by a second steward.</div></div>`;
         return;
       }
+      await loadCauses();
+      const me = api.user();
+      const heuristicLine = x => `<li><strong>${esc(x.cause_label || causeLabel(x.likely_cause))}</strong>
+          ${x.asset_type ? `<span class="badge badge-grey">${esc(x.asset_type)}</span>` : ''}
+          <div class="q-quote">"${esc(x.evidence_quote)}"</div></li>`;
       const describe = p => p.kind === 'expert_capture'
-        ? `<strong>${esc(p.proposal_id)}</strong> <span class="badge badge-purple">Expert interview</span>
-            <div style="font-size:13px;margin-top:4px">${esc(p.expert_name)} (${esc(p.expert_role)}), ${esc(p.asset_type)}: ${(p.heuristics || []).length} heuristic(s), drafted by ${p.provider === 'adp' ? 'Tencent Cloud ADP' : 'offline mock model'}</div>
-            <ul style="margin:6px 0 0 18px;font-size:13px">${(p.heuristics || []).map(x => `<li><code>${esc(x.likely_cause)}</code>: <em>"${esc(x.evidence_quote)}"</em></li>`).join('')}</ul>
-            <div style="font-size:12px;color:var(--muted)">Submitted by: ${esc(p.submitted_by)}</div>`
-        : `<strong>${esc(p.proposal_id)}</strong> <span class="badge badge-blue">Outcome feedback</span> Cause: <code>${esc(p.confirmed_cause)}</code>
-            <div style="font-size:12px;color:var(--muted)">Case: ${esc(p.case_id)} | Asset: ${esc(p.asset_id)} | Submitted by: ${esc(p.submitted_by)}</div>`;
-      qb.innerHTML = queue.map(p => `<div class="card" style="margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-          <div>${describe(p)}</div>
-          <div class="flex gap-8">
-            <button class="btn btn-green btn-sm" id="approve-${esc(p.proposal_id)}">Approve</button>
-            <button class="btn btn-red btn-sm" id="reject-${esc(p.proposal_id)}">Reject</button>
+        ? `<div class="q-title"><strong>${esc(p.proposal_id)}</strong> <span class="badge badge-purple">Expert interview</span></div>
+            <div class="q-meta">${esc(p.expert_name)}, ${esc(p.expert_role)} · ${(p.heuristics || []).length} heuristic(s) · drafted by ${p.provider === 'adp' ? 'Tencent Cloud ADP' : 'offline mock model'}, reviewed by ${esc(p.submitted_by)}</div>
+            <ul class="q-list">${(p.heuristics || []).map(heuristicLine).join('')}</ul>`
+        : `<div class="q-title"><strong>${esc(p.proposal_id)}</strong> <span class="badge badge-blue">Outcome feedback</span></div>
+            <div class="q-meta">Confirmed cause: <strong>${esc(causeLabel(p.confirmed_cause))}</strong> · Case ${esc(p.case_id)} · ${esc(p.asset_id)} · submitted by ${esc(p.submitted_by)}</div>`;
+      qb.innerHTML = queue.map(p => {
+        const own = p.submitted_by === me;
+        const pid = esc(p.proposal_id);
+        return `<div class="card q-card" style="margin-bottom:8px">
+          <div class="q-body">${describe(p)}</div>
+          <div class="q-actions">
+            <button class="btn btn-green btn-sm" id="approve-${pid}" ${own ? 'disabled aria-describedby="own-' + pid + '"' : ''}>Approve</button>
+            <button class="btn btn-red btn-sm" id="reject-${pid}" ${own ? 'disabled' : ''}>Reject…</button>
+            ${own ? `<div class="q-own" id="own-${pid}">You sent this. A different steward must decide.</div>` : ''}
+            <div class="q-reject" id="rj-${pid}" hidden>
+              <label for="rj-reason-${pid}">Reason (shown to the expert's capturer)</label>
+              <input id="rj-reason-${pid}" type="text" placeholder="e.g. Cause is wrong for this asset">
+              <div class="flex gap-8"><button class="btn btn-red btn-sm" id="rj-go-${pid}">Confirm reject</button><button class="btn btn-secondary btn-sm" id="rj-cancel-${pid}">Cancel</button></div>
+            </div>
           </div>
-        </div>
-      </div>`).join('');
+        </div>`;
+      }).join('');
       // Wire approve/reject buttons
       queue.forEach(p => {
-        const aBtn = document.getElementById(`approve-${p.proposal_id}`);
-        const rBtn = document.getElementById(`reject-${p.proposal_id}`);
+        const id = p.proposal_id;
+        const aBtn = document.getElementById(`approve-${id}`);
+        const rBtn = document.getElementById(`reject-${id}`);
+        const box = document.getElementById(`rj-${id}`);
         if (aBtn) aBtn.onclick = async () => {
-          try { await api.post(`/kb/proposals/${p.proposal_id}/approve`); showToast('Proposal approved', 'success'); loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.(); }
-          catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          aBtn.disabled = true;
+          try { await api.post(`/kb/proposals/${id}/approve`); showToast(`${id} approved and live in the knowledge base`, 'success'); loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.(); }
+          catch (e) { aBtn.disabled = false; showToast(`Error: ${e.message}`, 'error'); }
         };
-        if (rBtn) rBtn.onclick = async () => {
-          try { await api.post(`/kb/proposals/${p.proposal_id}/reject`, { reason: 'Rejected by reviewer' }); showToast('Proposal rejected', 'success'); loadQueue(); }
+        if (rBtn) rBtn.onclick = () => { box.hidden = false; document.getElementById(`rj-reason-${id}`).focus(); };
+        const cancel = document.getElementById(`rj-cancel-${id}`);
+        if (cancel) cancel.onclick = () => { box.hidden = true; };
+        const go = document.getElementById(`rj-go-${id}`);
+        if (go) go.onclick = async () => {
+          const reason = document.getElementById(`rj-reason-${id}`).value.trim();
+          if (!reason) { showToast('Give a reason so the capturer knows what to fix', 'error'); document.getElementById(`rj-reason-${id}`).focus(); return; }
+          try { await api.post(`/kb/proposals/${id}/reject`, { reason }); showToast(`${id} rejected`, 'success'); loadQueue(); loadStats(); }
           catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
       });
@@ -884,12 +920,16 @@ export function renderGovernance(el, state, h) {
   async function loadStats() {
     try {
       const stats = await api.get('/kb/stats');
+      const _c = await loadCauses();
+      const _causeCount = _c.length;
+      const _treeCount = new Set(_c.map(c => c.asset_type)).size;
+      setHTML('pipe-version', stats.kb_version_label ? `Live KB is v${esc(stats.kb_version_label)}; next approval bumps it` : 'Each approval bumps the KB version');
       setHTML('gov-stats', `
         <div class="stat"><div class="stat-val">${stats.total_validated_cases ?? 0}</div><div class="stat-lbl">Validated Cases</div></div>
         <div class="stat stat-purple"><div class="stat-val">${stats.feedback_added ?? 0}</div><div class="stat-lbl">Feedback Added</div></div>
         <div class="stat stat-yellow"><div class="stat-val">${stats.pending_proposals ?? 0}</div><div class="stat-lbl">Pending Proposals</div></div>
-        <div class="stat stat-green"><div class="stat-val">v${stats.kb_version_label ?? "1.3.0"}</div><div class="stat-lbl">KB Version</div></div>
-        <div class="stat stat-blue"><div class="stat-val">4 / 24</div><div class="stat-lbl">Trees / Causes</div></div>
+        <div class="stat stat-green"><div class="stat-val">${stats.kb_version_label ? 'v' + esc(stats.kb_version_label) : 'n/a'}</div><div class="stat-lbl">KB Version</div></div>
+        <div class="stat stat-blue"><div class="stat-val">${_treeCount} / ${_causeCount}</div><div class="stat-lbl">Asset trees / Causes</div></div>
       `);
       const dist = stats.cause_distribution || stats.causes || {};
       const priors = stats.cause_priors || {};
@@ -905,7 +945,7 @@ export function renderGovernance(el, state, h) {
         const max = Math.max(...entries.map(([, v]) => v));
         cdEl.innerHTML = entries.map(([cause, count]) => {
           const pct = (count / max * 100).toFixed(0);
-          return `<div class="cause-bar"><div class="cause-bar-label">${esc(cause.replace(/_/g,' '))}</div><div class="cause-bar-track"><div class="cause-bar-fill" style="width:${pct}%"></div></div><div class="cause-bar-count">${count}</div></div>`;
+          return `<div class="cause-bar"><div class="cause-bar-label">${esc(causeLabel(cause))}</div><div class="cause-bar-track"><div class="cause-bar-fill" style="width:${pct}%"></div></div><div class="cause-bar-count">${count}</div></div>`;
         }).join('');
       }
     } catch (e) {
@@ -1008,103 +1048,201 @@ export async function seedDemoCases(h) {
 
 // ════════════════════════════════════════════════════════════
 // Screen 0: Expert Knowledge Capture (the harvest)
-// The model drafts; a different knowledge steward decides.
+// Interview -> AI draft -> capturer reviews -> second steward approves.
+// The model drafts; people decide. Nothing here touches the live KB.
 // ════════════════════════════════════════════════════════════
+const CAPTURE_ROLES = ['mgr1', 'steward1', 'steward2', 'admin1'];
+const MAX_TRANSCRIPT = 20000;
+
 export function renderCapture(el, state, h) {
   const { api, showToast, esc, navigate } = h;
   const role = api.user();
-  const canCapture = ['mgr1', 'steward1', 'steward2', 'admin1'].includes(role);
+  const canCapture = CAPTURE_ROLES.includes(role);
+  let draft = null;      // last AI draft from /capture/draft
+  let submitted = null;  // proposal after submit
 
   el.innerHTML = `
-    <div class="banner banner-info mb-0" style="margin-bottom:16px">
-      <p><strong>How expert know-how enters the Intelligence Pill.</strong>
-      Paste or transcribe an interview with an experienced technician. An AI model drafts structured
-      heuristics from it. Anything the expert did not say word for word is discarded, and nothing goes
-      live until a <strong>different</strong> knowledge steward approves it on the Governance screen.</p>
-    </div>
-    <div class="grid-2">
+    <ol class="cap-steps" id="cap-steps" aria-label="Capture progress">
+      <li data-step="1">Interview</li>
+      <li data-step="2">AI draft</li>
+      <li data-step="3">You review</li>
+      <li data-step="4">Second steward approves</li>
+    </ol>
+    <div class="grid-2 cap-grid">
       <div class="card">
-        <div class="card-header"><h3>Expert Interview</h3></div>
+        <div class="card-header"><h3>1. Expert interview</h3></div>
         <div class="card-body">
-          <div class="form-group"><label for="cap-name">Expert</label><input id="cap-name" type="text" placeholder="e.g. R. Tan"></div>
-          <div class="form-group"><label for="cap-role">Role and experience</label><input id="cap-role" type="text" placeholder="e.g. Senior M&amp;E Technician, 22 years"></div>
-          <div class="form-group"><label for="cap-asset">Asset type</label>
-            <select id="cap-asset"><option>CRAH</option><option>Chiller</option><option>UPS</option><option>Pump</option></select></div>
+          <p class="muted cap-hint">Paste or transcribe what an experienced technician told you. Keep their own words: anything the AI cannot quote word for word is discarded.</p>
+          <div class="cap-row">
+            <div class="form-group"><label for="cap-name">Expert</label><input id="cap-name" type="text" placeholder="e.g. R. Tan" autocomplete="off"></div>
+            <div class="form-group"><label for="cap-role">Role and experience</label><input id="cap-role" type="text" placeholder="e.g. Senior M&amp;E Technician, 22 years" autocomplete="off"></div>
+          </div>
+          <div class="form-group"><label for="cap-asset">Main asset type discussed</label>
+            <select id="cap-asset"><option>CRAH</option><option>Chiller</option><option>UPS</option><option>Pump</option></select>
+            <div class="field-help">Knowledge about other equipment is filed under its own pill automatically.</div></div>
           <div class="form-group"><label for="cap-text">Interview transcript</label>
-            <textarea id="cap-text" rows="14" placeholder="Interviewer: When ... what do you check first?"></textarea></div>
+            <textarea id="cap-text" rows="14" maxlength="${MAX_TRANSCRIPT}" aria-describedby="cap-count" placeholder="Interviewer: When ... what do you check first?&#10;&#10;Technician: ..."></textarea>
+            <div class="field-help" id="cap-count">0 / ${MAX_TRANSCRIPT.toLocaleString()} characters</div></div>
           <div class="flex gap-8 flex-wrap">
             <button class="btn btn-secondary" id="cap-sample">Load sample interview</button>
             <button class="btn btn-primary" id="cap-run" ${canCapture ? '' : 'disabled'}>Draft knowledge with AI</button>
           </div>
-          ${canCapture ? '' : `<div class="banner banner-error mt-16"><p>Role "${esc(role)}" cannot capture expert knowledge. Switch to an Asset Ops Manager or Knowledge Steward.</p></div>`}
+          ${canCapture ? '' : `<div class="banner banner-info mt-16"><p><strong>View only.</strong> Capturing expert knowledge is limited to Asset Ops Managers and Knowledge Stewards. Switch role in the top bar to try it.</p></div>`}
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><h3>AI Draft</h3><span class="badge badge-yellow">Pending steward approval</span></div>
-        <div class="card-body" id="cap-result">
+        <div class="card-header"><h3 id="cap-right-title">2. AI draft</h3><span class="badge badge-grey" id="cap-status">Not started</span></div>
+        <div class="card-body" id="cap-result" aria-live="polite">
           <div class="empty-state"><div class="empty-state-icon">[ ]</div>
             <div class="empty-state-title">No draft yet</div>
-            <div class="empty-state-desc">Load the sample interview, then draft knowledge to see what the model extracts and why.</div></div>
+            <div class="empty-state-desc">Load the sample interview, then draft knowledge. You will review every heuristic before anything is sent for approval.</div></div>
         </div>
       </div>
     </div>`;
 
-  document.getElementById('cap-sample').onclick = async () => {
+  const $ = id => document.getElementById(id);
+  const text = $('cap-text');
+  const setStep = n => document.querySelectorAll('#cap-steps li').forEach(li => {
+    const k = +li.dataset.step;
+    li.classList.toggle('done', k < n); li.classList.toggle('current', k === n);
+    if (k === n) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+  });
+  const setStatus = (label, cls) => { const b = $('cap-status'); b.textContent = label; b.className = `badge ${cls}`; };
+  const updateCount = () => { $('cap-count').textContent = `${text.value.length.toLocaleString()} / ${MAX_TRANSCRIPT.toLocaleString()} characters`; };
+  setStep(1);
+
+  // Editing the interview after drafting makes the draft stale.
+  ['cap-text', 'cap-asset'].forEach(id => $(id).addEventListener('input', () => {
+    updateCount();
+    if (draft && !submitted) { draft = null; renderEmpty('The interview changed. Draft again to see updated knowledge.'); }
+  }));
+
+  function renderEmpty(msg) {
+    setStep(1); setStatus('Not started', 'badge-grey'); $('cap-right-title').textContent = '2. AI draft';
+    $('cap-result').innerHTML = `<div class="empty-state"><div class="empty-state-icon">[ ]</div><div class="empty-state-title">No draft yet</div><div class="empty-state-desc">${esc(msg)}</div></div>`;
+  }
+
+  $('cap-sample').onclick = async () => {
     try {
       const s = await api.get('/capture/sample');
-      document.getElementById('cap-name').value = s.expert_name;
-      document.getElementById('cap-role').value = s.expert_role;
-      document.getElementById('cap-asset').value = s.asset_type;
-      document.getElementById('cap-text').value = s.transcript;
+      $('cap-name').value = s.expert_name; $('cap-role').value = s.expert_role;
+      $('cap-asset').value = s.asset_type; text.value = s.transcript;
+      text.dispatchEvent(new Event('input'));
     } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
   };
 
-  const list = (title, items) => items && items.length
+  const fieldList = (title, items) => items && items.length
     ? `<div class="kh-row"><span class="kh-label">${title}</span><ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : '';
 
-  document.getElementById('cap-run').onclick = async () => {
-    const body = {
-      expert_name: document.getElementById('cap-name').value.trim(),
-      expert_role: document.getElementById('cap-role').value.trim(),
-      asset_type: document.getElementById('cap-asset').value,
-      transcript: document.getElementById('cap-text').value,
-    };
-    if (!body.expert_name || !body.expert_role || !body.transcript.trim()) {
-      showToast('Fill in expert, role and transcript first', 'error'); return;
-    }
-    const out = document.getElementById('cap-result');
-    out.innerHTML = '<div class="skeleton-card"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>';
-    try {
-      const res = await fetch(`/capture/interview?user=${encodeURIComponent(role)}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
-      const model = d.provider === 'adp' ? 'Tencent Cloud ADP' : 'Offline mock model';
-      out.innerHTML = `
-        <div class="flex gap-8 flex-wrap" style="margin-bottom:12px">
-          <span class="badge badge-purple">Model: ${esc(model)}</span>
-          <span class="badge badge-green">${d.heuristics.length} grounded</span>
-          ${d.dropped ? `<span class="badge badge-red">${d.dropped} dropped as ungrounded</span>` : ''}
+  function heuristicCard(x, i, causes, editable) {
+    const filed = x.asset_type || $('cap-asset').value;
+    return `
+      <div class="kh-item ${editable ? 'kh-editable' : ''}" data-i="${i}">
+        <div class="kh-head">
+          ${editable ? `<label class="kh-include"><input type="checkbox" class="kh-keep" data-i="${i}" checked> Include</label>` : ''}
+          <span class="badge ${x.new_cause ? 'badge-yellow' : 'badge-blue'}">${esc(x.cause_label || causeLabel(x.likely_cause))}</span>
+          <span class="badge badge-grey" title="The pill this knowledge will be filed under">Files under: ${esc(filed)}</span>
         </div>
-        ${(d.warnings || []).map(w => `<div class="banner banner-warn"><p>${esc(w)}</p></div>`).join('')}
-        ${d.heuristics.map(x => `
-          <div class="kh-item">
-            <div class="kh-head">
-              <span class="badge ${x.new_cause ? 'badge-yellow' : 'badge-blue'}">${esc(x.likely_cause)}</span>
-              ${x.new_cause ? '<span class="kh-new">New cause: needs an engineered decision-tree branch</span>' : ''}
-            </div>
-            <div class="kh-row"><span class="kh-label">When</span>${esc(x.symptom_pattern)}</div>
-            ${list('Checks', x.checks)}${list('Never', x.do_not)}${list('Escalate when', x.escalate_when)}
-            <div class="kh-label" style="margin-top:10px">Expert's own words</div>
-            <blockquote class="kh-quote">"${esc(x.evidence_quote)}"</blockquote>
-          </div>`).join('')}
-        <div class="banner banner-success mt-16"><p>Queued as <strong>${esc(d.proposal_id)}</strong>. A different knowledge steward must approve it before it goes live.</p></div>
-        <button class="btn btn-secondary mt-16" id="cap-gov">Open Governance queue</button>`;
-      document.getElementById('cap-gov').onclick = () => navigate('governance');
-      showToast('Draft queued for steward review', 'success');
+        ${x.new_cause ? '<div class="kh-new">New cause: the engine cannot diagnose it until an engineer adds a decision-tree branch. Kept as reference knowledge.</div>' : ''}
+        ${editable && !x.new_cause ? `<div class="form-group kh-cause"><label for="kh-cause-${i}">Cause (correct it if the AI got it wrong)</label><select id="kh-cause-${i}" class="kh-cause-sel" data-i="${i}">${causeOptions(causes, x.likely_cause)}</select></div>` : ''}
+        <div class="kh-row"><span class="kh-label">When</span>${esc(x.symptom_pattern)}</div>
+        ${fieldList('Checks', (x.checks || []).filter(c => c !== x.symptom_pattern))}${fieldList('Never', x.do_not)}${fieldList('Escalate when', x.escalate_when)}
+        <span class="kh-label" style="margin-top:10px">Expert's own words</span>
+        <blockquote class="kh-quote">"${esc(x.evidence_quote)}"</blockquote>
+      </div>`;
+  }
+
+  function modelBadge(d) {
+    return `<span class="badge badge-purple">Drafted by: ${esc(d.provider === 'adp' ? 'Tencent Cloud ADP' : 'Offline mock model')}</span>`;
+  }
+
+  async function renderDraft() {
+    const causes = await loadCauses();
+    setStep(3); setStatus('Draft, not submitted', 'badge-yellow'); $('cap-right-title').textContent = '3. Review the draft';
+    $('cap-result').innerHTML = `
+      <div class="flex gap-8 flex-wrap" style="margin-bottom:12px">
+        ${modelBadge(draft)}
+        <span class="badge badge-green">${draft.heuristics.length} grounded in the transcript</span>
+        ${draft.dropped ? `<span class="badge badge-red">${draft.dropped} discarded: not said by the expert</span>` : ''}
+      </div>
+      ${(() => {
+        const ws = draft.warnings || [];
+        const filing = ws.filter(w => w.includes(' pill, so it will be filed'));
+        const other = ws.filter(w => !filing.includes(w));
+        const moved = draft.heuristics.filter(x => x.asset_type && x.asset_type !== $('cap-asset').value);
+        return other.map(w => `<div class="banner banner-warn"><p>${esc(w)}</p></div>`).join('')
+          + (moved.length ? `<div class="banner banner-info"><p><strong>Filed under other pills:</strong> ${moved.map(x => `${esc(x.cause_label)} goes to ${esc(x.asset_type)}`).join('; ')}. Each pill only uses knowledge about its own equipment.</p></div>` : '');
+      })()}
+      <p class="muted cap-hint">Untick anything that is wrong or unclear and correct causes where needed. You cannot add words the expert did not say: the server checks every quote again.</p>
+      ${draft.heuristics.map((x, i) => heuristicCard(x, i, causes, true)).join('')}
+      <div class="cap-submit">
+        <button class="btn btn-primary" id="cap-submit">Send ${draft.heuristics.length} for steward approval</button>
+        <span class="muted" id="cap-submit-note">A different knowledge steward must approve before it goes live.</span>
+      </div>`;
+    const btn = $('cap-submit');
+    const kept = () => [...document.querySelectorAll('.kh-keep')].filter(c => c.checked).map(c => +c.dataset.i);
+    const refresh = () => {
+      const n = kept().length;
+      btn.disabled = n === 0;
+      btn.textContent = n ? `Send ${n} for steward approval` : 'Select at least one heuristic';
+      document.querySelectorAll('.kh-item').forEach(card => card.classList.toggle('kh-excluded', !kept().includes(+card.dataset.i)));
+    };
+    document.querySelectorAll('.kh-keep').forEach(c => c.addEventListener('change', refresh));
+    btn.onclick = submit;
+  }
+
+  async function submit() {
+    const btn = $('cap-submit');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const heuristics = [...document.querySelectorAll('.kh-keep')].filter(c => c.checked).map(c => {
+      const i = +c.dataset.i; const sel = $(`kh-cause-${i}`);
+      return { ...draft.heuristics[i], likely_cause: sel ? sel.value : draft.heuristics[i].likely_cause };
+    });
+    try {
+      const d = await api.postJson('/capture/interview', {
+        expert_name: $('cap-name').value.trim(), expert_role: $('cap-role').value.trim(),
+        asset_type: $('cap-asset').value, transcript: text.value, heuristics, provider: draft.provider,
+      });
+      submitted = d;
+      setStep(4); setStatus('Waiting for second steward', 'badge-yellow'); $('cap-right-title').textContent = '4. Sent for approval';
+      const causes = await loadCauses();
+      $('cap-result').innerHTML = `
+        <div class="banner banner-success"><p><strong>Sent as ${esc(d.proposal_id)}.</strong> Nothing is live yet. A knowledge steward other than you (${esc(role)}) must approve it on the Governance screen.</p></div>
+        <div class="flex gap-8 flex-wrap" style="margin:12px 0">${modelBadge(d)}<span class="badge badge-green">${d.heuristics.length} heuristic(s) sent</span></div>
+        ${d.heuristics.map((x, i) => heuristicCard(x, i, causes, false)).join('')}
+        <div class="flex gap-8 flex-wrap mt-16">
+          <button class="btn btn-primary" id="cap-gov">Open Governance queue</button>
+          <button class="btn btn-secondary" id="cap-new">Capture another interview</button>
+        </div>`;
+      $('cap-gov').onclick = () => navigate('governance');
+      $('cap-new').onclick = () => navigate('capture');
+      showToast(`${d.proposal_id} sent for steward approval`, 'success');
     } catch (e) {
-      out.innerHTML = `<div class="banner banner-error"><p>${esc(e.message)}</p></div>`;
+      btn.disabled = false; btn.textContent = 'Try sending again';
+      showToast(`Could not send: ${e.message}`, 'error');
+    }
+  }
+
+  $('cap-run').onclick = async () => {
+    const name = $('cap-name').value.trim(), who = $('cap-role').value.trim();
+    const missing = [!name && 'expert', !who && 'role and experience', !text.value.trim() && 'transcript'].filter(Boolean);
+    if (missing.length) {
+      showToast(`Add the ${missing.join(', ')} first`, 'error');
+      ({ expert: $('cap-name'), 'role and experience': $('cap-role'), transcript: text })[missing[0]].focus();
+      return;
+    }
+    const run = $('cap-run');
+    run.disabled = true; run.textContent = 'Drafting…';
+    setStep(2); setStatus('Drafting…', 'badge-blue'); submitted = null;
+    $('cap-result').innerHTML = '<div class="skeleton-card"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div><p class="muted">The model is reading the interview. Each heuristic must quote the expert word for word.</p>';
+    try {
+      draft = await api.postJson('/capture/draft', { asset_type: $('cap-asset').value, transcript: text.value });
+      await renderDraft();
+    } catch (e) {
+      draft = null; setStep(1); setStatus('Draft failed', 'badge-red');
+      $('cap-result').innerHTML = `<div class="banner banner-error"><p><strong>No usable draft.</strong> ${esc(e.message)}</p><p>Check the transcript has the expert's own answers, then try again.</p></div>`;
+    } finally {
+      run.disabled = !canCapture; run.textContent = 'Draft again with AI';
     }
   };
 }

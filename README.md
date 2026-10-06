@@ -343,22 +343,32 @@ the second-reviewer rule can be shown live.
 ## Expert Knowledge Capture (LLM drafts, steward approves)
 
 The challenge's hardest requirement is capturing know-how that was never
-written down. The **Capture** screen (`POST /capture/interview`) takes an
-interview with an experienced technician and runs:
+written down. The **Capture** screen takes an interview with an experienced
+technician and walks four visible steps: Interview, AI draft, You review,
+Second steward approves.
 
 ```
 interview transcript
    │  G7: instruction-like text redacted before any model sees it
    ▼
-LLM extraction (llm.py)  ──▶  symptom, likely cause, checks, never-do,
-   │                          escalate-when, verbatim evidence quote
+POST /capture/draft  (llm.py)  ──▶  symptom, likely cause, checks, never-do,
+   │                                escalate-when, verbatim evidence quote
    ▼
 grounding check: any item whose quote is not in the transcript is DROPPED
-cause check:     causes outside the known universe are flagged "new:<slug>"
+cause check:     causes stored as canonical IDs with plain-English labels;
+                 causes outside the known universe are flagged "new:<slug>"
+filing:          each heuristic is filed under the pill that owns its cause
+                 (chiller know-how from a CRAH interview goes to Chiller)
    ▼
-pending proposal ──▶ a DIFFERENT knowledge steward approves ──▶ live KB
-                                                     (version bump, rollback-able)
+capturer reviews: untick wrong items, correct a cause (cannot add words)
+   ▼
+POST /capture/interview  (re-grounded server-side) ──▶ pending proposal
+   ▼
+a DIFFERENT knowledge steward approves ──▶ live KB (version bump, rollback-able)
 ```
+
+Nothing is queued until the capturer sends the reviewed draft, so a
+half-wrong draft never reaches the steward queue.
 
 Approved heuristics on known causes enter the validated library, raising
 that cause's empirical prior and so the confidence of future diagnoses.
@@ -407,7 +417,7 @@ configured Tencent ADP provider instead of the default offline mock.
 make test        # = PYTHONPATH=. python3 -m pytest tests/ -q
 ```
 
-**50 tests** (verified with `make test`) cover spec §8 cases, F1-F7
+**57 tests** (verified with `make test`) cover spec §8 cases, F1-F7
 acceptance, governance, persistence, and expert capture:
 
 | Test | Spec | Verifies |
