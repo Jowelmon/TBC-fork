@@ -265,7 +265,12 @@ export function renderDashboard(el, state, h) {
     }
     tbody.innerHTML = cases.map(c => {
       const obs = c.observation || {};
-      const cb = confBand(c.confidence);
+      // Confidence is 0.0 by default before a diagnosis exists -- showing
+      // that as a confidence band would read as "Escalate" for a case
+      // that was never diagnosed at all, contradicting the status column.
+      const confCell = c.diagnosis
+        ? (() => { const cb = confBand(c.confidence); return `<span class="badge ${cb.cls}">${cb.label}</span>`; })()
+        : '<span class="muted">Not yet diagnosed</span>';
       const canAdv = c.current_state === 'GATHERING_EVIDENCE';
       return `<tr class="clickable" tabindex="0" role="link" aria-label="Open case ${c.case_id} on ${c.asset_id}" onclick="window.__app__.navigate('diagnosis', '${c.case_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.__app__.navigate('diagnosis', '${c.case_id}')}">
         <td><code>${esc(c.case_id)}</code></td>
@@ -274,7 +279,7 @@ export function renderDashboard(el, state, h) {
         <td>${esc(obs.sensor_id || '-')}</td>
         <td>${esc(obs.reading_status || '-')}</td>
         <td>${statePill(c.current_state)}</td>
-        <td><span class="badge ${cb.cls}">${cb.label}</span></td>
+        <td>${confCell}</td>
         <td onclick="event.stopPropagation()">
           ${canAdv ? `<button class="btn btn-sm btn-primary" onclick="advCase('${c.case_id}')">Advance</button>` : '<span class="muted">-</span>'}
         </td>
@@ -463,6 +468,12 @@ export function renderDiagnosis(el, state, h) {
 
       // Render confidence breakdown
       const confBody = document.getElementById('conf-body');
+      if (!s.diagnosis) {
+        // Confidence defaults to 0.0 before any diagnosis runs; showing a
+        // band for that reads as "Escalate" for a case nothing has judged
+        // yet, contradicting a status column that says "Not yet diagnosed".
+        confBody.innerHTML = `<div class="banner banner-info"><p>Not yet diagnosed. Confidence appears once the decision tree produces a diagnosis.</p></div>`;
+      } else {
       const confVal = s.confidence !== null && s.confidence !== undefined ? (s.confidence * 100).toFixed(1) + '%' : 'N/A';
       const confPct = (s.confidence * 100).toFixed(1);
       const confCls = s.confidence < 0.35 ? 'low' : (s.confidence < 0.55 ? 'medium' : 'high');
@@ -502,11 +513,29 @@ export function renderDiagnosis(el, state, h) {
         <div class="muted" style="margin-top:12px">confidence = W1*evidence_coverage + W2*peer_agreement + W3*kb_match - W4*staleness - W5*conflict</div>
         <div class="muted" style="margin-top:4px">KB version used: <strong>${esc((s.confidence_breakdown && s.confidence_breakdown.kb_version_label) || 'not yet diagnosed')}</strong></div>
       `;
+      }
 
       // Render recommendation
       const recBody = document.getElementById('rec-body');
-      if (!s.recommendation) {
-        recBody.innerHTML = `<div class="banner banner-info"><p>No recommendation has been produced yet.</p>${s.current_state === 'ESCALATED' ? '<p><strong>Case escalated.</strong> Confidence is below the escalation threshold (0.35).</p>' : ''}</div>`;
+      // A G3-escalated case can carry a bookkeeping Recommendation (kb_refs
+      // + evidence_refs only, no actions -- see app.py's G3-after-G4 path)
+      // purely so the guardrail engine has something to evaluate. Treat it
+      // as "no recommendation" for display: an empty "Recommended Action"
+      // card on an escalated case reads as a contradiction otherwise.
+      const hasRecommendation = s.recommendation && (s.recommendation.actions || []).length > 0;
+      if (!hasRecommendation) {
+        // The escalation reason always comes from the guardrail result that
+        // actually fired (G1-G9) -- never a hardcoded rule or threshold,
+        // since any of several guardrails (not only low confidence) can
+        // be why a case has no recommendation.
+        const escReasons = (s.guardrail_result && s.guardrail_result.reasons) || [];
+        recBody.innerHTML = `<div class="banner banner-info"><p>No recommendation has been produced yet.</p>${
+          s.current_state === 'ESCALATED'
+            ? (escReasons.length
+                ? `<p><strong>Case escalated.</strong></p><ul style="margin:4px 0 0 18px">${escReasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+                : '<p><strong>Case escalated.</strong></p>')
+            : ''
+        }</div>`;
       } else {
         const rec = s.recommendation;
         const actions = (rec.actions || []).map(a => `
@@ -589,8 +618,12 @@ export function renderDecision(el, state, h) {
 
       let html = `<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
 
-      // Show recommendation (read-only)
-      if (s.recommendation && s.recommendation.actions) {
+      // Show recommendation (read-only). A G3-escalated case can carry a
+      // bookkeeping Recommendation with no actions (see app.py's
+      // G3-after-G4 path) -- treat that as "no recommendation" here too,
+      // so it falls through to the escalation panel below instead of a
+      // hollow "Recommendation Under Review" card.
+      if (s.recommendation && (s.recommendation.actions || []).length > 0) {
         html += `<div class="card"><div class="card-header"><h3>Recommendation Under Review</h3></div><div class="card-body">
           <span class="tier-label tier-action">Tier 3 - Recommended Action (Read-Only)</span>
           <span class="tier-label tier-human">Tier 4 - Human Decision (Below)</span>`;
@@ -601,17 +634,28 @@ export function renderDecision(el, state, h) {
           </div>
         `).join('');
         html += `</div></div>`;
-      } else {
-        // No recommendation — check if escalated due to low confidence
-        if (s.current_state === 'ESCALATED' || (s.confidence !== null && s.confidence < 0.35)) {
-          html += `<div class="banner banner-error">
-            <p><strong>Escalated - No Recommendation (G4)</strong></p>
-            <p>Confidence ${s.confidence !== null ? '(' + (s.confidence * 100).toFixed(0) + '%)' : ''} is below the escalation threshold (0.35).</p>
-            <p>This case has been automatically escalated. No approve/reject/modify controls are available.</p>
-          </div>`;
-        } else {
-          html += `<div class="banner banner-info"><p>No recommendation to review yet.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
+      } else if (s.current_state === 'ESCALATED') {
+        // Why it escalated always comes from the guardrail result that
+        // actually fired -- G1-G9, never a hardcoded rule or threshold
+        // (several different guardrails can escalate a case, not only G4).
+        const gr = s.guardrail_result;
+        const reasons = (gr && gr.reasons) || [];
+        const g3Reason = reasons.find(r => r.includes('[G3]'));
+        const whoToCallMatch = g3Reason && g3Reason.match(/maps to ([^;]+);/);
+        const whoToCall = whoToCallMatch ? whoToCallMatch[1].trim() : null;
+
+        html += `<div class="banner banner-error">
+          <p><strong>Case escalated.</strong> No recommendation; approve, reject or modify is not available.</p>
+          ${reasons.length
+            ? `<ul style="margin:8px 0 0 18px">${reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+            : '<p>No guardrail reason was recorded for this escalation.</p>'}
+        </div>`;
+        if (whoToCall) {
+          html += `<div class="banner banner-info"><p><strong>Who to call:</strong> ${esc(whoToCall)}</p></div>`;
         }
+        html += `<div class="card"><div class="card-header"><h3>Resolve Escalation</h3></div><div class="card-body" id="esc-actions"></div></div>`;
+      } else {
+        html += `<div class="banner banner-info"><p>No recommendation to review yet.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
       }
 
       // Show existing decision if any
@@ -653,11 +697,48 @@ export function renderDecision(el, state, h) {
             <div id="decision-form"></div>
           </div></div>`;
         }
-      } else {
+      } else if (s.current_state !== 'ESCALATED') {
+        // The ESCALATED case already got its own panel above (why it
+        // escalated, who to call, resolve controls) -- this generic banner
+        // would just repeat "Current state: ESCALATED" underneath it.
         html += `<div class="banner banner-info"><p>Decision controls are available when the case is in <strong>AWAITING_APPROVAL</strong> state.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
       }
 
       el.innerHTML = html;
+
+      // Wire escalation resolution controls (role-gated: approve_reject_modify)
+      const escBody = document.getElementById('esc-actions');
+      if (escBody) {
+        if (!canApprove) {
+          escBody.innerHTML = `<p class="muted">Resolving an escalation requires the Asset Ops Manager role. Switch role in the top bar.</p>`;
+        } else {
+          escBody.innerHTML = `
+            <div class="form-group"><label for="esc-reason">Reason</label><input id="esc-reason" type="text" placeholder="e.g. BMS vendor confirmed a bus fault; closing with their reference number"></div>
+            <div class="flex gap-8 flex-wrap">
+              <button class="btn btn-secondary" id="btn-esc-evidence">Request more evidence (reason required)</button>
+              <button class="btn btn-red" id="btn-esc-close">Close escalation (resolution required)</button>
+            </div>
+          `;
+          document.getElementById('btn-esc-evidence').onclick = async () => {
+            const reason = document.getElementById('esc-reason').value.trim();
+            if (!reason) { showToast('Give a reason to request more evidence', 'error'); return; }
+            try {
+              await api.post(`/cases/${cid}/escalation/evidence`, { reason });
+              showToast('More evidence requested; case returned to gathering', 'success');
+              load();
+            } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          };
+          document.getElementById('btn-esc-close').onclick = async () => {
+            const reason = document.getElementById('esc-reason').value.trim();
+            if (!reason) { showToast('Give the resolution to close this escalation', 'error'); return; }
+            try {
+              await api.post(`/cases/${cid}/escalation/close`, { reason });
+              showToast('Escalation closed', 'success');
+              load();
+            } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          };
+        }
+      }
 
       // Wire buttons
       const btnApprove = document.getElementById('btn-approve');

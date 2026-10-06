@@ -2,7 +2,7 @@
 
 import { api } from './api.js?v=4';
 import { initGuide } from './guide.js?v=7';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=7';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=9';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
