@@ -239,6 +239,20 @@ code, pre {
 .card-header h3 { font-size: 16px; font-weight: 600; color: var(--text-bright); }
 .card-body { padding: 20px; }
 
+.why-panel > summary {
+  padding: 14px 20px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-bright);
+}
+.why-panel > summary::-webkit-details-marker { display: none; }
+.why-panel > summary::before { content: '▸ '; color: var(--text-dim); }
+.why-panel[open] > summary::before { content: '▾ '; }
+.why-panel > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.why-panel .card-body { padding-top: 4px; border-top: 1px solid var(--border); }
+.why-panel .card-body p { margin-bottom: 10px; line-height: 1.6; }
+.why-panel .card-body p:last-child { margin-bottom: 0; }
+
 /* ── Tables ─────────────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
 

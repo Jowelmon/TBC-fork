@@ -693,6 +693,51 @@ def get_causes(user: str = Depends(resolve_user), asset_type: str | None = None)
     return {"causes": causes}
 
 
+# Which knowledge steward owns review for each pill (spec §7 governance).
+# A registry-level assignment, not sourced from any HR/roster system --
+# the two stewards this demo seeds (steward1, steward2) split the four
+# pills so the "second steward must approve" rule has a concrete owner
+# to name per pill.
+PILL_OWNERS: dict[str, str] = {
+    "CRAH": "steward1",
+    "Chiller": "steward2",
+    "UPS": "steward1",
+    "Pump": "steward2",
+}
+
+
+@app.get("/pills")
+def list_pills(user: str = Depends(resolve_user)) -> dict:
+    """Registry of the four Intelligence Pills this deployment covers.
+
+    All four currently share one knowledge base (there is a single
+    LearningStore, not one per pill), so kb_version_label is the same
+    for every row -- that is the real, current architecture, not a
+    per-pill version this repo doesn't actually track.
+    """
+    _need(user, "view_case")
+    from .learning import STORE as _LSTORE
+
+    all_proposals = _LSTORE.list_all_proposals()
+    pills = []
+    for asset_type, owner in PILL_OWNERS.items():
+        knowledge_count = sum(1 for vc in _LSTORE.validated if vc.asset_type == asset_type)
+        knowledge_count += sum(1 for h in _LSTORE.expert_heuristics if h.get("asset_type") == asset_type)
+        relevant = [p for p in all_proposals if p.get("asset_type") == asset_type]
+        decided = [p for p in relevant if p.get("status") in ("approved", "rejected")]
+        approved = [p for p in decided if p.get("status") == "approved"]
+        pills.append({
+            "asset_type": asset_type,
+            "owner_steward": owner,
+            "kb_version_label": _LSTORE.get_kb_version_label(),
+            "knowledge_count": knowledge_count,
+            "proposals_submitted": len(relevant),
+            "proposals_approved": len(approved),
+            "approval_rate": round(len(approved) / len(decided), 3) if decided else None,
+        })
+    return {"pills": pills}
+
+
 @app.get("/system/info")
 def get_system_info(user: str = Depends(resolve_user)) -> dict:
     """Which model drafts expert knowledge, for the UI badge. Never returns secrets."""

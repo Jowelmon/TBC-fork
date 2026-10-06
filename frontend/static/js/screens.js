@@ -153,6 +153,23 @@ export function renderDashboard(el, state, h) {
 
   el.innerHTML = `
     ${nextHint('click a case to see its diagnosis, or seed demo cases / create a new one to get started.')}
+    <details class="card why-panel">
+      <summary><h3 style="display:inline">Why this exists</h3></summary>
+      <div class="card-body">
+        <p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
+        <p><strong>Users:</strong> technicians trigger and work cases; Asset Ops Managers approve every recommendation before anything happens; Knowledge Stewards review and govern what the pill learns from interviews and closed cases.</p>
+        <p><strong>Value:</strong> <em>assumption: manual triage without captured expert knowledge takes roughly 90 minutes per fault; replace with a measured Keppel baseline.</em> This pill's claim is narrower and checkable: a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). Nothing above the <em>assumption</em> line is Keppel data — it isn't.</p>
+      </div>
+    </details>
+    <details class="card why-panel">
+      <summary><h3 style="display:inline">Deployment path</h3></summary>
+      <div class="card-body">
+        <p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
+        <p><strong>Stage 2 -- Production on Tencent Cloud:</strong> containerised deploy (the repo's own Dockerfile), SQLite swapped for a managed database, secrets moved to Tencent Cloud's secret manager, real CMMS work-order integration.</p>
+        <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, a real steward roster in place of the fixed two-steward registry demo.</p>
+        <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>
+      </div>
+    </details>
     <div class="flex justify-between align-center" style="margin-bottom:20px">
       <div></div>
       <div class="flex gap-8">
@@ -971,6 +988,7 @@ export function renderGovernance(el, state, h) {
   el.innerHTML = `
     ${nextHint('approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.')}
     <div class="stats-row" id="gov-stats"></div>
+    <div class="card"><div class="card-header"><h3>Pill Registry</h3></div><div class="card-body" id="pill-registry-body"></div></div>
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>Cause Distribution</h3></div><div class="card-body" id="cause-dist"></div></div>
       <div class="card"><div class="card-header"><h3>Governance Pipeline</h3></div><div class="card-body" id="pipeline-body"></div></div>
@@ -979,6 +997,27 @@ export function renderGovernance(el, state, h) {
     <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>
     <div class="card"><div class="card-header"><h3>SHA-256 Audit Trace</h3></div><div class="card-body" id="trace-body"></div></div>
   `;
+
+  // Pill Registry — all four pills, who owns review, and how their KB is doing
+  (async () => {
+    const body = document.getElementById('pill-registry-body');
+    try {
+      const { pills } = await api.get('/pills');
+      body.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Pill</th><th>Owner Steward</th><th>KB Version</th><th>Knowledge Items</th><th>Approval Rate</th></tr></thead>
+        <tbody>${pills.map(p => `<tr>
+          <td><strong>${esc(p.asset_type)}</strong></td>
+          <td>${esc(p.owner_steward)}</td>
+          <td>v${esc(p.kb_version_label)}</td>
+          <td>${p.knowledge_count}</td>
+          <td>${p.approval_rate === null ? '<span class="muted">no decisions yet</span>' : `${(p.approval_rate * 100).toFixed(0)}% (${p.proposals_approved}/${p.proposals_submitted})`}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <p class="muted" style="margin-top:10px">All four pills currently share one knowledge base, so the KB version is the same for each -- there is no independent per-pill KB in this build.</p>`;
+    } catch (e) {
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  })();
 
   // Pipeline visual
   setHTML('pipeline-body', `
