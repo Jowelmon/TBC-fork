@@ -46,9 +46,11 @@ def test_no_session_is_refused(secure_client: TestClient):
 
 
 def test_login_sets_a_working_cookie(secure_client: TestClient):
-    resp = secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    resp = secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"user": "tech1", "role": "technician"}
+    assert resp.json()["user"] == "tech1"
+    assert resp.json()["role"] == "technician"
+    assert "approve_reject_modify" not in resp.json()["capabilities"]
     assert SESSION_COOKIE in resp.cookies
 
     # No ?user= needed anymore: the cookie alone authenticates.
@@ -57,7 +59,7 @@ def test_login_sets_a_working_cookie(secure_client: TestClient):
 
 
 def test_unknown_user_id_is_rejected(secure_client: TestClient):
-    resp = secure_client.post("/login", params={"user_id": "nobody"})
+    resp = secure_client.post("/login", json={"user_id": "nobody"})
     assert resp.status_code == 401
 
 
@@ -65,7 +67,7 @@ def test_unknown_user_id_is_rejected(secure_client: TestClient):
 # 2 & 3. Session cookie beats a spoofed ?user=, including on write paths
 # --------------------------------------------------------------------------- #
 def test_cookie_wins_over_spoofed_user_param(secure_client: TestClient):
-    secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
 
     # tech1's session cannot approve regardless of what ?user= claims.
     case_id = _create_and_advance(secure_client)
@@ -79,10 +81,10 @@ def test_cookie_wins_over_spoofed_user_param(secure_client: TestClient):
 
 
 def test_outcome_verified_by_is_the_cookie_user_not_the_spoofed_param(secure_client: TestClient):
-    secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
     case_id = _create_and_advance(secure_client)
 
-    secure_client.post("/login", params={"user_id": "mgr1", "pin": "2222"})
+    secure_client.post("/login", json={"user_id": "mgr1", "pin": "2222"})
     resp = secure_client.post(f"/cases/{case_id}/approval", params={
         "decision": "approve", "rationale": "ok",
     })
@@ -93,7 +95,7 @@ def test_outcome_verified_by_is_the_cookie_user_not_the_spoofed_param(secure_cli
     # via a spoofed ?user=. verified_by always comes from the resolved
     # session (post_outcome never takes it as a client param), so it must
     # be tech1 regardless of what ?user= claims.
-    secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
     resp = secure_client.post(f"/cases/{case_id}/outcome", params={
         "user": "admin1", "result": "resolved",
         "root_cause_confirmed": "sensor_hardware_failure",
@@ -117,7 +119,7 @@ def test_demo_insecure_restores_user_param_fallback(secure_client: TestClient, m
 
 
 def test_demo_insecure_still_loses_to_a_real_cookie(secure_client: TestClient, monkeypatch):
-    secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
     monkeypatch.setenv("TBC_DEMO_INSECURE", "1")
     case_id = _create_and_advance(secure_client)
     resp = secure_client.post(f"/cases/{case_id}/approval", params={
@@ -130,7 +132,7 @@ def test_demo_insecure_still_loses_to_a_real_cookie(secure_client: TestClient, m
 # 6. A tampered cookie is worthless
 # --------------------------------------------------------------------------- #
 def test_tampered_cookie_is_rejected(secure_client: TestClient):
-    secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
     secure_client.cookies.set(SESSION_COOKIE, "admin1.0" * 8)  # forged signature
     resp = secure_client.get("/cases")
     assert resp.status_code == 401
@@ -140,7 +142,7 @@ def test_tampered_cookie_is_rejected(secure_client: TestClient):
 # 7. /system/info reports the flag accurately
 # --------------------------------------------------------------------------- #
 def test_system_info_reports_demo_insecure_flag(secure_client: TestClient, monkeypatch):
-    secure_client.post("/login", params={"user_id": "tech1", "pin": "1111"})
+    secure_client.post("/login", json={"user_id": "tech1", "pin": "1111"})
 
     resp = secure_client.get("/system/info")
     assert resp.json()["demo_insecure"] is False

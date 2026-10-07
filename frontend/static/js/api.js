@@ -8,17 +8,26 @@ const api = {
     return localStorage.getItem('tbc_user') || 'mgr1';
   },
 
-  // Sets the signed session cookie for `userId` after the server checks
-  // their PIN. Call this — not a raw ?user= param — to switch who
-  // subsequent requests act as.
+  // Who the session is and what it may do (set by login). Screens gate on
+  // capabilities, never on user names; the server enforces them anyway.
+  me: null,
+  can(cap) { return !!(this.me && this.me.capabilities.includes(cap)); },
+  role() { return this.me ? this.me.role : null; },
+
+  // Logs in as `userId`. The PIN goes in the request body, never the URL.
+  // Without a PIN this only succeeds for a user this browser has already
+  // proven the PIN for (an httpOnly cookie the server signs); the browser
+  // itself never stores PINs.
   async login(userId, pin) {
-    const q = new URLSearchParams({ user_id: userId, pin: pin || '' });
-    const res = await fetch(`/login?${q}`, {
+    const res = await fetch('/login', {
       method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pin === undefined ? { user_id: userId } : { user_id: userId, pin }),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+    if (!res.ok) { const e = new Error(body.detail || `HTTP ${res.status}`); e.status = res.status; throw e; }
     localStorage.setItem('tbc_user', userId);
+    this.me = body;
     return body;
   },
 

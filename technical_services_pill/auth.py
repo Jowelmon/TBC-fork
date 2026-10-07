@@ -19,12 +19,19 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 
 from fastapi import HTTPException, Request, Response
 
 from .rbac import DEMO_USERS
 
 SESSION_COOKIE = "tbc_session"
+# Users this browser has proven the PIN for, so switching back to them does
+# not need the PIN again and the browser never has to store PINs itself.
+UNLOCK_COOKIE = "tbc_unlocked"
+MAX_FAILURES = 5
+LOCKOUT_SECONDS = 300
+_failures: dict[str, list[float]] = {}  # user -> [count, locked_until]
 _SECRET = os.environ.get("TBC_SECRET") or secrets.token_hex(32)
 
 
@@ -67,6 +74,40 @@ def check_pin(user_id: str, pin: str | None) -> bool:
     return bool(expected and pin) and hmac.compare_digest(expected, pin)
 
 
+def locked_for(user_id: str) -> int:
+    """Seconds left on a lockout after too many wrong PINs, or 0."""
+    _, until = _failures.get(user_id, [0, 0.0])
+    return max(0, int(until - time.time()))
+
+
+def record_pin_result(user_id: str, ok: bool) -> None:
+    if ok:
+        _failures.pop(user_id, None)
+        return
+    count, _ = _failures.get(user_id, [0, 0.0])
+    count += 1
+    until = time.time() + LOCKOUT_SECONDS if count >= MAX_FAILURES else 0.0
+    _failures[user_id] = [0 if until else count, until]
+
+
+def unlocked_users(request: Request) -> set[str]:
+    token = request.cookies.get(UNLOCK_COOKIE)
+    if not token or "." not in token:
+        return set()
+    body, _, mac = token.rpartition(".")
+    expected = hmac.new(_SECRET.encode(), f"unlock:{body}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(mac, expected):
+        return set()
+    return {u for u in body.split(",") if u in DEMO_USERS}
+
+
+def issue_unlock(response: Response, users: set[str]) -> None:
+    body = ",".join(sorted(users))
+    mac = hmac.new(_SECRET.encode(), f"unlock:{body}".encode(), hashlib.sha256).hexdigest()
+    response.set_cookie(UNLOCK_COOKIE, f"{body}.{mac}", httponly=True, samesite="lax",
+                        max_age=60 * 60 * 12)
+
+
 def demo_insecure() -> bool:
     """Whether ``?user=`` is honoured as a fallback. Off by default."""
     return os.environ.get("TBC_DEMO_INSECURE", "0").strip() == "1"
@@ -81,6 +122,7 @@ def issue_cookie(response: Response, user_id: str) -> None:
 
 def clear_cookie(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(UNLOCK_COOKIE)
 
 
 def resolve_user(request: Request, user: str | None = None) -> str:
@@ -110,6 +152,10 @@ def resolve_user(request: Request, user: str | None = None) -> str:
 __all__ = [
     "SESSION_COOKIE",
     "check_pin",
+    "issue_unlock",
+    "locked_for",
+    "record_pin_result",
+    "unlocked_users",
     "demo_insecure",
     "issue_cookie",
     "clear_cookie",

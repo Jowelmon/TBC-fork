@@ -143,9 +143,9 @@ def test_recomputing_the_chain_without_the_key_does_not_verify(client):
 def test_login_requires_the_users_pin(monkeypatch):
     monkeypatch.setenv("TBC_DEMO_INSECURE", "0")
     c = TestClient(app)
-    assert c.post("/login", params={"user_id": "admin1"}).status_code == 401
-    assert c.post("/login", params={"user_id": "admin1", "pin": "0000"}).status_code == 401
-    assert c.post("/login", params={"user_id": "admin1", "pin": "9999"}).status_code == 200
+    assert c.post("/login", json={"user_id": "admin1"}).status_code == 401
+    assert c.post("/login", json={"user_id": "admin1", "pin": "0000"}).status_code == 401
+    assert c.post("/login", json={"user_id": "admin1", "pin": "9999"}).status_code == 200
 
 
 def test_seeding_is_admin_only_and_never_attributed_to_real_users(client):

@@ -25,11 +25,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from pydantic import BaseModel
 
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
-from .auth import check_pin, clear_cookie, demo_insecure, issue_cookie, resolve_user
+from .auth import (
+    check_pin, clear_cookie, demo_insecure, issue_cookie, issue_unlock, locked_for,
+    record_pin_result, resolve_user, unlocked_users,
+)
 from .models import (
     AgentStateName,
     HumanDecision,
@@ -178,19 +182,48 @@ def _fault_signature(state: AgentState, top_cause_id: str, kb_refs: list[str]) -
 # ========================================================================== #
 # Identity: a signed session cookie, not a spoofable ?user= param (see auth.py)
 # ========================================================================== #
+class LoginRequest(BaseModel):
+    user_id: str
+    pin: str | None = None
+
+
 @app.post("/login")
-def login(user_id: str, response: Response, pin: str | None = None) -> dict:
+def login(body: LoginRequest, request: Request, response: Response) -> dict:
     """Check the user's PIN and set a signed session cookie for them.
 
-    The top-bar role switcher calls this. Everything downstream reads the
-    caller from the cookie, so logging in here is the only way to change
-    who you act as. Naming a user is not enough: their PIN is required.
+    The PIN travels in the request body, never the URL. Five wrong PINs
+    lock that user out for five minutes. A user whose PIN this browser has
+    already proven can be switched back to without it.
     """
-    u = _user(user_id)
-    if not check_pin(u.user_id, pin):
-        raise HTTPException(401, f"wrong or missing PIN for {user_id}")
+    u = _user(body.user_id)
+    wait = locked_for(u.user_id)
+    if wait:
+        raise HTTPException(429, f"too many wrong PINs for {u.user_id}; try again in {wait}s")
+    unlocked = unlocked_users(request)
+    if body.pin is None and u.user_id in unlocked:
+        pass
+    else:
+        ok = check_pin(u.user_id, body.pin)
+        record_pin_result(u.user_id, ok)
+        if not ok:
+            raise HTTPException(401, f"wrong or missing PIN for {u.user_id}")
+        issue_unlock(response, unlocked | {u.user_id})
     issue_cookie(response, u.user_id)
-    return {"user": u.user_id, "role": u.role.value}
+    return _me(u.user_id)
+
+
+def _me(user_id: str) -> dict:
+    from .rbac import PERMISSIONS
+
+    u = _user(user_id)
+    return {"user": u.user_id, "role": u.role.value, "capabilities": sorted(PERMISSIONS[u.role])}
+
+
+@app.get("/me")
+def me(user: str = Depends(resolve_user)) -> dict:
+    """Who the session is and what it may do, so screens gate on
+    capabilities rather than on user names."""
+    return _me(user)
 
 
 @app.post("/logout")
@@ -1106,6 +1139,17 @@ def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dic
     """
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE, SelfApprovalError
+    from .rbac import Role
+
+    p = next((x for x in _LSTORE.list_all_proposals() if x["proposal_id"] == proposal_id), None)
+    if p is not None and _user(user).role != Role.ADMIN:
+        owner = PILL_OWNERS.get(p.get("asset_type") or "")
+        # The pill's owning steward decides; if the owner proposed it, the
+        # second steward stands in (separation of duties still applies).
+        if owner and owner != user and owner != p.get("submitted_by"):
+            raise HTTPException(
+                403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they (or an admin) "
+                     "can approve it")
     try:
         proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user)
     except SelfApprovalError as exc:
@@ -1149,10 +1193,14 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
 def list_proposals(user: str = Depends(resolve_user), status: str | None = None) -> dict:
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
+    from .learning import kb_version_label
+
     props = _LSTORE.list_all_proposals()
     if status:
         props = [p for p in props if p["status"] == status]
-    return {"proposals": props}
+    return {"proposals": [
+        {**p, "kb_version_label": kb_version_label(p["kb_version"]) if p.get("kb_version") is not None else None}
+        for p in props]}
 
 
 @app.get("/kb/versions")

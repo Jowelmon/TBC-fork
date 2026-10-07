@@ -1,8 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=5';
+import { api } from './api.js?v=6';
 import { initGuide } from './guide.js?v=8';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=15';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=17';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -202,42 +202,33 @@ roleSelect.value = state.role;
 roleBadge.textContent = roleDisplayName(state.role);
 
 // ── PIN sign-in ────────────────────────────────────────────
-// Naming a user is not enough to act as them: the server checks their
-// PIN. PINs typed here are kept for this browser tab only, so the demo
-// can move between roles without retyping each time.
-const pinCache = JSON.parse(sessionStorage.getItem('tbc_pins') || '{}');
-
-function askPin(userId) {
+// Naming a user is not enough to act as them: the server checks their PIN
+// (five wrong tries lock that user out for five minutes). Once a PIN has
+// been proven in this browser, switching back to that user needs no PIN.
+function askPin(userId, note = '') {
   const backdrop = document.getElementById('pin-backdrop');
   const form = document.getElementById('pin-dialog');
   const input = document.getElementById('pin-input');
   const err = document.getElementById('pin-error');
   document.getElementById('pin-prompt').textContent =
     `Enter the PIN for ${userId} (${roleDisplayName(userId)}). Demo PINs are listed in DEMO.md.`;
-  input.value = ''; err.textContent = '';
+  input.value = ''; err.textContent = note;
   backdrop.hidden = false;
   input.focus();
   return new Promise(resolve => {
     const done = value => { backdrop.hidden = true; form.onsubmit = null; resolve(value); };
     form.onsubmit = async ev => {
       ev.preventDefault();
-      try {
-        await api.login(userId, input.value);
-        pinCache[userId] = input.value;
-        sessionStorage.setItem('tbc_pins', JSON.stringify(pinCache));
-        done(true);
-      } catch (e) { err.textContent = e.message; input.select(); }
+      try { await api.login(userId, input.value); done(true); }
+      catch (e) { err.textContent = e.message; input.select(); }
     };
     document.getElementById('pin-cancel').onclick = () => done(false);
   });
 }
 
 async function signIn(userId) {
-  if (pinCache[userId]) {
-    try { await api.login(userId, pinCache[userId]); return true; }
-    catch (_) { delete pinCache[userId]; }
-  }
-  return askPin(userId);
+  try { await api.login(userId); return true; }
+  catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
 }
 
 async function setRole(role) {
@@ -265,16 +256,25 @@ navItems.forEach(item => {
 });
 
 // ── Model chip (which model drafts expert knowledge) + insecure banner ──
+// The AI's presence on every screen: the avatar's state says whether the
+// model is answering, offline, or the offline (non-LLM) models are in use.
 async function refreshSystemInfo() {
   const chip = document.getElementById('model-chip');
+  const avatar = document.getElementById('ai-presence');
   const banner = document.getElementById('insecure-banner');
   try {
     const info = await api.get('/system/info');
-    chip.textContent = `Capture model: ${info.llm_label}`;
-    if (info.llm_provider === 'adp' && !info.adp_configured) {
-      chip.textContent += ' (key missing)';
-      chip.className = 'badge badge-red';
-    }
+    const view = {
+      online: ['ai-avatar--active', 'badge-purple', `AI: ${info.llm_label}`],
+      ready: ['ai-avatar--idle', 'badge-purple', `AI: ${info.llm_label}`],
+      offline: ['ai-avatar--offline', 'badge-red', `AI offline (${info.llm_label})`],
+      'offline-model': ['ai-avatar--idle', 'badge-purple', 'AI: offline models (no LLM)'],
+    }[info.ai_status] || ['ai-avatar--idle', 'badge-purple', `AI: ${info.llm_label}`];
+    avatar.className = `ai-avatar ${view[0]}`;
+    chip.className = `badge ${view[1]}`;
+    chip.textContent = view[2];
+    chip.title = info.ai_status_message;
+    avatar.title = info.ai_status_message;
     if (banner) banner.hidden = !info.demo_insecure;
   } catch (_) { chip.hidden = true; }
 }
@@ -294,4 +294,4 @@ async function refreshSystemInfo() {
 })();
 
 // Expose for debugging
-window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion };
+window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion, refreshSystemInfo };

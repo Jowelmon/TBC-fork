@@ -63,7 +63,7 @@ def _login(client, user_id: str):
     """
     from .auth import _pins
 
-    resp = client.post("/login", params={"user_id": user_id, "pin": _pins()[user_id]})
+    resp = client.post("/login", json={"user_id": user_id, "pin": _pins()[user_id]})
     resp.raise_for_status()
     return client
 

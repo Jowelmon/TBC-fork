@@ -119,11 +119,13 @@ make serve          # = .venv/bin/python -m uvicorn frontend.serve:app --port 80
 
 Open `http://localhost:8000/ui` and sign in with a demo PIN (`mgr1` = 2222;
 all six are in `DEMO.md`). When the server starts with no cases it seeds
-three demo scenarios (one CLOSED, one ESCALATED, one AWAITING_APPROVAL),
+four demo scenarios (one CLOSED, one ESCALATED, one AWAITING_APPROVAL, and
+a borderline UPS where the AI second opinion disagrees with the rules),
 recorded in the audit trail as `demo-seed`, never as a real user; an admin
-can add three more with **Seed Demo Cases**. The role switcher (top right)
-asks for each user's PIN once per browser tab and sets a real signed-in
-session, not a URL param — see *Identity and RBAC* below. A **Dark theme** toggle sits next to it; light is
+can add more with **Seed Demo Cases**. The role switcher (top right) asks
+for a user's PIN the first time you switch to them; after that this browser
+can switch back without it (a signed httpOnly cookie, so no PIN is stored
+in the page). It sets a real signed-in session, not a URL param — see *Identity and RBAC* below. A **Dark theme** toggle sits next to it; light is
 the default (projector-safe, high-contrast — see `tests/test_contrast.py`).
 Click **Demo guide** for a guided walkthrough, or follow `DEMO.md` for a
 6-minute scripted run. See `frontend/README.md` for UI implementation
@@ -178,7 +180,11 @@ snapshots.
 | `POST` | `/kb/rollback/{version}` | Roll back to an earlier live version (admin only, `reason` required, recorded in the ledger) |
 | `GET` | `/kb/ledger` | Keyed, hash-chained governance ledger: every proposal, approval, rejection and rollback with actor and reason |
 | `GET` | `/audit/status` | Integrity summary (any broken case chain or ledger), shown as a Dashboard banner |
-| `POST` | `/demo/seed` | Admin only: add the three demo scenarios, attributed to `demo-seed` |
+| `POST` | `/demo/seed` | Admin only: add the demo scenarios, attributed to `demo-seed` |
+| `POST` | `/cases/{id}/rescore` | Re-score a case awaiting approval against the current KB (required after the knowledge it used was rolled back or revoked) |
+| `GET` | `/kb/proposals` | All proposals, filterable by `status` (stewards/admin) |
+| `POST` | `/kb/proposals/{id}/revoke` | Withdraw one approved proposal's knowledge, `reason` required |
+| `GET` | `/me` | The session's user, role and capabilities (the UI gates on capabilities, never user names) |
 | `GET` | `/pills` | Pill Registry: owner steward, KB version, knowledge count, approval rate per pill |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
 
@@ -373,6 +379,18 @@ write-back** loop (spec §7, enhanced in F2):
 6. When an AOM closes an escalation and names the confirmed cause, the
    resolution itself becomes a knowledge proposal: the cases the pill could
    not solve are where the expert know-how is.
+7. Withdrawn knowledge never silently backs a decision. Each case records
+   the KB version it was scored against; if that version is rolled back, or
+   a proposal it relied on is **revoked** (one proposal at a time, from
+   Governance), the AOM Decision screen blocks approval until the case is
+   re-scored against the current KB, which may send it back to a human.
+8. Each pill's owning steward approves its knowledge (if the owner proposed
+   it, the other steward stands in); the approver, not the proposer, is
+   recorded as the validator.
+9. An approved expert interview is guidance, not an observed outcome: it
+   never moves a cause's confirmation rate, and it only raises confidence
+   on a case whose evidence shows the condition the expert described (the
+   matched words are shown on screen).
 
 **Demo proof:** the learning-loop case shows `kb_match` rising from **0.73 →
 1.00** and confidence from **0.43 → 0.50** after one approved feedback cycle
@@ -429,7 +447,7 @@ decision tree and guardrails remain authoritative.
 
 | Value | Behaviour |
 |---|---|
-| `mock` (default) | Deterministic offline extractor, so the demo runs without keys. Labelled "Offline mock model" in the UI. |
+| `mock` (default) | Offline models, no LLM: a fault-phrase extractor for capture (all 23 causes, clause-scoped negation) and an evidence-weighting second opinion. Labelled "Offline models (no LLM)" in the UI. |
 | `adp` | Tencent Cloud Agent Development Platform, v2 Chat API over HTTP SSE (`llm._call_adp()`). Failures return HTTP 502, never a silent fallback. |
 
 To use ADP: `cp .env.example .env`, set `TBC_LLM_PROVIDER=adp` and paste your
@@ -456,6 +474,15 @@ an independent second opinion on a *completed* rule-based diagnosis
 - Sensor metadata and evidence are G7-sanitised before the model sees them.
 - A hypothesis naming a cause outside the candidates offered is rejected; an
   evidence citation not actually present in the supplied evidence is dropped.
+- Offline, it is an **evidence-weighting model**: every cause the pill knows
+  is scored on weighted evidence signals at once, a different method from
+  the decision tree's first-match rule walk, so a borderline reading the
+  tree's threshold ignores can still tip it. Seeded case **UPS-DC1-02**
+  shows this: the tree says battery end of life (state of health 58%), the
+  second opinion flags thermal runaway risk (cell temp 41°C and rising).
+- It may name any cause of the asset's pill; a hypothesis outside that set
+  is rejected. Evidence is passed as readable lines, and model errors are
+  shown in plain language (raw provider responses stay in the server log).
 - It never approves, executes, publishes, or changes `current_state`. When it
   disagrees with the rule-based diagnosis, that's logged as guardrail **G9**
   — visible to the AOM, changes nothing.
@@ -464,8 +491,10 @@ an independent second opinion on a *completed* rule-based diagnosis
   itself recorded in the hash-chained audit trail.
 
 Shown on the Diagnosis screen as its own card, clearly separate from the
-"Rule-based diagnosis (expert decision tree)" card — only the AI card and
-Capture ever say "AI".
+"Rule-based diagnosis (expert decision tree)" card, and summarised on AOM
+Decision. An animated AI avatar sits in the top bar on every screen (green:
+answering; grey: offline models; dim: AI offline, with the reason on hover)
+and on the Capture draft card.
 
 ## Pill Registry
 
@@ -478,7 +507,9 @@ real current architecture, not an invented per-pill version (see
 
 ## Identity and RBAC
 
-`POST /login?user_id=...&pin=...` checks that user's PIN and sets an
+`POST /login` with `{"user_id": ..., "pin": ...}` in the body (never the
+URL) checks that user's PIN; five wrong PINs lock that user out for five
+minutes. It sets an
 HMAC-signed session cookie (`TBC_SECRET`, auto-generated per process if
 unset). Naming a user is not enough to act as them. Demo PINs are in
 `DEMO.md`; set `TBC_LOGIN_PINS="tech1:....,mgr1:...."` to replace them. A
@@ -510,7 +541,7 @@ make eval         # = PYTHONPATH=. .venv/bin/python tests/evals/run_evals.py
 The Makefile uses `.venv/bin/python` when it exists, so no activation is
 needed after `make install`.
 
-**142 tests** (verified with `make test`; this count is a snapshot — run the
+**156 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases, F1-F3
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
@@ -533,6 +564,7 @@ checks:
 | `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
 | `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
 | `test_judge_round2_fixes.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
+| `test_judge_round4_fixes.py` | Truncation and unhashed-field edits detected; ledger truncation and KB edits detected; JSON snapshots; rolled-back knowledge blocks approval until re-scored; single-proposal revoke; validated_by is the approver; AI second opinion disagrees with readable citations; plain-language ADP errors; every escalation has a reason; fault/asset mismatch refused; owning steward enforced; expert corroboration; PIN lockout and unlock cookie |
 | `test_judge_round3_fixes.py` | Rejected feedback leaves no proposal; cross-asset/unknown causes refused; ledger records approvals and rollbacks; labels never reused; a re-hashed chain without the key fails and freezes the case; login PIN; seeding never attributed to real users; rationale and hazard acknowledgement; escalation resolution harvested; pump/UPS capture; manual capture with AI offline |
 
 **`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
@@ -552,10 +584,20 @@ chain** (spec §6):
 hash_n = HMAC-SHA256(audit_key, canonical_json({prev_hash: hash_{n-1}, ...fields}))
 ```
 
-- `GENESIS_HASH` anchors each chain head.
+- Each case entry also records a digest of the case's full state at that
+  point (evidence, diagnosis, recommendation, guardrail result, AI opinion,
+  decision, outcome), so editing `human_decision.decided_by` or the
+  diagnosed cause afterwards fails verification, not only editing an entry.
+- Each ledger entry records a digest of the knowledge base's contents and
+  every proposal's status, so editing knowledge outside the governance flow
+  fails verification.
+- Both chains carry a keyed **seal** over their length and head, so deleting
+  the newest entries (truncation) is caught.
 - `verify_audit_chain()` (cases) and `verify_ledger()` (knowledge) recompute
-  the chain. Editing an entry breaks it, and so does editing every entry and
-  re-hashing, unless the editor also holds the audit key.
+  all of this. Re-hashing a forged chain fails unless the editor also holds
+  the audit key.
+- State is saved as JSON, never `pickle`, so loading a snapshot cannot run
+  code.
 - The key comes from `TBC_AUDIT_KEY`, or a generated `data/audit.key` (mode
   0600) for local demos. **Limit:** someone with filesystem access to both
   the database and that key file can re-sign the chain; in production the
@@ -570,7 +612,7 @@ technical_services_pill/
 ├── models.py            # Pydantic v2 models, enums, thresholds
 ├── agent_state.py       # State machine + hash-chain audit
 ├── guardrails.py        # G1-G9 engine (G1-G8 deterministic, G9 AI-disagreement flag)
-├── decision_tree.py     # CRAH/chiller/UPS/pump causal trees, 24 causes
+├── decision_tree.py     # CRAH/chiller/UPS/pump causal trees, 23 causes
 ├── confidence.py        # W1-W5 scoring formula, registry-backed peer_agreement
 ├── cause_registry.py    # Canonical cause IDs, labels, owning pill
 ├── ai_reasoning.py      # Advisory AI second opinion on a diagnosis
@@ -606,6 +648,7 @@ tests/
 ├── test_judge_fixes.py          # Rollback UI/label reconciliation, new asset fixtures
 ├── test_judge_round2_fixes.py   # Round 2 judge findings
 ├── test_judge_round3_fixes.py   # Round 3 judge findings (governance integrity, identity, capture)
+├── test_judge_round4_fixes.py   # Round 4 judge findings (audit coverage, stale knowledge, AI, governance)
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/

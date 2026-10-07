@@ -1,11 +1,13 @@
 # 6-minute demo script
 
 Before you start: `make reset && make serve`, open http://localhost:8000/ui.
-The server seeds three demo cases (recorded as `demo-seed`). The app opens
+The server seeds four demo cases (recorded as `demo-seed`). The app opens
 as `mgr1 (Asset Ops Manager)` and asks for that user's PIN; switch roles
 with the "Acting as" dropdown in the top bar. Each switch is a real login
 (PIN checked, signed session cookie), not a URL trick, which is itself part
-of the story below. A PIN is asked for once per role per browser tab.
+of the story below. A PIN is asked for the first time you switch to a role;
+switching back to it later needs no PIN. Five wrong PINs lock that user out
+for five minutes.
 
 **Demo PINs** (replace with `TBC_LOGIN_PINS` on any real deployment):
 
@@ -83,8 +85,10 @@ decides anything."
 **Do:** On the same Diagnosis screen, scroll to **AI Second Opinion**.
 Point at the "Advisory only — does not affect routing" tag, the
 agree/disagree badge, and that it's grounded only in evidence actually
-shown above it. If it ever disagrees, point at the G9 guardrail entry
-further down and note the routing didn't change.
+shown above it. Then open the seeded **UPS-DC1-02** case: the rules say
+battery end of life, the AI flags thermal runaway risk (41°C and rising),
+and G9 records the disagreement without changing the routing. The avatar in
+the top bar shows the AI's state on every screen.
 
 ## 8. The AOM approves (45s)
 
@@ -119,8 +123,11 @@ the stewards' queue as an *Escalation resolution* proposal.
 a one-way door."
 
 **Do:** Switch to **admin1**. On **Governance**, the **Rollback** panel
-shows every version: current, live, and rolled back. Pick an earlier
-version, type a reason, click **Roll back…** and confirm. Point at the new
+shows every version: current, live, and rolled back. Show **Approved Knowledge**: any single proposal can be revoked with a
+reason, without touching the rest. Then pick an earlier version, type a
+reason, click **Roll back…** and confirm. Open a case that was scored with
+the withdrawn knowledge: AOM Decision now blocks approval until it is
+re-scored. Point at the new
 **Knowledge Governance Ledger** row (actor, reason, version from → to), and
 note that the next approval gets a brand-new label: labels are never
 reused.
@@ -138,7 +145,7 @@ and a red banner appears on the Dashboard for everyone.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 142
+**If asked "is any of this real?"** — `make test` (pytest, currently 156
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires
