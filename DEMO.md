@@ -1,5 +1,21 @@
 # 6-minute demo script
 
+## Logins (demo PINs, the app's passwords)
+
+| User | Role | PIN |
+|---|---|---|
+| `tech1` | Technician | **1111** |
+| `mgr1` | Asset Ops Manager | **2222** |
+| `steward1` | Knowledge Steward (owns CRAH, UPS) | **3333** |
+| `steward2` | Knowledge Steward (owns Chiller, Pump) | **4444** |
+| `auditor1` | Auditor | **5555** |
+| `admin1` | Admin | **9999** |
+
+These are demo defaults; set `TBC_LOGIN_PINS="tech1:....,mgr1:...."` to
+replace them on any real deployment.
+
+## Setup
+
 Before you start: `make reset && make serve`, open http://localhost:8000/ui.
 The server seeds five demo cases (recorded as `demo-seed`). The app opens
 as `mgr1 (Asset Ops Manager)` and asks for that user's PIN; switch roles
@@ -8,17 +24,6 @@ with the "Acting as" dropdown in the top bar. Each switch is a real login
 of the story below. A PIN is asked for the first time you switch to a role;
 switching back to it later needs no PIN. Five wrong PINs lock that user out
 for five minutes.
-
-**Demo PINs** (replace with `TBC_LOGIN_PINS` on any real deployment):
-
-| User | Role | PIN |
-|---|---|---|
-| tech1 | Technician | 1111 |
-| mgr1 | Asset Ops Manager | 2222 |
-| steward1 | Knowledge Steward | 3333 |
-| steward2 | Knowledge Steward | 4444 |
-| auditor1 | Auditor | 5555 |
-| admin1 | Admin | 9999 |
 
 Every beat below is something you click, not something you claim.
 
@@ -67,8 +72,9 @@ explaining why.
 
 **Do:** Switch role to **steward2**. The queue shows every line of every
 heuristic, exactly as the AOM will see it. Click **Approve…**, say why it is
-sound (recorded in the ledger), and confirm. Point at the KB
-version bump in the toast and in the nav footer. In **Re-run Diagnosis on
+sound (recorded in the ledger), and confirm. Point at the version bump in
+the toast and in the nav footer: the interview covers CRAH, Chiller and
+Pump, so those three pills move and UPS does not. In **Re-run Diagnosis on
 Similar Open Cases**, re-run the seeded **PUMP-DC1-01** case: 49% becomes
 about 65%, past the 55% recommendation threshold, because R. Tan's pump
 answer is now approved knowledge and the case's evidence shows what he
@@ -81,7 +87,10 @@ it automatically."
 
 **Do:** Switch role to **tech1**. Click **New Case**, keep CRAH-DC1-01,
 **Create Case**, then **Advance** (sensor hardware failure, the cause just
-approved). Open **Diagnosis**, scroll to
+approved). Open **Diagnosis**: the summary card at the top gives the
+cause, confidence, AI view, recommendation, abnormal readings and next
+step in one place (the confidence breakdown and guardrail grid are folded
+underneath for anyone who wants the working). Scroll to
 **Expert Knowledge Reused** — point out it names the expert, quotes
 them verbatim, and that the deterministic tree stays authoritative
 either way.
@@ -135,12 +144,14 @@ the stewards' queue as an *Escalation resolution* proposal.
 a one-way door."
 
 **Do:** Switch to **admin1**. On **Governance**, the **Rollback** panel
-shows every version: current, live, and rolled back. Show **Approved Knowledge**: any single proposal can be revoked with a
+works one pill at a time: pick **CRAH** and it shows every CRAH version
+(current, live and rolled back). Rolling CRAH back leaves the Chiller, UPS
+and Pump knowledge exactly as it was; the footer shows each pill's version. Show **Approved Knowledge**: any single proposal can be revoked with a
 reason, without touching the rest. Then pick an earlier version, type a
 reason, click **Roll back…** and confirm. Open a case that was scored with
 the withdrawn knowledge: AOM Decision now blocks approval until it is
 re-scored. Point at the new
-**Knowledge Governance Ledger** row (actor, reason, version from → to), and
+**Knowledge Governance Ledger** row (actor, reason, and which pill moved from which version to which), and
 note that the next approval gets a brand-new label: labels are never
 reused.
 
@@ -152,12 +163,12 @@ tamper-evident hash chain."
 **Do:** On Governance, point at **Ledger verified** and the **Case Audit
 Trace**. Changing any past entry breaks every hash after it, and
 re-hashing the whole chain does not help without the audit key
-(`tests/test_judge_round3_fixes.py`). A case whose chain fails is frozen
+(`tests/test_governance_integrity.py`). A case whose chain fails is frozen
 and a red banner appears on the Dashboard for everyone.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 189
+**If asked "is any of this real?"** — `make test` (pytest, currently 218
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

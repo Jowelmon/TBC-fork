@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from datetime import date
 
-
 # --- Assets (spec §6 Asset) -----------------------------------------------
 ASSETS: dict[str, dict] = {
     "CRAH-DC1-01": {

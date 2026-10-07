@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-
 from .audit import GENESIS_HASH
 from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
 from .models import (

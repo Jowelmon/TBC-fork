@@ -69,8 +69,10 @@ function render() {
 
 function place(x, y) {
   const w = el.offsetWidth || 90, h = el.offsetHeight || 70;
+  // Never over the top bar: the role badge and theme controls live there.
+  const top = (document.getElementById('topbar')?.getBoundingClientRect().bottom || 0) + 8;
   const nx = Math.min(Math.max(8, x), window.innerWidth - w - 8);
-  const ny = Math.min(Math.max(8, y), window.innerHeight - h - 8);
+  const ny = Math.min(Math.max(top, y), window.innerHeight - h - 8);
   el.style.left = `${nx}px`; el.style.top = `${ny}px`;
   el.style.right = 'auto'; el.style.bottom = 'auto';
   return [nx, ny];
@@ -95,7 +97,9 @@ export function initCloud() {
   render();
 
   const saved = JSON.parse(localStorage.getItem('tbc_cloud_pos') || 'null');
-  if (saved) place(saved[0], saved[1]);
+  if (Array.isArray(saved) && saved.every(Number.isFinite)) place(saved[0], saved[1]);
+  // Keep a remembered position on screen when the window shrinks.
+  window.addEventListener('resize', () => { if (el.style.left) place(parseInt(el.style.left, 10), parseInt(el.style.top, 10)); });
 
   // Drag with mouse or touch; a press without movement is a click.
   let start = null;

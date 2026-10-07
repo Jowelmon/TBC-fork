@@ -24,7 +24,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .agent_state import AgentState
-from .confidence import peer_agreement_from_registry, score_confidence, evidence_coverage_score
+from .confidence import (
+    evidence_coverage_score,
+    peer_agreement_from_registry,
+    score_confidence,
+)
 from .decision_tree import evaluate_decision_tree
 from .learning import kb_version_label
 from .models import (
@@ -36,8 +40,8 @@ from .models import (
     Observation,
     Outcome,
     OutcomeResult,
-    Recommendation,
     ReadingStatus,
+    Recommendation,
 )
 from .tools import (
     create_work_order_for_state,

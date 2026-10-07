@@ -1,9 +1,9 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=6';
+import { api } from './api.js?v=7';
 import { initGuide } from './guide.js?v=9';
-import { initCloud, setCloudStatus, setCloudMood, cloudThinking } from './cloud.js?v=3';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=26';
+import { initCloud, setCloudStatus, setCloudMood, cloudThinking } from './cloud.js?v=4';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=27';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -106,13 +106,15 @@ function esc(s) {
 }
 
 // ── Navigation ─────────────────────────────────────────────
-// Keep the nav footer in step with the live KB version (same source as Governance).
+// Keep the nav footer in step with each pill's live KB version (same source as Governance).
 async function refreshKbVersion() {
   const el = document.getElementById('nav-kb-version');
   if (!el) return;
   try {
     const stats = await api.get('/kb/stats');
-    el.textContent = stats.kb_version_label ? `KB v${stats.kb_version_label}` : 'KB version unavailable';
+    const labels = Object.values(stats.kb_version_labels || {});
+    el.textContent = labels.length ? `KB ${labels.join(' · ')}` : 'KB version unavailable';
+    el.title = 'Each pill versions its own knowledge';
   } catch (_) { if (el.textContent.includes('loading')) el.textContent = 'KB version unavailable'; }
 }
 

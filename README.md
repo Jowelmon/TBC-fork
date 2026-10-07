@@ -111,15 +111,25 @@ make demo
 make serve
 ```
 
-### Option C - Frontend Demo UI (what judges should run)
+### Option C - Frontend Demo UI (recommended)
 
 ```bash
 make install        # creates .venv and installs requirements
 make serve          # = .venv/bin/python -m uvicorn frontend.serve:app --port 8000
 ```
 
-Open `http://localhost:8000/ui` and sign in with a demo PIN (`mgr1` = 2222;
-all six are in `DEMO.md`). When the server starts with no cases it seeds
+Open `http://localhost:8000/ui` and sign in with a demo PIN:
+
+| User | Role | PIN |
+|---|---|---|
+| `tech1` | Technician | 1111 |
+| `mgr1` | Asset Ops Manager | 2222 |
+| `steward1` | Knowledge Steward (CRAH, UPS) | 3333 |
+| `steward2` | Knowledge Steward (Chiller, Pump) | 4444 |
+| `auditor1` | Auditor | 5555 |
+| `admin1` | Admin | 9999 |
+
+ When the server starts with no cases it seeds
 five demo scenarios: one CLOSED, a bus fault ESCALATED to the BMS pill, a
 chiller AWAITING_APPROVAL, a borderline UPS awaiting approval where the AI
 second opinion disagrees with the rules (G9, routing unchanged), and a pump
@@ -180,9 +190,9 @@ disable these app-level snapshots.
 | `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
 | `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
 | `POST` | `/kb/proposals/{id}/reject` | Reject a proposal (steward/admin) |
-| `GET` | `/kb/versions` | Every KB version ever issued, its displayed label, and whether it is live or rolled back. Labels are never reused |
-| `POST` | `/kb/rollback/{version}` | Roll back to an earlier live version (admin only, `reason` required, recorded in the ledger) |
-| `GET` | `/kb/ledger` | Keyed, hash-chained governance ledger: every proposal, approval, rejection and rollback with actor and reason |
+| `GET` | `/kb/versions?pill=CRAH` | Every version of one pill's knowledge, its label (`CRAH v1.4.0`), and whether it is live or rolled back. Labels are never reused |
+| `POST` | `/kb/rollback/{version}?pill=CRAH` | Roll one pill's knowledge back to an earlier live version; other pills are untouched (admin only, `reason` required, recorded in the ledger) |
+| `GET` | `/kb/ledger` | Keyed, hash-chained governance ledger: every proposal, approval, rejection, revoke and rollback with actor, reason and the pill versions it changed |
 | `GET` | `/audit/status` | Integrity summary (any broken case chain or ledger), shown as a Dashboard banner |
 | `POST` | `/demo/seed` | Admin only: add the demo scenarios, attributed to `demo-seed` |
 | `POST` | `/cases/{id}/rescore` | Re-score a case awaiting approval against the current KB (required after the knowledge it used was rolled back or revoked) |
@@ -367,20 +377,25 @@ write-back** loop (spec §7, enhanced in F2):
    corrected) root cause and creates a **pending proposal** (not directly
    ingested).
 2. A knowledge steward reviews the proposal via `/kb/queue` and approves or
-   rejects it. Approval ingests the case into the KB and increments the KB
-   version.
+   rejects it. Approval ingests the case into the KB and moves that pill's
+   knowledge to a new version. Each pill (CRAH, Chiller, UPS, Pump)
+   versions its own knowledge, so a Chiller approval never changes the
+   CRAH version a case was scored against.
 3. On the **next** diagnosis, `get_similar()` retrieves matching cases and
    `kb_match_score()` returns a similarity in `[0, 1]`.
 4. A higher `kb_match` feeds into the W3 term, raising `confidence` — so
    recurring faults are diagnosed faster and with more confidence.
-5. An admin can **roll back** the KB to an earlier live version via
-   `/kb/rollback/{version}?reason=...`, removing everything approved after
-   it — reachable from the **Rollback** panel on Governance (admin role),
-   which asks for a reason and a confirmation. Version numbers are never
-   reused: after rolling back from v1.6.0 to v1.4.0, the next approval is
-   v1.7.0, so a case stamped "KB version used: 1.5.0" always means one
-   thing. Every approval, rejection and rollback is written to the keyed
-   governance ledger (`/kb/ledger`, shown on Governance).
+5. An admin can **roll back** one pill's knowledge to an earlier live
+   version via `/kb/rollback/{version}?pill=...&reason=...`, removing what
+   was approved for that pill after it and leaving the other pills alone.
+   It is reachable from the **Rollback** panel on Governance (admin role,
+   pick the pill), which asks for a reason and a confirmation. Version
+   numbers are never reused: after rolling CRAH back from v1.6.0 to v1.4.0,
+   the next CRAH approval is v1.7.0, so a case stamped "KB version used:
+   CRAH v1.5.0" always means one thing. Every approval, rejection, revoke
+   and rollback is written to the keyed governance ledger (`/kb/ledger`,
+   shown on Governance). While the ledger fails verification, every
+   knowledge change is refused (HTTP 423) until an auditor reviews it.
 6. When an AOM closes an escalation and names the confirmed cause, the
    resolution itself becomes a knowledge proposal: the cases the pill could
    not solve are where the expert know-how is.
@@ -389,13 +404,20 @@ write-back** loop (spec §7, enhanced in F2):
    a proposal it relied on is **revoked** (one proposal at a time, from
    Governance), the AOM Decision screen blocks approval until the case is
    re-scored against the current KB, which may send it back to a human.
-8. Each pill's owning steward approves its knowledge (if the owner proposed
-   it, the other steward stands in); the approver, not the proposer, is
-   recorded as the validator.
+8. Each pill's owning steward approves or rejects its knowledge (if the
+   owner proposed it, the other steward stands in); nobody decides on their
+   own proposal, either way. The approver, not the proposer, is recorded
+   as the validator.
 9. What a steward approves is exactly what reaches the AOM. Every check,
    "never" and "escalate when" line must be the expert's own words from the
-   same answer as the quote, and lines that would defeat a safety device
-   are dropped (a "never bypass…" prohibition is kept). The queue shows each
+   same answer as the quote. Every line is also run through a safety
+   screen (`safety.py`) at capture and again when it is shown: a line that
+   tells someone to bypass, jumper, bridge out, silence, override or raise
+   the limit on a protective device is dropped, while a prohibition
+   ("never bypass the interlock") is kept. The screen is a pattern match on
+   the usual phrasings, not a guarantee, so the second steward's review
+   remains the main control. A quote that never names the cause it is filed
+   under is flagged for the steward. The queue shows each
    heuristic in full; approving needs a rationale and rejecting a reason,
    both recorded in the ledger. Which model drafted the knowledge is the
    server's record of its own draft, never the browser's claim, and the
@@ -525,16 +547,17 @@ never acts.
 
 `GET /pills` and the **Pill Registry** panel (Governance) list all four
 pills — CRAH, Chiller, UPS, Pump — with their owner steward, current KB
-version, knowledge-item count, and approval rate. All four currently share
-one knowledge base, so the KB version is identical across rows; that's the
-real current architecture, not an invented per-pill version (see
-`docs/IMPLEMENTATION_PATH.md` for the scale path to per-pill isolation).
+version, knowledge-item count, and approval rate. Each pill versions its
+own knowledge (`CRAH v1.4.0`, `Chiller v1.3.0`, ...), held in one store
+with one governance ledger; see `docs/IMPLEMENTATION_PATH.md` for the path
+to fully separate per-pill stores.
 
 ## Identity and RBAC
 
 `POST /login` with `{"user_id": ..., "pin": ...}` in the body (never the
 URL) checks that user's PIN; five wrong PINs lock that user out for five
-minutes. It sets an
+minutes from that client. Logout revokes both the session and the
+"already proven" cookie that lets a browser switch back without a PIN. It sets an
 HMAC-signed session cookie (`TBC_SECRET`, auto-generated per process if
 unset). Naming a user is not enough to act as them. Demo PINs are in
 `DEMO.md`; set `TBC_LOGIN_PINS="tech1:....,mgr1:...."` to replace them. A
@@ -566,34 +589,33 @@ make eval         # = PYTHONPATH=. .venv/bin/python tests/evals/run_evals.py
 The Makefile uses `.venv/bin/python` when it exists, so no activation is
 needed after `make install`.
 
-**189 tests** (verified with `make test`; this count is a snapshot — run the
-command for the current number) across spec acceptance cases, F1-F3
-governance, identity, confidence, contrast/accessibility, and no-contradiction
-checks:
+**218 tests** (verified with `make test`; this count is a snapshot, so run the
+command for the current number) across spec acceptance cases, governance,
+identity, confidence, accessibility and safety:
 
 | File | Covers |
 |---|---|
 | `test_agent_state.py` | Core state-machine lifecycle, illegal transitions, guardrails G1/G5/G7/G8, audit tamper detection, multi-asset decision trees |
-| `test_f1_escalation_api.py` | F1: G3 cross-domain escalation via the real API path |
-| `test_f2_proposals.py` | F2: proposal workflow — pending → approve/reject → KB write-back → rollback, self-approval blocked, RBAC |
-| `test_f3_refrigerant_leak.py` | F3: G2b forces `AWAITING_APPROVAL` (not escalate) for a safety-critical-but-actionable cause |
+| `test_f1_escalation_api.py` | G3 cross-domain escalation via the real API path |
+| `test_f2_proposals.py` | Proposal workflow: pending → approve/reject → KB write-back → rollback, self-approval blocked, RBAC |
+| `test_f3_refrigerant_leak.py` | G2b forces `AWAITING_APPROVAL` (not escalate) for a safety-critical-but-actionable cause |
 | `test_rbac_caps.py` | Declared vs. enforced RBAC capabilities |
 | `test_capture.py`, `test_capture_review.py` | Expert capture: grounding, cause filing by owning pill, the four-step review flow |
+| `test_capture_negation_and_ui_paths.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
+| `test_grounded_knowledge_review.py` | Ungrounded or borrowed check/never/escalate lines dropped; symptoms in the expert's words; approval rationale and rejection reason ledgered; draft provenance; expert consent; a decision keeps the knowledge it was made with |
+| `test_knowledge_safety_and_pill_governance.py` | Safety screen (instructions caught, prohibitions kept) at capture and display; off-topic quotes flagged; self-rejection blocked; knowledge frozen while the ledger fails; per-pill rollback independence; logout revokes the unlock cookie; non-ASCII PIN |
 | `test_adp_client.py` | ADP v2 SSE client against a simulated event stream |
-| `test_kb_version_label.py`, `test_persistence.py` | KB version display; state survives a restart |
-| `test_ai_second_opinion.py` | Phase 1: AI second opinion agree/disagree (G9), timeout/malformed fallback is audited, injected tag redaction, non-candidate cause rejection |
-| `test_identity.py` | Phase 2: signed cookie beats a spoofed `?user=` (including on writes), tampered cookie rejected, insecure-mode fallback |
-| `test_confidence_uplift.py`, `test_rerun_diagnosis.py` | Phase 3: approving validated feedback raises the next identical case's confidence by ≥0.05, rollback restores it exactly, non-destructive re-run preview |
-| `test_no_contradictions.py` | Phase 4: no developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
-| `test_contrast.py` | Phase 5: every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
-| `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
-| `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
-| `test_judge_round2_fixes.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
-| `test_judge_round7_fixes.py` | Ungrounded, borrowed or safety-defeating check/never/escalate lines dropped (prohibitions kept); paraphrased symptoms fall back to the expert's words; approval needs a rationale and rejection a reason, both ledgered; queue names the owning steward; provider comes from the server-held draft, hand entries marked; expert consent required; a decision keeps the expert knowledge it was made with |
-| `test_judge_round6_fixes.py` | A re-score that escalates drops the recommendation; abnormal highlights follow the decision trees' thresholds; "no opinion" is not a G9 disagreement; cause priors are verified and rebuilt from validated cases; a quote that rules out its own cause is flagged; `/assets` registry; per-pill proposal credit |
-| `test_judge_round5_fixes.py` | Approved interview moves the pump case from escalated to approval; edits to the version stamp, state, an expert's checks or name detected; deleting a case or wiping the tool log detected; no injection fragment reaches a heuristic; escalation instructions are not cause heuristics; AI disagreement reaches the AOM with routing unchanged; PIN-less switches never count towards lockout; logout revokes the session |
-| `test_judge_round4_fixes.py` | Truncation and unhashed-field edits detected; ledger truncation and KB edits detected; JSON snapshots; rolled-back knowledge blocks approval until re-scored; single-proposal revoke; validated_by is the approver; AI second opinion disagrees with readable citations; plain-language ADP errors; every escalation has a reason; fault/asset mismatch refused; owning steward enforced; expert corroboration; PIN lockout and unlock cookie |
-| `test_judge_round3_fixes.py` | Rejected feedback leaves no proposal; cross-asset/unknown causes refused; ledger records approvals and rollbacks; labels never reused; a re-hashed chain without the key fails and freezes the case; login PIN; seeding never attributed to real users; rationale and hazard acknowledgement; escalation resolution harvested; pump/UPS capture; manual capture with AI offline |
+| `test_kb_version_label.py`, `test_kb_versions_and_assets.py`, `test_persistence.py` | Per-pill version labels, `/kb/versions` int/label reconciliation, asset fixtures; state survives a restart |
+| `test_ai_second_opinion.py` | AI second opinion agree/disagree (G9), audited fallback, injected tag redaction, non-candidate cause rejection |
+| `test_identity.py` | Signed cookie beats a spoofed `?user=` (including on writes), tampered cookie rejected, insecure-mode fallback |
+| `test_confidence_uplift.py`, `test_rerun_diagnosis.py` | Approved feedback raises the next identical case's confidence by ≥0.05, rollback restores it exactly, non-destructive re-run preview |
+| `test_no_contradictions.py` | No developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
+| `test_contrast.py` | Every text/background pair ≥ 4.5:1 in both themes, parsed from the CSS tokens |
+| `test_pill_registry.py` | `/pills` lists all four pills with the right owner, its own version and a real approval rate |
+| `test_governance_integrity.py` | Ledger records approvals and rollbacks; labels never reused; a re-hashed chain without the key fails and freezes the case; login PIN; seeding never attributed to real users; escalation resolution harvested |
+| `test_audit_and_stale_knowledge.py` | Truncation and unhashed-field edits detected; withdrawn knowledge blocks approval until re-scored; single-proposal revoke; owning steward enforced; PIN lockout and unlock cookie |
+| `test_reuse_and_audit_coverage.py` | Approved interview moves the pump case from escalated to approval; tampering with version stamps, state or expert knowledge detected; logout revokes the session |
+| `test_rescore_and_evidence_flags.py` | Re-score that escalates drops the recommendation; abnormal highlights follow the decision trees' thresholds; cause priors rebuilt from validated cases |
 
 **`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
 pass/fail table, independent of the pytest suite: ADP call shape, AI cannot
@@ -653,6 +675,7 @@ technical_services_pill/
 ├── ai_reasoning.py      # Advisory AI second opinion on a diagnosis
 ├── llm.py               # Provider seam (mock / Tencent Cloud ADP) for capture + second opinion
 ├── capture.py           # Expert interview -> grounded draft knowledge
+├── safety.py            # Safety screen for expert know-how (G1 applied to knowledge)
 ├── auth.py              # PIN-checked login, signed session cookie identity
 ├── tools.py             # Agent tool layer
 ├── rbac.py              # 5-role RBAC matrix
@@ -675,28 +698,25 @@ tests/
 ├── test_capture.py / test_capture_review.py  # Expert capture grounding + review flow
 ├── test_adp_client.py           # ADP v2 SSE client (simulated stream)
 ├── test_kb_version_label.py / test_persistence.py
-├── test_ai_second_opinion.py    # Phase 1: AI second opinion, G9
-├── test_identity.py             # Phase 2: signed-cookie identity
-├── test_confidence_uplift.py / test_rerun_diagnosis.py  # Phase 3: confidence the KB can move
-├── test_no_contradictions.py    # Phase 4: no on-screen contradictions
-├── test_contrast.py             # Phase 5: WCAG contrast, both themes
-├── test_pill_registry.py        # Phase 6: /pills
-├── test_judge_fixes.py          # Rollback UI/label reconciliation, new asset fixtures
-├── test_judge_round2_fixes.py   # Round 2 judge findings
-├── test_judge_round3_fixes.py   # Round 3 judge findings (governance integrity, identity, capture)
-├── test_judge_round4_fixes.py   # Round 4 judge findings (audit coverage, stale knowledge, AI, governance)
-├── test_judge_round5_fixes.py   # Round 5 judge findings (reuse payoff, audit coverage, capture, identity)
-├── test_judge_round6_fixes.py   # Round 6 judge findings (re-score, highlights, priors, capture check)
-├── test_judge_round7_fixes.py   # Round 7 judge findings (grounded actions, steward rationale, provenance)
+├── test_ai_second_opinion.py    # AI second opinion, G9
+├── test_identity.py             # Signed-cookie identity
+├── test_confidence_uplift.py / test_rerun_diagnosis.py  # Confidence the KB can move
+├── test_no_contradictions.py    # No on-screen contradictions
+├── test_contrast.py             # WCAG contrast, both themes
+├── test_pill_registry.py        # /pills, per-pill versions
+├── test_capture_negation_and_ui_paths.py
+├── test_grounded_knowledge_review.py
+├── test_knowledge_safety_and_pill_governance.py
+├── test_governance_integrity.py / test_audit_and_stale_knowledge.py
+├── test_reuse_and_audit_coverage.py / test_rescore_and_evidence_flags.py
+├── test_kb_versions_and_assets.py
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/
 ├── ADP_SETUP.md             # Tencent ADP agent configuration
-├── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
-└── JUDGE_REPORT_*.md        # Independent judge regrades (Part C), scores never edited
+└── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
 
 DEMO.md                   # 6-minute click-through script
-api_preview.html          # Self-contained API explorer (open in browser)
 requirements.txt          # Runtime dependencies
 Dockerfile                # python:3.11-slim, exposes :8000
 docker-compose.yml        # API + demo services

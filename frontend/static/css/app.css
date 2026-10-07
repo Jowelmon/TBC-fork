@@ -806,3 +806,20 @@ code { font-size: max(0.9em, 13px); }
 .q-field { font-size: 15px; margin-top: 4px; }
 .q-field ul { margin: 2px 0 0 18px; }
 .q-field-lbl { font-weight: 600; color: var(--text-dim); margin-right: 6px; }
+
+/* ── Diagnosis summary ──────────────────────────────────────────────────────── */
+.summary-card { border-left: 3px solid var(--blue); }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 20px; margin-bottom: 12px; }
+.summary-lbl { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin-right: 6px; }
+.summary-val { font-size: 15px; color: var(--text-bright); margin-top: 2px; line-height: 1.4; }
+.summary-row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* A frozen case (audit chain failed verification) is read-only. */
+.case-frozen .card button:not(.evidence-toggle):not(.audit-copy-btn),
+.case-frozen .card textarea, .case-frozen .card input, .case-frozen .card select,
+.case-frozen #btn-adv { display: none !important; }
+
+/* Leave room under the last card so the floating cloud never sits on it,
+   and shrink the cloud on narrower screens. */
+#content { padding-bottom: 120px; }
+@media (max-width: 1280px) { #ai-cloud { transform-origin: bottom right; scale: .8; right: 12px; bottom: 12px; } }

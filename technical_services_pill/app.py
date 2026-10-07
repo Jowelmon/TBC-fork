@@ -30,8 +30,15 @@ from pydantic import BaseModel
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
 from .auth import (
-    check_pin, clear_cookie, demo_insecure, issue_cookie, issue_unlock, locked_for,
-    record_pin_result, resolve_user, unlocked_users,
+    check_pin,
+    clear_cookie,
+    demo_insecure,
+    issue_cookie,
+    issue_unlock,
+    locked_for,
+    record_pin_result,
+    resolve_user,
+    unlocked_users,
 )
 from .models import (
     AgentStateName,
@@ -348,12 +355,11 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
 def _advance(state: AgentState) -> None:
     while state.current_state == AgentStateName.GATHERING_EVIDENCE:
         from .decision_tree import evaluate_decision_tree
-        from .models import CandidateCause, Diagnosis, Recommendation
 
         # G5: an asset outside the registry is out of this pill's scope.
         # Escalate before diagnosing instead of stalling in GATHERING_EVIDENCE.
         from .mock_registry import ASSETS
-        from .models import GuardrailResult
+        from .models import CandidateCause, Diagnosis, GuardrailResult, Recommendation
 
         if state.asset_id not in ASSETS:
             gr = GuardrailResult()
@@ -617,7 +623,11 @@ def _score_against_current_kb(state: AgentState) -> tuple[float, dict]:
 def _confidence_for(state: AgentState, cause_id: str, kb_refs: list[str]) -> tuple[float, dict]:
     """Confidence in ``cause_id`` for this case against the current KB, with
     its W1-W5 breakdown and the pill knowledge version it was scored with."""
-    from .confidence import derive_confidence_signals, evidence_coverage_score, score_confidence
+    from .confidence import (
+        derive_confidence_signals,
+        evidence_coverage_score,
+        score_confidence,
+    )
     from .decision_tree import FAULT_BRANCH_COUNTS
     from .learning import STORE as _LSTORE
 
@@ -882,7 +892,8 @@ def post_feedback(
 # --------------------------------------------------------------------------- #
 # Expert knowledge capture (LLM drafts, steward approves)
 # --------------------------------------------------------------------------- #
-from pydantic import BaseModel as _BaseModel, Field as _Field
+from pydantic import BaseModel as _BaseModel
+from pydantic import Field as _Field
 
 
 class CaptureInterviewRequest(_BaseModel):
@@ -951,7 +962,8 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
     """Registry of the four Intelligence Pills: owner steward, each pill's
     own knowledge version, how much knowledge it holds, and its approvals."""
     _need(user, "view_case")
-    from .learning import STORE as _LSTORE, proposal_pills
+    from .learning import STORE as _LSTORE
+    from .learning import proposal_pills
 
     all_proposals = _LSTORE.list_all_proposals()
     pills = []
@@ -1109,8 +1121,8 @@ def get_case_expert_knowledge(case_id: str, user: str = Depends(resolve_user)) -
 
 def _expert_matches(state: AgentState) -> dict:
     from .cause_registry import canonicalize_cause_id
-    from .learning import STORE as _LSTORE, corroborating_terms, kb_version_label
-
+    from .learning import STORE as _LSTORE
+    from .learning import corroborating_terms, kb_version_label
     from .safety import defeats_safety
 
     terms = _evidence_terms(state)
@@ -1189,7 +1201,8 @@ def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(
     ValidatedCase retrievable by future diagnoses.
     """
     _need(user, "approve_knowledge_version")
-    from .learning import STORE as _LSTORE, SelfApprovalError
+    from .learning import STORE as _LSTORE
+    from .learning import SelfApprovalError
 
     _require_intact_ledger()
     _require_pill_owner(proposal_id, user, "approve")
@@ -1201,6 +1214,7 @@ def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(
         raise HTTPException(400 if "needs a" in str(exc) else 404, str(exc)) from exc
     return {"proposal_id": proposal_id, "status": "approved", "decided_by": user,
             "kb_versions": proposal["kb_versions"],
+            "kb_version_labels": [f"{pill} v{_kb_label(v)}" for pill, v in proposal["kb_versions"].items()],
             "validated_case_id": proposal.get("validated_case_id")}
 
 
@@ -1238,7 +1252,8 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
     proposal is retained in the audit trail but never ingested into the KB.
     """
     _need(user, "approve_knowledge_version")
-    from .learning import STORE as _LSTORE, SelfApprovalError
+    from .learning import STORE as _LSTORE
+    from .learning import SelfApprovalError
 
     _require_intact_ledger()
     _require_pill_owner(proposal_id, user, "reject")

@@ -26,11 +26,11 @@ from .mock_registry import (
     ASSETS,
     BMS_STATUS,
     CONFIG_CHANGE_LOG,
+    KNOWLEDGE_BASE,
     LIVE_READINGS,
     MAINTENANCE_HISTORY,
     SENSORS,
     TELEMETRY,
-    KNOWLEDGE_BASE,
     _is_past_calibration,
 )
 from .models import (
