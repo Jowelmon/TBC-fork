@@ -538,6 +538,59 @@ textarea { resize: vertical; min-height: 70px; }
 .tier-advisory    { background: var(--purple-bg); color: var(--purple-text); }
 .tier-advisory::before    { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--purple); }
 
+/* ── AI avatar: a small animated presence on the AI Second Opinion card,
+   not a literal face -- an abstract "something is here" indicator (in the
+   spirit of a minimal assistant presence, not a chat/voice surface). Its
+   colour reflects the opinion's actual state once loaded: idle (grey,
+   waiting), active/agrees (purple pulse), alert/disagrees (amber pulse),
+   offline (dim, static). ───────────────────────────────────────────── */
+.ai-avatar {
+  display: inline-block;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: radial-gradient(circle at 32% 32%, #C084FC, #7E22CE 75%);
+  box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.45);
+  animation: ai-avatar-pulse 2.4s ease-in-out infinite;
+}
+.ai-avatar--idle {
+  background: radial-gradient(circle at 32% 32%, #CBD5E1, #64748B 75%);
+  animation: none;
+}
+.ai-avatar--active {
+  background: radial-gradient(circle at 32% 32%, #86EFAC, #15803D 75%);
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45);
+  animation-name: ai-avatar-pulse-green;
+}
+.ai-avatar--alert {
+  background: radial-gradient(circle at 32% 32%, #FDE68A, #B45309 75%);
+  box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5);
+  animation-name: ai-avatar-pulse-amber;
+}
+.ai-avatar--offline {
+  background: radial-gradient(circle at 32% 32%, #94A3B8, #334155 75%);
+  animation: none;
+  opacity: 0.55;
+}
+@keyframes ai-avatar-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.45); }
+  70% { box-shadow: 0 0 0 7px rgba(168, 85, 247, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+}
+@keyframes ai-avatar-pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
+  70% { box-shadow: 0 0 0 7px rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+@keyframes ai-avatar-pulse-amber {
+  0% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5); }
+  70% { box-shadow: 0 0 0 7px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-avatar { animation: none; }
+}
+
 /* ── Loading Skeleton ─────────────────────────────────────────────────────────── */
 .skeleton {
   background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);

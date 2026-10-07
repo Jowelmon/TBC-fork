@@ -256,6 +256,32 @@ _CHECK_WORDS = ("check", "look at", "first thing", "confirm", "measure", "listen
 _DONT_STARTS = ("never ", "don't ", "do not ", "dont ")
 _ESCALATE_WORDS = ("call", "escalate", "vendor", "safety officer", "get the")
 
+# A sentence that explicitly rules a cause out must not draft a heuristic
+# for it -- e.g. "it's not the bus, not the controller, just a dead sensor"
+# mentions "bus"/"controller" while denying them. Plain keyword-in-sentence
+# matching has no way to tell presence from denial; this closes that gap.
+_NEGATION_PATTERN = re.compile(
+    r"\b(not|n't|never|no\s+issue|ruled?\s+out|nothing\s+wrong\s+with|"
+    r"not\s+the\s+case|unrelated\s+to)\b",
+    re.IGNORECASE,
+)
+
+
+def _keyword_in_sentence(keyword: str, sentence_lower: str) -> bool:
+    """Word-boundary match for a single word; substring match for a phrase
+    (phrases are specific enough already, and don't have the "bus" inside
+    "business" problem a single short word does)."""
+    if " " in keyword:
+        return keyword in sentence_lower
+    return re.search(rf"\b{re.escape(keyword)}\b", sentence_lower) is not None
+
+
+def _sentence_triggers_cause(sentence: str, keywords: tuple[str, ...]) -> bool:
+    lowered = sentence.lower()
+    if not any(_keyword_in_sentence(k, lowered) for k in keywords):
+        return False
+    return not _NEGATION_PATTERN.search(lowered)
+
 
 _SPEAKER = re.compile(r"^[A-Z][^:]{0,60}:\s*")
 
@@ -276,7 +302,7 @@ def _mock_extract(transcript: str) -> dict[str, Any]:
         hit = next(
             ((p, i) for p in paragraphs for i, s in enumerate(p)
              if not s.lower().startswith("interviewer")
-             and any(k in s.lower() for k in keywords)),
+             and _sentence_triggers_cause(s, keywords)),
             None,
         )
         if hit is None:

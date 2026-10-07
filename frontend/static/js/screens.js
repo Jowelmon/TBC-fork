@@ -205,7 +205,10 @@ export function renderDashboard(el, state, h) {
             <option value="UPS-DC1-01">UPS-DC1-01 (UPS)</option>
             <option value="PUMP-DC1-01">PUMP-DC1-01 (Pump)</option>
             <option value="PUMP-DC1-02">PUMP-DC1-02 (Pump)</option>
-          </select></div>
+            <option value="__other__">Other / unregistered asset (demonstrates G5 escalation)</option>
+          </select>
+          <input id="nc-asset-other" type="text" placeholder="e.g. NOPE-999" style="display:none;margin-top:8px">
+          </div>
           <div class="form-group"><label>Sensor ID</label><input id="nc-sensor" type="text" value="SA-TEMP-01" placeholder="e.g. SA-TEMP-01"></div>
           <div class="form-group"><label>Fault Type</label><select id="nc-fault">
             <option value="temperature_measurement_missing">temperature measurement missing</option>
@@ -226,12 +229,21 @@ export function renderDashboard(el, state, h) {
   document.getElementById('btn-seed').onclick = () => seedDemoCases(h);
   document.getElementById('btn-new').onclick = () => {
     const f = document.getElementById('new-case-form');
-    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    const opening = f.style.display === 'none';
+    f.style.display = opening ? 'block' : 'none';
+    if (opening) f.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+  const assetSelect = document.getElementById('nc-asset');
+  const assetOther = document.getElementById('nc-asset-other');
+  assetSelect.addEventListener('change', () => {
+    assetOther.style.display = assetSelect.value === '__other__' ? 'block' : 'none';
+  });
   document.getElementById('btn-create').onclick = async () => {
+    const assetId = assetSelect.value === '__other__' ? assetOther.value.trim() : assetSelect.value;
+    if (!assetId) { showToast('Enter an asset ID', 'error'); assetOther.focus(); return; }
     try {
       const r = await api.post('/cases', {
-        asset_id: document.getElementById('nc-asset').value,
+        asset_id: assetId,
         sensor_id: document.getElementById('nc-sensor').value,
         observation_type: document.getElementById('nc-fault').value,
         reading_status: document.getElementById('nc-reading').value,
@@ -383,7 +395,13 @@ export function renderDiagnosis(el, state, h) {
         </div></div>
       </div>`;
 
-      html += `<div class="card"><div class="card-header"><h3>AI Second Opinion</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="ai-opinion-body"></div></div>`;
+      html += `<div class="card"><div class="card-header">
+          <div class="flex align-center gap-8">
+            <span class="ai-avatar" id="ai-avatar" aria-hidden="true"></span>
+            <h3>AI Second Opinion</h3>
+          </div>
+          <span class="badge badge-purple">AI HARVEST</span>
+        </div><div class="card-body" id="ai-opinion-body"></div></div>`;
 
       html += `<div class="card"><div class="card-header"><h3>Expert Knowledge Reused</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="expert-knowledge-body"></div></div>`;
 
@@ -453,12 +471,19 @@ export function renderDiagnosis(el, state, h) {
 
       // Render AI second opinion (advisory, never affects routing)
       const aiBody = document.getElementById('ai-opinion-body');
+      const aiAvatar = document.getElementById('ai-avatar');
       const hyp = s.ai_hypothesis;
       if (!hyp) {
         aiBody.innerHTML = `<div class="banner banner-info"><p>No AI second opinion yet. It runs alongside the decision tree when the agent is advanced.</p></div>`;
+        if (aiAvatar) aiAvatar.className = 'ai-avatar ai-avatar--idle';
       } else {
         const modelLabel = hyp.status === 'unavailable' ? 'AI offline' : (sysInfo.llm_label || 'AI model');
         const agrees = hyp.agrees_with_rules;
+        if (aiAvatar) {
+          aiAvatar.className = 'ai-avatar ' + (
+            hyp.status === 'unavailable' ? 'ai-avatar--offline' : agrees ? 'ai-avatar--active' : 'ai-avatar--alert'
+          );
+        }
         aiBody.innerHTML = `
           <span class="tier-label tier-advisory">Advisory only — does not affect routing</span>
           <div class="flex gap-8 align-center flex-wrap" style="margin:8px 0">
@@ -667,7 +692,13 @@ export function renderDecision(el, state, h) {
       // so it falls through to the escalation panel below instead of a
       // hollow "Recommendation Under Review" card.
       if (s.recommendation && (s.recommendation.actions || []).length > 0) {
+        // Safety/environmental hazard (G2b) belongs right next to the
+        // decision itself -- not only in the Diagnosis screen's guardrail
+        // grid, which an approver reviewing here may never have scrolled to.
+        const hazardReason = (s.guardrail_result && s.guardrail_result.reasons || [])
+          .find(r => r.includes('[G2b]') || r.includes('[G2]'));
         html += `<div class="card"><div class="card-header"><h3>Recommendation Under Review</h3></div><div class="card-body">
+          ${hazardReason ? `<div class="banner banner-warn" style="margin-bottom:12px"><p><strong>⚠ Safety/environmental hazard:</strong> ${esc(hazardReason.replace(/^\[G2b?\]\s*/, ''))}</p></div>` : ''}
           <span class="tier-label tier-action">Tier 3 - Recommended Action (Read-Only)</span>
           <span class="tier-label tier-human">Tier 4 - Human Decision (Below)</span>`;
         html += s.recommendation.actions.map(a => `
@@ -848,7 +879,13 @@ export function renderOutcome(el, state, h) {
   async function load() {
     try {
       const s = await api.get(`/cases/${cid}`);
-      const outcomeHint = s.outcome
+      // Feedback submission closes the case immediately (the PROPOSAL stays
+      // pending for a steward separately) -- so "submit feedback" must stop
+      // showing the moment current_state is CLOSED, not stay pinned on
+      // whether an outcome was ever recorded.
+      const outcomeHint = s.current_state === 'CLOSED'
+        ? 'this case is closed. Feedback (if submitted) is with a knowledge steward on Governance.'
+        : s.outcome
         ? 'submit feedback so a knowledge steward can validate it into the knowledge base.'
         : 'raise the work order, then record the outcome once the work is done.';
       let html = `${nextHint(outcomeHint)}<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
