@@ -93,8 +93,9 @@ shown above it. Then open the seeded **UPS-DC1-02** case: the rules say
 battery end of life, the AI flags thermal runaway risk (41°C and rising),
 and G9 records the disagreement. The case still goes to the AOM for
 approval: the AI informs the decision, it never makes or blocks it. The
-avatar in the top bar shows the AI's state on every screen (green when
-Tencent Cloud ADP is answering).
+cloud in the corner shows the AI's state on every screen: it is worried on
+this case, smiles when Tencent Cloud ADP is answering, and can be dragged
+out of the way.
 
 ## 8. The AOM approves (45s)
 

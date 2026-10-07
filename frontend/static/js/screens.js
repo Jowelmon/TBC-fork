@@ -1,6 +1,7 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
 import { api } from './api.js?v=6';
+import { cloudSvg } from './cloud.js?v=3';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -48,6 +49,9 @@ function causeOptions(causes, selected = '') {
 }
 
 const plain = v => String(v || '').replace(/_/g, ' ');
+// Model calls make the on-screen cloud "think" while they run.
+const thinking = p => (window.__cloud__ ? window.__cloud__.cloudThinking(p) : p);
+const cloudMood = m => window.__cloud__ && window.__cloud__.setCloudMood(m);
 
 // What the AOM is actually approving: the diagnosed cause, how confident
 // the engine is, the readings that drove it, and the AI's advisory view.
@@ -419,7 +423,7 @@ export function renderDashboard(el, state, h) {
 
   window.advCase = async (id) => {
     try {
-      await api.post(`/cases/${id}/advance`);
+      await thinking(api.post(`/cases/${id}/advance`));
       showToast('Agent advanced', 'success');
       window.__app__?.refreshSystemInfo?.();
       loadCases();
@@ -491,7 +495,7 @@ export function renderDiagnosis(el, state, h) {
 
       html += `<div class="card"><div class="card-header">
           <div class="flex align-center gap-8">
-            <span class="ai-avatar" id="ai-avatar" aria-hidden="true"></span>
+            <span class="card-cloud" id="ai-avatar"></span>
             <h3>AI Second Opinion</h3>
           </div>
           <span class="badge badge-purple">AI HARVEST</span>
@@ -569,15 +573,13 @@ export function renderDiagnosis(el, state, h) {
       const hyp = s.ai_hypothesis;
       if (!hyp) {
         aiBody.innerHTML = `<div class="banner banner-info"><p>No AI second opinion yet. It runs alongside the decision tree when the agent is advanced.</p></div>`;
-        if (aiAvatar) aiAvatar.className = 'ai-avatar ai-avatar--idle';
+        if (aiAvatar) aiAvatar.innerHTML = cloudSvg('ready', 34);
       } else {
         const modelLabel = hyp.status === 'unavailable' ? 'AI offline' : (sysInfo.llm_label || 'AI model');
         const agrees = hyp.agrees_with_rules;
-        if (aiAvatar) {
-          aiAvatar.className = 'ai-avatar ' + (
-            hyp.status === 'unavailable' ? 'ai-avatar--offline' : agrees ? 'ai-avatar--active' : 'ai-avatar--alert'
-          );
-        }
+        const mood = hyp.status === 'unavailable' ? 'offline' : agrees ? 'online' : 'alert';
+        if (aiAvatar) aiAvatar.innerHTML = cloudSvg(mood, 34);
+        if (mood === 'alert') cloudMood('alert');
         aiBody.innerHTML = `
           <span class="tier-label tier-advisory">Advisory only — does not affect routing</span>
           <div class="flex gap-8 align-center flex-wrap" style="margin:8px 0">
@@ -734,7 +736,7 @@ export function renderDiagnosis(el, state, h) {
       if (advBtn) {
         advBtn.onclick = async () => {
           try {
-            await api.post(`/cases/${cid}/advance`);
+            await thinking(api.post(`/cases/${cid}/advance`));
             showToast('Agent advanced', 'success');
             window.__app__?.refreshSystemInfo?.();
             load();
@@ -780,6 +782,7 @@ export function renderDecision(el, state, h) {
       const canApprove = api.can('approve_reject_modify');
       const hazardReason = ((s.guardrail_result && s.guardrail_result.reasons) || [])
         .find(r => r.startsWith('[G2b]') || r.startsWith('[G2]'));
+      if (s.ai_hypothesis && s.ai_hypothesis.status === 'ok' && !s.ai_hypothesis.agrees_with_rules) cloudMood('alert');
 
       const decisionHint = s.current_state === 'ESCALATED'
         ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
@@ -1602,7 +1605,7 @@ export function renderCapture(el, state, h) {
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><div class="flex align-center gap-8"><span class="ai-avatar ai-avatar--idle" id="cap-avatar" aria-hidden="true"></span><h3 id="cap-right-title">2. AI draft</h3></div><span class="badge badge-grey" id="cap-status">Not started</span></div>
+        <div class="card-header"><div class="flex align-center gap-8"><span class="card-cloud" id="cap-avatar">${cloudSvg('ready', 34)}</span><h3 id="cap-right-title">2. AI draft</h3></div><span class="badge badge-grey" id="cap-status">Not started</span></div>
         <div class="card-body" id="cap-result" aria-live="polite">
           <div class="empty-state"><div class="empty-state-icon">[ ]</div>
             <div class="empty-state-title">No draft yet</div>
@@ -1621,7 +1624,7 @@ export function renderCapture(el, state, h) {
   const setStatus = (label, cls) => {
     const b = $('cap-status'); b.textContent = label; b.className = `badge ${cls}`;
     // The avatar mirrors the drafting state: working, done, or failed.
-    $('cap-avatar').className = 'ai-avatar ' + ({ 'badge-blue': 'ai-avatar--active', 'badge-red': 'ai-avatar--offline', 'badge-yellow': 'ai-avatar--alert' }[cls] || 'ai-avatar--idle');
+    $('cap-avatar').innerHTML = cloudSvg({ 'badge-blue': 'thinking', 'badge-red': 'offline', 'badge-green': 'online' }[cls] || 'ready', 34);
   };
   const updateCount = () => { $('cap-count').textContent = `${text.value.length.toLocaleString()} / ${MAX_TRANSCRIPT.toLocaleString()} characters`; };
   setStep(1);
@@ -1802,7 +1805,7 @@ export function renderCapture(el, state, h) {
     setStep(2); setStatus('Drafting…', 'badge-blue'); submitted = null;
     $('cap-result').innerHTML = '<div class="skeleton-card"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div><p class="muted">The model is reading the interview. Each heuristic must quote the expert word for word.</p>';
     try {
-      draft = await api.postJson('/capture/draft', { asset_type: $('cap-asset').value, transcript: text.value });
+      draft = await thinking(api.postJson('/capture/draft', { asset_type: $('cap-asset').value, transcript: text.value }));
       await renderDraft();
     } catch (e) {
       draft = null; setStep(1); setStatus('Draft failed', 'badge-red');
