@@ -89,6 +89,7 @@ class AgentState:
         observation: Observation,
         case_id: str | None = None,
         actor: str = "system",
+        asset_registered: bool = True,
     ) -> None:
         self.asset_id = asset_id
         self.observation = observation
@@ -111,12 +112,14 @@ class AgentState:
         self._gathering_loops = 0
         self._retrieval_rounds = 0
 
-        # TRIGGERED -> GATHERING_EVIDENCE immediately (alert validated against
-        # asset registry by the constructor's asset_id presence).
         self._transition(
             AgentStateName.GATHERING_EVIDENCE,
             actor=actor,
-            reason="fault alert validated against asset registry",
+            reason=(
+                "fault alert raised for a registered asset"
+                if asset_registered
+                else f"fault alert raised for {asset_id}, which is NOT in the asset registry"
+            ),
         )
 
     # ------------------------------------------------------------------ #
@@ -200,13 +203,15 @@ class AgentState:
         """
         self.ai_hypothesis = hypothesis
         status = hypothesis.get("status", "unknown")
-        self._record_note(
-            actor=actor,
-            reason=(
+        if status == "unavailable":
+            reason = ("AI second opinion unavailable; deterministic diagnosis "
+                      "proceeds unaffected")
+        else:
+            reason = (
                 f"AI second opinion ({status}): hypothesis={hypothesis.get('hypothesis')!r} "
                 f"agrees_with_rules={hypothesis.get('agrees_with_rules')!r} — advisory only"
-            ),
-        )
+            )
+        self._record_note(actor=actor, reason=reason)
 
     # ------------------------------------------------------------------ #
     # Lifecycle helpers (tools/state-machine facade)
@@ -403,7 +408,7 @@ class AgentState:
                 decision.original_actions = list(self.recommendation.actions)
             reason = f"modified by {decision.decided_by}: {decision.rationale}"
         else:
-            reason = f"approved by {decision.decided_by}"
+            reason = f"approved by {decision.decided_by}: {decision.rationale}"
 
         self._transition(AgentStateName.EXECUTING, actor=act, reason=reason)
         return self.current_state

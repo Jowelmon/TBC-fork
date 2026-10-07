@@ -241,46 +241,80 @@ def _parse_json(raw: str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Offline mock: deterministic, keyword-driven, quotes real sentences
 # --------------------------------------------------------------------------- #
+# Fault phrases per canonical cause, most specific causes first. Keywords
+# name the fault condition ("every tag", "oil stain"), not just a component
+# ("bus", "terminal"), because experts mention healthy components all the
+# time ("every other tag on that bus was reporting fine").
 _CAUSE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    ("refrigerant_leak", ("refrigerant", "leak", "oil stain", "hiss")),
-    ("condenser_fouling", ("condenser", "fouled", "fouling", "dirty coil")),
-    ("comm_bus_failure", ("bus", "controller", "every tag", "all the tags")),
-    ("sensor_drift", ("drift", "reads slowly off")),
-    ("loose_wiring", ("loose", "wiring", "terminal", "flicker")),
-    ("sensor_hardware_failure", ("sensor is dead", "end of life", "calibration")),
-    ("cavitation", ("cavitation", "gravel", "marbles")),
-    ("bearing_wear", ("bearing", "grinding")),
-    ("battery_eol", ("battery", "batteries")),
+    ("thermal_runaway_risk", ("thermal runaway", "swollen", "bulging", "battery is hot", "batteries are hot")),
+    ("battery_eol", ("battery", "batteries", "internal resistance", "autonomy")),
+    ("charger_failure", ("charger", "float voltage", "rectifier")),
+    ("ground_fault", ("ground fault", "earth fault", "earth leakage", "insulation resistance")),
+    ("inverter_fault", ("inverter", "on bypass", "static switch")),
+    ("refrigerant_leak", ("refrigerant", "oil stain", "hiss", "leak detector")),
+    ("low_refrigerant_charge", ("undercharged", "low charge", "superheat")),
+    ("condenser_fouling", ("approach temperature", "condenser", "fouled", "dirty coil")),
+    ("compressor_motor_fault", ("compressor motor", "winding", "megger")),
+    ("chiller_electrical_fault", ("contactor", "phase loss", "phase imbalance", "starter")),
+    ("cavitation", ("cavitation", "cavitating", "gravel", "marbles", "suction pressure", "strainer", "npsh")),
+    ("shaft_misalignment", ("misalign", "alignment", "coupling", "axial vibration", "2x")),
+    ("foundation_looseness", ("soft foot", "base bolt", "mounting bolt", "foundation", "grout")),
+    ("bearing_wear", ("bearing", "grinding", "high-frequency", "high frequency")),
+    ("impeller_imbalance", ("imbalance", "unbalance", "out of balance", "1x")),
+    ("communication_bus_controller_failure", (
+        "every tag", "all the tags", "whole bus", "bus has gone", "bus is down",
+        "controller is down", "controller offline", "gone quiet")),
+    ("configuration_drift", ("renamed", "point mapping", "tag mapping", "config change", "after the upgrade")),
+    ("data_path_drop", ("gateway", "scada", "network switch", "data path")),
+    ("loose_wiring_after_service", ("loose", "after servicing", "after service", "flicker")),
+    ("sensor_fault_noise", ("noisy", "spiky", "jumping around", "jumps around")),
+    ("sensor_drift", ("drift", "drifting", "reads slowly off", "offset")),
+    ("intermittent_fault", ("intermittent", "comes and goes", "on and off")),
+    ("sensor_hardware_failure", ("calibration sticker", "calibration date", "end of life",
+                                 "sensor is dead", "dead sensor", "went dead", "reads nothing")),
 ]
-_CHECK_WORDS = ("check", "look at", "first thing", "confirm", "measure", "listen")
+_CHECK_WORDS = ("check", "look at", "first thing", "confirm", "measure", "listen", "make sure")
 _DONT_STARTS = ("never ", "don't ", "do not ", "dont ")
 _ESCALATE_WORDS = ("call", "escalate", "vendor", "safety officer", "get the")
 
-# A sentence that explicitly rules a cause out must not draft a heuristic
-# for it -- e.g. "it's not the bus, not the controller, just a dead sensor"
-# mentions "bus"/"controller" while denying them. Plain keyword-in-sentence
-# matching has no way to tell presence from denial; this closes that gap.
-_NEGATION_PATTERN = re.compile(
-    r"\b(not|n't|never|no\s+issue|ruled?\s+out|nothing\s+wrong\s+with|"
-    r"not\s+the\s+case|unrelated\s+to)\b",
-    re.IGNORECASE,
-)
+# A cause is denied only when the negation governs that cause: a negation
+# word in the same clause, at most three words before the fault phrase
+# ("it wasn't the bus", "not loose", "ruled out cavitation"). A "not" that
+# comes after the phrase ("check the strainer is not clogged") is advice,
+# not a denial, and must still draft the heuristic.
+_NEGATORS = {"not", "no", "never", "isn't", "wasn't", "aren't", "weren't",
+             "doesn't", "didn't", "nothing", "without"}
+_CLAUSE_SPLIT = re.compile(r"[,;:]|\bbut\b")
 
 
-def _keyword_in_sentence(keyword: str, sentence_lower: str) -> bool:
-    """Word-boundary match for a single word; substring match for a phrase
-    (phrases are specific enough already, and don't have the "bus" inside
-    "business" problem a single short word does)."""
-    if " " in keyword:
-        return keyword in sentence_lower
-    return re.search(rf"\b{re.escape(keyword)}\b", sentence_lower) is not None
+def _keyword_spans(keyword: str, text: str) -> list[int]:
+    if " " in keyword or "-" in keyword:
+        return [m.start() for m in re.finditer(re.escape(keyword), text)]
+    return [m.start() for m in re.finditer(rf"\b{re.escape(keyword)}", text)]
+
+
+def _denied(text: str, start: int) -> bool:
+    clause_start = max((m.end() for m in _CLAUSE_SPLIT.finditer(text, 0, start)), default=0)
+    before = text[clause_start:start]
+    if "ruled out" in before or "rule out" in before:
+        return True
+    words = re.findall(r"[a-z']+", before)[-3:]
+    return any(w in _NEGATORS or w.endswith("n't") for w in words)
 
 
 def _sentence_triggers_cause(sentence: str, keywords: tuple[str, ...]) -> bool:
-    lowered = sentence.lower()
-    if not any(_keyword_in_sentence(k, lowered) for k in keywords):
+    """True if the sentence names this cause and never denies it.
+
+    A warning ("never tighten the base bolts") is advice about what not to
+    do, not a symptom, so it cannot start a heuristic. If the expert denies
+    the cause anywhere in the sentence ("it's not the charger, check the
+    float voltage"), a later mention in the same sentence does not count.
+    """
+    lowered = _SPEAKER.sub("", sentence).lower()
+    if lowered.startswith(_DONT_STARTS):
         return False
-    return not _NEGATION_PATTERN.search(lowered)
+    spans = [pos for k in keywords for pos in _keyword_spans(k, lowered)]
+    return bool(spans) and not any(_denied(lowered, pos) for pos in spans)
 
 
 _SPEAKER = re.compile(r"^[A-Z][^:]{0,60}:\s*")
@@ -298,16 +332,19 @@ def _paragraphs(text: str) -> list[list[str]]:
 def _mock_extract(transcript: str) -> dict[str, Any]:
     paragraphs = _paragraphs(transcript)
     heuristics: list[dict[str, Any]] = []
+    used: set[str] = set()  # one sentence drafts at most one cause
     for cause, keywords in _CAUSE_KEYWORDS:
         hit = next(
             ((p, i) for p in paragraphs for i, s in enumerate(p)
-             if not s.lower().startswith("interviewer")
+             if s not in used
+             and not s.lower().startswith("interviewer")
              and _sentence_triggers_cause(s, keywords)),
             None,
         )
         if hit is None:
             continue
         para, i = hit
+        used.add(para[i])
         window = para[i:]  # the rest of the expert's answer
         bare = [_SPEAKER.sub("", s) for s in window]
 

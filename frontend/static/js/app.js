@@ -1,8 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=4';
-import { initGuide } from './guide.js?v=7';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=14';
+import { api } from './api.js?v=5';
+import { initGuide } from './guide.js?v=8';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=15';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -152,7 +152,7 @@ function navigate(screen, caseId = null) {
 }
 
 function renderScreen() {
-  const h = { api, showToast, statePill, confBand, fmtTime, esc, navigate, seedDemoCases, copyToClipboard, roleDisplayName };
+  const h = { api, showToast, statePill, confBand, fmtTime, esc, navigate, copyToClipboard, roleDisplayName };
   switch (state.screen) {
     case 'dashboard':
       renderDashboard(content, state, h);
@@ -201,12 +201,48 @@ themeToggle.addEventListener('click', () => {
 roleSelect.value = state.role;
 roleBadge.textContent = roleDisplayName(state.role);
 
+// ── PIN sign-in ────────────────────────────────────────────
+// Naming a user is not enough to act as them: the server checks their
+// PIN. PINs typed here are kept for this browser tab only, so the demo
+// can move between roles without retyping each time.
+const pinCache = JSON.parse(sessionStorage.getItem('tbc_pins') || '{}');
+
+function askPin(userId) {
+  const backdrop = document.getElementById('pin-backdrop');
+  const form = document.getElementById('pin-dialog');
+  const input = document.getElementById('pin-input');
+  const err = document.getElementById('pin-error');
+  document.getElementById('pin-prompt').textContent =
+    `Enter the PIN for ${userId} (${roleDisplayName(userId)}). Demo PINs are listed in DEMO.md.`;
+  input.value = ''; err.textContent = '';
+  backdrop.hidden = false;
+  input.focus();
+  return new Promise(resolve => {
+    const done = value => { backdrop.hidden = true; form.onsubmit = null; resolve(value); };
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      try {
+        await api.login(userId, input.value);
+        pinCache[userId] = input.value;
+        sessionStorage.setItem('tbc_pins', JSON.stringify(pinCache));
+        done(true);
+      } catch (e) { err.textContent = e.message; input.select(); }
+    };
+    document.getElementById('pin-cancel').onclick = () => done(false);
+  });
+}
+
+async function signIn(userId) {
+  if (pinCache[userId]) {
+    try { await api.login(userId, pinCache[userId]); return true; }
+    catch (_) { delete pinCache[userId]; }
+  }
+  return askPin(userId);
+}
+
 async function setRole(role) {
   if (roleSelect.value === role && state.role === role) return true;
-  try {
-    await api.login(role);
-  } catch (e) {
-    showToast(`Could not switch role: ${e.message}`, 'error');
+  if (!(await signIn(role))) {
     roleSelect.value = state.role; // revert the dropdown
     return false;
   }
@@ -248,10 +284,8 @@ async function refreshSystemInfo() {
 // last-used role before any other request, so the cookie — not a client
 // -controlled ?user= — is what the server sees from here on.
 (async () => {
-  try {
-    await api.login(state.role);
-  } catch (e) {
-    showToast(`Login failed: ${e.message}`, 'error');
+  while (!(await signIn(state.role))) {
+    showToast('Sign in to continue', 'error');
   }
   initGuide({ api, navigate, setRole, showToast });
   navigate('dashboard');

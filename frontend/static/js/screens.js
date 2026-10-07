@@ -1,6 +1,6 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
-import { api } from './api.js?v=4';
+import { api } from './api.js?v=5';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -45,6 +45,50 @@ function causeOptions(causes, selected = '') {
   causes.forEach(c => (groups[c.asset_type] = groups[c.asset_type] || []).push(c));
   return Object.entries(groups).map(([at, cs]) =>
     `<optgroup label="${_esc(at)}">${cs.map(c => `<option value="${_esc(c.id)}" ${c.id === (ALIASES[selected] || selected) ? 'selected' : ''}>${_esc(c.label)}</option>`).join('')}</optgroup>`).join('');
+}
+
+const plain = v => String(v || '').replace(/_/g, ' ');
+
+// What the AOM is actually approving: the diagnosed cause, how confident
+// the engine is, the readings that drove it, and the AI's advisory view.
+function decisionFacts(s, esc, confBand) {
+  const diag = s.diagnosis || {};
+  const cb = confBand(s.confidence);
+  const abnormal = [];
+  (s.evidence || []).forEach(ev => {
+    const p = ev.payload || {};
+    Object.entries(p).forEach(([k, v]) => {
+      if ((_ABNORMAL_BOOL_KEYS.has(k) && v === true) || (k === 'alarms' && Array.isArray(v) && v.length)) {
+        abnormal.push(k === 'alarms' ? `Alarms: ${v.join(', ')}` : _humaniseKey(k));
+      }
+      const t = _ABNORMAL_THRESHOLDS[k];
+      if (t && typeof v === 'number' && ((t.max !== undefined && v > t.max) || (t.min !== undefined && v < t.min))) {
+        abnormal.push(`${_humaniseKey(k)}: ${v}${t.suffix || ''}`);
+      }
+    });
+  });
+  const hyp = s.ai_hypothesis;
+  const ai = !hyp ? 'Not run' : hyp.status === 'unavailable' ? 'AI offline' : hyp.agrees_with_rules ? 'Agrees' : `Disagrees: ${causeLabel(hyp.hypothesis)}`;
+  return `<div class="decision-facts">
+      <div class="decision-fact"><div class="lbl">Diagnosed cause</div><div class="val">${esc(causeLabel(diag.top_cause_id))}</div></div>
+      <div class="decision-fact"><div class="lbl">Confidence</div><div class="val"><span class="badge ${cb.cls}">${esc(cb.label)}</span></div></div>
+      <div class="decision-fact"><div class="lbl">AI second opinion (advisory)</div><div class="val">${esc(ai)}</div></div>
+    </div>
+    <div style="margin-bottom:12px"><strong>Readings behind this diagnosis:</strong> ${abnormal.length ? abnormal.map(a => `<span class="badge badge-yellow" style="margin:2px">${esc(a)}</span>`).join(' ') : '<span class="muted">no abnormal reading flagged; see the Diagnosis screen for full evidence</span>'}</div>`;
+}
+
+// Approved expert know-how for this cause, shown where the decision is made.
+function expertChecks(ek, esc) {
+  if (!ek.matches || !ek.matches.length) {
+    return `<p class="muted" style="margin-top:8px">No approved expert knowledge matches this cause yet.</p>`;
+  }
+  const list = (title, items) => items && items.length ? `<div><strong>${title}:</strong><ul class="expert-list">${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : '';
+  return `<div class="mt-16"><span class="tier-label tier-advisory">Expert knowledge to apply (steward-approved)</span>
+    ${ek.matches.map(m => `<article class="expert-match">
+      <div><strong>${esc(m.expert_name)}</strong> <span class="muted">— ${esc(m.expert_role)} · KB v${esc(m.kb_version_label)}</span></div>
+      ${list('Check before acting', m.checks)}${list('Never', m.do_not)}${list('Escalate when', m.escalate_when)}
+      <blockquote class="expert-quote">“${esc(m.evidence_quote)}”</blockquote>
+    </article>`).join('')}</div>`;
 }
 
 // ── Guardrail definitions for G1-G9 grid ───────────────────
@@ -142,17 +186,16 @@ function renderEvidencePlain(payload) {
   }).join('') + `</div>`;
 }
 
-// F7: Track whether auto-seed has already run this session
-let _autoSeeded = false;
-
 // ═══════════════════════════════════════════════════════════
 // Screen 1: Dashboard
 // ═══════════════════════════════════════════════════════════
 export function renderDashboard(el, state, h) {
-  const { api, showToast, statePill, confBand, fmtTime, esc, navigate, seedDemoCases } = h;
+  const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
+  const isAdmin = api.user() === 'admin1';
 
   el.innerHTML = `
-    ${nextHint('click a case to see its diagnosis, or seed demo cases / create a new one to get started.')}
+    ${nextHint('click a case to see its diagnosis, or create a new one to get started.')}
+    <div id="integrity-banner"></div>
     <details class="card why-panel">
       <summary><h3 style="display:inline">Why this exists</h3></summary>
       <div class="card-body">
@@ -173,7 +216,7 @@ export function renderDashboard(el, state, h) {
     <div class="flex justify-between align-center" style="margin-bottom:20px">
       <div></div>
       <div class="flex gap-8">
-        <button class="btn btn-secondary" id="btn-seed">Seed Demo Cases</button>
+        <button class="btn btn-secondary" id="btn-seed" ${isAdmin ? '' : 'disabled title="Seeding demo cases is limited to the Admin role"'}>Seed Demo Cases</button>
         <button class="btn btn-primary" id="btn-new">New Case</button>
       </div>
     </div>
@@ -226,7 +269,26 @@ export function renderDashboard(el, state, h) {
     </div>
   `;
 
-  document.getElementById('btn-seed').onclick = () => seedDemoCases(h);
+  document.getElementById('btn-seed').onclick = async () => {
+    try {
+      const r = await api.post('/demo/seed');
+      showToast(`Seeded ${r.seeded.length} cases (recorded as ${r.actor})`, 'success');
+      loadCases();
+    } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+  };
+
+  // Any case chain or the governance ledger failing verification is shown
+  // to every role here, not only on the auditor's Governance table.
+  (async () => {
+    try {
+      const st = await api.get('/audit/status');
+      if (st.ok) return;
+      const parts = [];
+      if (st.broken_cases.length) parts.push(`case audit chain failed for ${st.broken_cases.map(esc).join(', ')} (frozen: no further actions allowed)`);
+      if (!st.ledger_valid) parts.push('the knowledge governance ledger failed verification');
+      setHTML('integrity-banner', `<div class="banner banner-error" role="alert"><p><strong>Audit integrity alert:</strong> ${parts.join('; ')}. An auditor should review this before anyone relies on it.</p></div>`);
+    } catch (_) { /* banner is best-effort */ }
+  })();
   document.getElementById('btn-new').onclick = () => {
     const f = document.getElementById('new-case-form');
     const opening = f.style.display === 'none';
@@ -260,14 +322,6 @@ export function renderDashboard(el, state, h) {
       const snapshots = await Promise.all(ids.map(id => api.get(`/cases/${id}`).catch(() => null)));
       const cases = snapshots.filter(s => s);
 
-      // F7: Auto-seed 3 demo cases on first dashboard load if empty
-      if (!cases.length && !_autoSeeded) {
-        _autoSeeded = true;
-        showToast('Auto-seeding demo cases…', 'info');
-        await seedDemoCases(h);
-        return; // seedDemoCases navigates back to dashboard which re-loads
-      }
-
       renderStats(cases);
       renderTable(cases);
     } catch (e) {
@@ -295,7 +349,7 @@ export function renderDashboard(el, state, h) {
         <div class="empty-state">
           <div class="empty-state-icon">[ ]</div>
           <div class="empty-state-title">No cases found</div>
-          <div class="empty-state-desc">Click "Seed Demo Cases" to populate the dashboard with sample CRAH and chiller fault scenarios, or "New Case" to create one manually.</div>
+          <div class="empty-state-desc">The server seeds three demo scenarios when it starts with no cases; an Admin can also click "Seed Demo Cases". Or click "New Case" to raise one.</div>
         </div>
       </td></tr>`;
       return;
@@ -673,11 +727,17 @@ export function renderDecision(el, state, h) {
 
   async function load() {
     try {
-      const s = await api.get(`/cases/${cid}`);
+      const [s, ek] = await Promise.all([
+        api.get(`/cases/${cid}`),
+        api.get(`/cases/${cid}/expert-knowledge`).catch(() => ({ matches: [] })),
+        loadCauses(),
+      ]);
 
       // Check RBAC
       const role = api.user();
       const canApprove = ['mgr1', 'admin1'].includes(role);
+      const hazardReason = ((s.guardrail_result && s.guardrail_result.reasons) || [])
+        .find(r => r.startsWith('[G2b]') || r.startsWith('[G2]'));
 
       const decisionHint = s.current_state === 'ESCALATED'
         ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
@@ -695,19 +755,27 @@ export function renderDecision(el, state, h) {
         // Safety/environmental hazard (G2b) belongs right next to the
         // decision itself -- not only in the Diagnosis screen's guardrail
         // grid, which an approver reviewing here may never have scrolled to.
-        const hazardReason = (s.guardrail_result && s.guardrail_result.reasons || [])
-          .find(r => r.includes('[G2b]') || r.includes('[G2]'));
         html += `<div class="card"><div class="card-header"><h3>Recommendation Under Review</h3></div><div class="card-body">
           ${hazardReason ? `<div class="banner banner-warn" style="margin-bottom:12px"><p><strong>⚠ Safety/environmental hazard:</strong> ${esc(hazardReason.replace(/^\[G2b?\]\s*/, ''))}</p></div>` : ''}
+          ${decisionFacts(s, esc, confBand)}`;
+        html += `
           <span class="tier-label tier-action">Tier 3 - Recommended Action (Read-Only)</span>
           <span class="tier-label tier-human">Tier 4 - Human Decision (Below)</span>`;
         html += s.recommendation.actions.map(a => `
           <div style="display:flex;gap:12px;padding:12px;background:var(--bg-input);border-radius:6px;margin-bottom:8px">
-            <span class="badge badge-blue">${esc(a.type)}</span>
-            <div><div><strong>Target:</strong> ${esc(a.target)}</div><div><strong>Detail:</strong> ${esc(a.detail)}</div></div>
+            <span class="badge badge-blue">${esc(plain(a.type))}</span>
+            <div><div><strong>Target:</strong> ${esc(plain(a.target))}</div><div><strong>Detail:</strong> ${esc(a.detail)}</div></div>
           </div>
         `).join('');
+        html += expertChecks(ek, esc);
         html += `</div></div>`;
+      } else if (s.current_state === 'CLOSED' && s.history.some(e => e.from_state === 'ESCALATED' && e.to_state === 'CLOSED')) {
+        const res = s.history.find(e => e.from_state === 'ESCALATED' && e.to_state === 'CLOSED');
+        html += `<div class="card"><div class="card-header"><h3>Escalation Resolved</h3><span class="badge badge-green">Closed</span></div><div class="card-body">
+          <p><strong>Resolved by:</strong> ${esc(res.actor)} at ${fmtTime(res.at)}</p>
+          <p style="margin-top:8px"><strong>Resolution:</strong> ${esc(res.reason.replace(/^escalation resolved by [^:]+:\s*/, ''))}</p>
+          <p class="muted" style="margin-top:8px">If a confirmed cause was given when closing, the resolution was also sent to a knowledge steward on Governance.</p>
+        </div></div>`;
       } else if (s.current_state === 'ESCALATED') {
         // Why it escalated always comes from the guardrail result that
         // actually fired -- G1-G9, never a hardcoded rule or threshold
@@ -728,8 +796,8 @@ export function renderDecision(el, state, h) {
           html += `<div class="banner banner-info"><p><strong>Who to call:</strong> ${esc(whoToCall)}</p></div>`;
         }
         html += `<div class="card"><div class="card-header"><h3>Resolve Escalation</h3></div><div class="card-body" id="esc-actions"></div></div>`;
-      } else {
-        html += `<div class="banner banner-info"><p>No recommendation to review yet.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
+      } else if (!s.human_decision) {
+        html += `<div class="banner banner-info"><p>No recommendation to review yet. Case status: ${statePill(s.current_state)}</p></div>`;
       }
 
       // Show existing decision if any
@@ -771,11 +839,6 @@ export function renderDecision(el, state, h) {
             <div id="decision-form"></div>
           </div></div>`;
         }
-      } else if (s.current_state !== 'ESCALATED') {
-        // The ESCALATED case already got its own panel above (why it
-        // escalated, who to call, resolve controls) -- this generic banner
-        // would just repeat "Current state: ESCALATED" underneath it.
-        html += `<div class="banner banner-info"><p>Decision controls are available when the case is in <strong>AWAITING_APPROVAL</strong> state.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
       }
 
       el.innerHTML = html;
@@ -787,7 +850,9 @@ export function renderDecision(el, state, h) {
           escBody.innerHTML = `<p class="muted">Resolving an escalation requires the Asset Ops Manager role. Switch role in the top bar.</p>`;
         } else {
           escBody.innerHTML = `
-            <div class="form-group"><label for="esc-reason">Reason</label><input id="esc-reason" type="text" placeholder="e.g. BMS vendor confirmed a bus fault; closing with their reference number"></div>
+            <div class="form-group"><label for="esc-reason">Reason or resolution</label><input id="esc-reason" type="text" placeholder="e.g. BMS vendor replaced controller CTL-02; tags reporting again"></div>
+            <div class="form-group"><label for="esc-cause">Confirmed cause (optional: sends this resolution to a knowledge steward so the pill can learn it)</label>
+              <select id="esc-cause"><option value="">-- not confirmed --</option>${causeOptions((_causes || []).filter(c => c.asset_type === s.asset_type))}</select></div>
             <div class="flex gap-8 flex-wrap">
               <button class="btn btn-secondary" id="btn-esc-evidence">Request more evidence (reason required)</button>
               <button class="btn btn-red" id="btn-esc-close">Close escalation (resolution required)</button>
@@ -806,8 +871,8 @@ export function renderDecision(el, state, h) {
             const reason = document.getElementById('esc-reason').value.trim();
             if (!reason) { showToast('Give the resolution to close this escalation', 'error'); return; }
             try {
-              await api.post(`/cases/${cid}/escalation/close`, { reason });
-              showToast('Escalation closed', 'success');
+              const r = await api.post(`/cases/${cid}/escalation/close`, { reason, confirmed_cause: document.getElementById('esc-cause').value });
+              showToast(r.knowledge_proposal_id ? `Escalation closed; resolution sent to stewards as ${r.knowledge_proposal_id}` : 'Escalation closed', 'success');
               load();
             } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
           };
@@ -818,25 +883,31 @@ export function renderDecision(el, state, h) {
       const btnApprove = document.getElementById('btn-approve');
       const btnReject = document.getElementById('btn-reject');
       const btnModify = document.getElementById('btn-modify');
-      if (btnApprove) btnApprove.onclick = async () => {
-        try { await api.post(`/cases/${cid}/approval`, { decision: 'approve' }); showToast('Approved', 'success'); load(); }
-        catch (e) { showToast(`Error: ${e.message}`, 'error'); }
-      };
+      if (btnApprove) btnApprove.onclick = () => showRationaleForm('approve');
       if (btnReject) btnReject.onclick = () => showRationaleForm('reject');
       if (btnModify) btnModify.onclick = () => showModifyForm();
 
+      const hazardAck = () => hazardReason ? `<label class="hazard-ack"><input type="checkbox" id="hazard-ack"> I have read the safety/environmental hazard above and the required precautions are in place.</label>` : '';
+      const ackOk = () => !hazardReason || document.getElementById('hazard-ack').checked;
+
       function showRationaleForm(decision) {
+        const verb = { approve: 'approving', reject: 'rejecting' }[decision];
         setHTML('decision-form', `
-          <div class="form-group"><label>Rationale (required for ${decision})</label>
-            <textarea id="rat-text" placeholder="Explain why you are ${decision}ing this recommendation..."></textarea>
+          <div class="form-group"><label for="rat-text">Rationale (required)</label>
+            <textarea id="rat-text" placeholder="Explain why you are ${verb} this recommendation..."></textarea>
           </div>
-          <button class="btn btn-red" id="btn-confirm-${decision}">Confirm ${decision === 'reject' ? 'Rejection' : 'Modification'}</button>
+          ${decision === 'approve' ? hazardAck() : ''}
+          <button class="btn ${decision === 'approve' ? 'btn-green' : 'btn-red'}" id="btn-confirm-${decision}">Confirm ${decision === 'approve' ? 'Approval' : 'Rejection'}</button>
         `);
+        document.getElementById('rat-text').focus();
         document.getElementById(`btn-confirm-${decision}`).onclick = async () => {
           const rat = document.getElementById('rat-text').value.trim();
           if (!rat) { showToast('Rationale is required', 'error'); return; }
-          try { await api.post(`/cases/${cid}/approval`, { decision, rationale: rat }); showToast(`${decision} submitted`, 'success'); load(); }
-          catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          if (decision === 'approve' && !ackOk()) { showToast('Acknowledge the hazard before approving', 'error'); return; }
+          try {
+            await api.post(`/cases/${cid}/approval`, { decision, rationale: rat, hazard_acknowledged: decision === 'approve' && !!hazardReason ? 'true' : '' });
+            showToast(`${decision === 'approve' ? 'Approved' : 'Rejected'}`, 'success'); load();
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
       }
 
@@ -848,6 +919,7 @@ export function renderDecision(el, state, h) {
             <div class="form-group"><label>Modified Action Target</label><input id="mod-target" type="text" placeholder="e.g. CRAH-DC1-01 / SA-TEMP-01"></div>
           </div>
           <div class="form-group"><label>Modified Action Detail</label><input id="mod-detail" type="text" placeholder="e.g. Replace supply-air RTD sensor"></div>
+          ${hazardAck()}
           <button class="btn btn-secondary" id="btn-confirm-modify">Confirm Modification</button>
         `);
         document.getElementById('btn-confirm-modify').onclick = async () => {
@@ -855,7 +927,8 @@ export function renderDecision(el, state, h) {
           const mt = document.getElementById('mod-type').value.trim();
           const mtg = document.getElementById('mod-target').value.trim();
           if (!rat || !mt || !mtg) { showToast('Rationale, type, and target are required', 'error'); return; }
-          try { await api.post(`/cases/${cid}/approval`, { decision: 'modify', rationale: rat, modified_action_type: mt, modified_action_target: mtg, modified_action_detail: document.getElementById('mod-detail').value }); showToast('Modification submitted', 'success'); load(); }
+          if (!ackOk()) { showToast('Acknowledge the hazard before modifying', 'error'); return; }
+          try { await api.post(`/cases/${cid}/approval`, { decision: 'modify', hazard_acknowledged: hazardReason ? 'true' : '', rationale: rat, modified_action_type: mt, modified_action_target: mtg, modified_action_detail: document.getElementById('mod-detail').value }); showToast('Modification submitted', 'success'); load(); }
           catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
       }
@@ -928,18 +1001,23 @@ export function renderOutcome(el, state, h) {
         const cls = s.outcome.result === 'resolved' ? 'badge-green' : 'badge-red';
         ocBody.innerHTML = `<div class="banner banner-success">
           <p><span class="badge ${cls}">${esc(s.outcome.result)}</span></p>
-          ${s.outcome.root_cause_confirmed ? `<p><strong>Root Cause:</strong> <code>${esc(s.outcome.root_cause_confirmed)}</code></p>` : ''}
+          ${s.outcome.root_cause_confirmed ? `<p><strong>Root Cause:</strong> ${esc(causeLabel(s.outcome.root_cause_confirmed))}</p>` : ''}
           ${s.outcome.verified_by ? `<p><strong>Verified by:</strong> ${esc(s.outcome.verified_by)}</p>` : ''}
           ${s.outcome.notes ? `<p><strong>Notes:</strong> ${esc(s.outcome.notes)}</p>` : ''}
         </div>`;
-        // Feedback
-        if (s.current_state === 'FEEDBACK_QUEUED' || s.current_state === 'CLOSED') {
+        // Feedback is accepted exactly once, while the case waits for it.
+        if (s.current_state === 'CLOSED') {
+          ocBody.innerHTML += s.feedback_id
+            ? `<div class="banner banner-info mt-16"><p>Feedback <code>${esc(s.feedback_id)}</code> was submitted and is with a knowledge steward on Governance.</p></div>`
+            : '';
+        } else if (s.current_state === 'FEEDBACK_QUEUED') {
           const role = api.user();
           const canFB = ['mgr1', 'steward1', 'steward2', 'admin1'].includes(role);
           if (canFB) {
+            const own = (await loadCauses()).filter(c => c.asset_type === s.asset_type);
             ocBody.innerHTML += `<div class="mt-16">
               <h4>Submit Feedback</h4>
-              <div class="form-group"><label>Confirmed Root Cause</label><select id="fb-cause"><option value="">-- select --</option>${causeOptions(await loadCauses())}</select></div>
+              <div class="form-group"><label for="fb-cause">Confirmed Root Cause (${esc(s.asset_type)} causes)</label><select id="fb-cause">${causeOptions(own, s.outcome.root_cause_confirmed || (s.diagnosis && s.diagnosis.top_cause_id) || '')}</select></div>
               <div class="form-group"><label>Notes</label><textarea id="fb-notes" placeholder="Optional notes..."></textarea></div>
               <button class="btn btn-primary" id="btn-fb">Submit Feedback</button>
             </div>`;
@@ -960,8 +1038,8 @@ export function renderOutcome(el, state, h) {
         if (canRec) {
           ocBody.innerHTML = `
             <div class="form-group"><label>Result</label><select id="oc-result"><option value="resolved">resolved</option><option value="partial">partial</option><option value="unresolved">unresolved</option></select></div>
-            <div class="form-group"><label>Confirmed Root Cause</label><select id="oc-cause"><option value="">-- select --</option>${causeOptions(await loadCauses())}</select></div>
-            <div class="form-group"><label>Verified By</label><input id="oc-verified" type="text" value="tech1"></div>
+            <div class="form-group"><label for="oc-cause">Confirmed Root Cause (${esc(s.asset_type)} causes)</label><select id="oc-cause"><option value="">-- not confirmed --</option>${causeOptions((await loadCauses()).filter(c => c.asset_type === s.asset_type), (s.diagnosis && s.diagnosis.top_cause_id) || '')}</select></div>
+            <p class="muted" style="margin-bottom:12px">Verified by: <strong>${esc(role)}</strong> (your signed-in identity is recorded)</p>
             <div class="form-group"><label>Notes</label><textarea id="oc-notes" placeholder="Optional notes..."></textarea></div>
             <button class="btn btn-primary" id="btn-oc">Record Outcome</button>
           `;
@@ -970,7 +1048,6 @@ export function renderOutcome(el, state, h) {
               await api.post(`/cases/${cid}/outcome`, {
                 result: document.getElementById('oc-result').value,
                 root_cause_confirmed: document.getElementById('oc-cause').value,
-                verified_by: document.getElementById('oc-verified').value,
                 notes: document.getElementById('oc-notes').value,
               });
               showToast('Outcome recorded', 'success');
@@ -1035,7 +1112,8 @@ export function renderGovernance(el, state, h) {
     <div class="card"><div class="card-header"><h3>Knowledge Approval Queue</h3></div><div class="card-body" id="queue-body"></div></div>
     <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>
     <div class="card"><div class="card-header"><h3>Rollback</h3></div><div class="card-body" id="rollback-body"></div></div>
-    <div class="card"><div class="card-header"><h3>SHA-256 Audit Trace</h3></div><div class="card-body" id="trace-body"></div></div>
+    <div class="card"><div class="card-header"><h3>Knowledge Governance Ledger</h3><span id="ledger-status"></span></div><div class="card-body" id="ledger-body"></div></div>
+    <div class="card"><div class="card-header"><h3>Case Audit Trace (keyed hash chain)</h3></div><div class="card-body" id="trace-body"></div></div>
   `;
 
   // Rollback -- admin only. Lets anyone see the addressable versions even
@@ -1050,24 +1128,42 @@ export function renderGovernance(el, state, h) {
     const canRollback = role === 'admin1';
     try {
       const { versions, current_version, current_label } = await api.get('/kb/versions');
-      const options = versions.map(v => `<option value="${v.version}" ${v.version === current_version ? 'selected' : ''}>v${esc(v.label)} (version ${v.version})${v.version === current_version ? ' — current' : ''}</option>`).join('');
+      const targets = versions.filter(v => v.status === 'live' && v.version !== current_version);
+      const options = targets.map(v => `<option value="${v.version}" data-label="${esc(v.label)}">v${esc(v.label)}</option>`).join('');
+      const history = versions.map(v => `<span class="badge ${v.status === 'live' ? (v.version === current_version ? 'badge-green' : 'badge-blue') : 'badge-grey'}" style="margin:2px" title="${v.status === 'live' ? 'live lineage' : 'rolled back; this label is never reused'}">v${esc(v.label)}${v.version === current_version ? ' (current)' : v.status === 'rolled_back' ? ' (rolled back)' : ''}</span>`).join(' ');
       body.innerHTML = `
-        <p class="muted" style="margin-bottom:10px">Current KB: <strong>v${esc(current_label)}</strong> (version ${current_version}). Rolling back removes every case added after the chosen version.</p>
-        ${canRollback ? `
+        <p class="muted" style="margin-bottom:8px">Current KB: <strong>v${esc(current_label)}</strong>. Version labels are never reused: a rolled-back version keeps its label and the next approval gets a new one.</p>
+        <div style="margin-bottom:12px">${history}</div>
+        ${!canRollback ? `<p class="muted">Rolling back requires the Admin role. Switch role in the top bar to see the control.</p>`
+          : !targets.length ? `<p class="muted">Nothing to roll back to: the current version is the only live one.</p>` : `
           <div class="flex gap-8 flex-wrap align-center">
+            <label for="rb-version" class="role-label">Roll back to</label>
             <select id="rb-version">${options}</select>
-            <button class="btn btn-red btn-sm" id="rb-go">Roll back</button>
+            <input id="rb-reason" type="text" placeholder="Reason (required, recorded in the ledger)" style="flex:1 1 260px">
+            <button class="btn btn-red btn-sm" id="rb-go">Roll back…</button>
           </div>
-        ` : `<p class="muted">Rolling back requires the Admin role. Switch role in the top bar to see the control.</p>`}
+          <div id="rb-confirm" class="banner banner-warn mt-16" hidden></div>
+        `}
       `;
-      if (canRollback) {
-        document.getElementById('rb-go').onclick = async () => {
-          const target = document.getElementById('rb-version').value;
-          try {
-            const r = await api.post(`/kb/rollback/${target}`);
-            showToast(`Rolled back to version ${r.rolled_back_to} (${r.removed_cases} case(s) removed)`, 'success');
-            loadStats(); loadQueue(); loadRollback(); window.__app__?.refreshKbVersion?.();
-          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+      const go = document.getElementById('rb-go');
+      if (go) {
+        go.onclick = () => {
+          const sel = document.getElementById('rb-version');
+          const reason = document.getElementById('rb-reason').value.trim();
+          if (!reason) { showToast('Give a reason for the rollback', 'error'); document.getElementById('rb-reason').focus(); return; }
+          const label = sel.selectedOptions[0].dataset.label;
+          const box = document.getElementById('rb-confirm');
+          box.hidden = false;
+          box.innerHTML = `<p><strong>Roll the live KB back from v${esc(current_label)} to v${esc(label)}?</strong> Every case and expert heuristic approved after v${esc(label)} stops being used. This is recorded in the ledger with your reason.</p>
+            <div class="flex gap-8 mt-16"><button class="btn btn-red btn-sm" id="rb-yes">Yes, roll back</button><button class="btn btn-secondary btn-sm" id="rb-no">Cancel</button></div>`;
+          document.getElementById('rb-no').onclick = () => { box.hidden = true; };
+          document.getElementById('rb-yes').onclick = async () => {
+            try {
+              const r = await api.post(`/kb/rollback/${sel.value}`, { reason });
+              showToast(`Rolled back to v${label} (${r.removed_cases} item(s) removed)`, 'success');
+              refreshAll();
+            } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          };
         };
       }
     } catch (e) {
@@ -1076,9 +1172,11 @@ export function renderGovernance(el, state, h) {
   }
   loadRollback();
 
-  // Pill Registry — all four pills, who owns review, and how their KB is doing
-  (async () => {
+  // Pill Registry — all four pills, who owns review, and how their KB is doing.
+  // Named so approvals and rollbacks on this screen refresh it.
+  async function loadPills() {
     const body = document.getElementById('pill-registry-body');
+    if (!body) return;
     try {
       const { pills } = await api.get('/pills');
       body.innerHTML = `<div class="table-wrap"><table>
@@ -1088,14 +1186,20 @@ export function renderGovernance(el, state, h) {
           <td>${esc(p.owner_steward)}</td>
           <td>v${esc(p.kb_version_label)}</td>
           <td>${p.knowledge_count}</td>
-          <td>${p.approval_rate === null ? '<span class="muted">no decisions yet</span>' : `${(p.approval_rate * 100).toFixed(0)}% (${p.proposals_approved}/${p.proposals_submitted})`}</td>
+          <td>${p.approval_rate === null ? '<span class="muted">no decisions yet</span>' : `${(p.approval_rate * 100).toFixed(0)}% (${p.proposals_approved} of ${p.proposals_decided} decided)`}${p.proposals_pending ? ` <span class="muted">· ${p.proposals_pending} pending</span>` : ''}</td>
         </tr>`).join('')}</tbody>
       </table></div>
       <p class="muted" style="margin-top:10px">All four pills currently share one knowledge base, so the KB version is the same for each -- there is no independent per-pill KB in this build.</p>`;
     } catch (e) {
       body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
     }
-  })();
+  }
+  loadPills();
+
+  function refreshAll() {
+    loadQueue(); loadStats(); loadRollback(); loadPills(); loadLedger();
+    window.__app__?.refreshKbVersion?.();
+  }
 
   // Pipeline visual
   setHTML('pipeline-body', `
@@ -1131,6 +1235,10 @@ export function renderGovernance(el, state, h) {
         ? `<div class="q-title"><strong>${esc(p.proposal_id)}</strong> <span class="badge badge-purple">Expert interview</span></div>
             <div class="q-meta">${esc(p.expert_name)}, ${esc(p.expert_role)} · ${(p.heuristics || []).length} heuristic(s) · drafted by ${p.provider === 'adp' ? 'Tencent Cloud ADP' : 'offline mock model'}, reviewed by ${esc(p.submitted_by)}</div>
             <ul class="q-list">${(p.heuristics || []).map(heuristicLine).join('')}</ul>`
+        : p.kind === 'escalation_resolution'
+        ? `<div class="q-title"><strong>${esc(p.proposal_id)}</strong> <span class="badge badge-red">Escalation resolution</span></div>
+            <div class="q-meta">Confirmed cause: <strong>${esc(causeLabel(p.confirmed_cause))}</strong> · Case ${esc(p.case_id)} · ${esc(p.asset_id)} · resolved by ${esc(p.submitted_by)}</div>
+            <div class="q-quote">"${esc(p.resolution)}"</div>`
         : `<div class="q-title"><strong>${esc(p.proposal_id)}</strong> <span class="badge badge-blue">Outcome feedback</span></div>
             <div class="q-meta">Confirmed cause: <strong>${esc(causeLabel(p.confirmed_cause))}</strong> · Case ${esc(p.case_id)} · ${esc(p.asset_id)} · submitted by ${esc(p.submitted_by)}</div>`;
       qb.innerHTML = queue.map(p => {
@@ -1161,7 +1269,7 @@ export function renderGovernance(el, state, h) {
           try {
             await api.post(`/kb/proposals/${id}/approve`);
             showToast(`${id} approved and live in the knowledge base`, 'success');
-            loadQueue(); loadStats(); loadRollback(); window.__app__?.refreshKbVersion?.();
+            refreshAll();
             if (p.kind !== 'expert_capture' && p.confirmed_cause) {
               await loadRerunCandidates(p.confirmed_cause, p.asset_type);
             }
@@ -1175,7 +1283,7 @@ export function renderGovernance(el, state, h) {
         if (go) go.onclick = async () => {
           const reason = document.getElementById(`rj-reason-${id}`).value.trim();
           if (!reason) { showToast('Give a reason so the capturer knows what to fix', 'error'); document.getElementById(`rj-reason-${id}`).focus(); return; }
-          try { await api.post(`/kb/proposals/${id}/reject`, { reason }); showToast(`${id} rejected`, 'success'); loadQueue(); loadStats(); }
+          try { await api.post(`/kb/proposals/${id}/reject`, { reason }); showToast(`${id} rejected`, 'success'); refreshAll(); }
           catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
       });
@@ -1300,76 +1408,33 @@ export function renderGovernance(el, state, h) {
     }
   }
 
+  async function loadLedger() {
+    try {
+      const { entries, chain_valid } = await api.get('/kb/ledger');
+      setHTML('ledger-status', chain_valid ? '<span class="badge badge-green">Ledger verified</span>' : '<span class="badge badge-red">Ledger FAILED verification</span>');
+      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_rejected: 'Rejected', rollback: 'Rollback' };
+      setHTML('ledger-body', !entries.length
+        ? '<p class="muted">No governance actions yet.</p>'
+        : `<p class="muted" style="margin-bottom:8px">Every proposal, approval, rejection and rollback, with who did it and why. Keyed hash chain: editing any entry breaks verification.</p>
+          <div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Action</th><th>Actor</th><th>Proposal</th><th>Version</th><th>Reason</th><th>Time</th></tr></thead>
+          <tbody>${entries.slice().reverse().map(e => `<tr>
+            <td>${e.seq}</td><td>${esc(actionLabel[e.action] || e.action)}</td><td>${esc(e.actor)}</td>
+            <td>${e.proposal_id ? `<code>${esc(e.proposal_id)}</code>` : '-'}</td>
+            <td>${e.label_before === e.label_after ? `v${esc(e.label_after)}` : `v${esc(e.label_before)} &rarr; v${esc(e.label_after)}`}</td>
+            <td>${esc(e.reason)}</td><td>${fmtTime(e.at)}</td>
+          </tr>`).join('')}</tbody></table></div>`);
+    } catch (e) {
+      setHTML('ledger-body', isForbidden(e)
+        ? rbacNote('The governance ledger', 'auditors, knowledge stewards and admins')
+        : `<p class="muted">Error: ${esc(e.message)}</p>`);
+    }
+  }
+
   loadStats();
   loadQueue();
+  loadLedger();
   loadTrace();
-}
-
-// ═══════════════════════════════════════════════════════════
-// Demo case seeder
-// ═══════════════════════════════════════════════════════════
-export async function seedDemoCases(h) {
-  const { api, showToast, navigate } = h;
-  const originalRole = api.user(); // restore this session once seeding is done
-
-  // Seeding plays several actors in turn (tech1, mgr1, ...). Identity is
-  // the signed session cookie now, so each actor switch is a real login —
-  // not a ?user= param, which would be ignored outside insecure mode.
-  async function apiAs(user, method, path, params) {
-    await api.login(user);
-    const url = new URL(path, window.location.origin);
-    if (method === 'POST' && params) {
-      for (const [k, v] of Object.entries(params)) {
-        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
-      }
-    }
-    const res = await fetch(url, { method, credentials: 'same-origin' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
-    return body;
-  }
-
-  async function apiJsonAs(user, path, jsonBody) {
-    await api.login(user);
-    const url = new URL(path, window.location.origin);
-    const res = await fetch(url, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody || {}),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
-    return body;
-  }
-
-  try {
-    showToast('Seeding demo cases...', 'info');
-
-    // Case 1: CRAH-DC1-01 - happy path to CLOSED
-    let r = await apiAs('tech1', 'POST', '/cases', { asset_id: 'CRAH-DC1-01', sensor_id: 'SA-TEMP-01', observation_type: 'temperature_measurement_missing', reading_status: 'absent' });
-    const c1 = r.case_id;
-    await apiAs('tech1', 'POST', `/cases/${c1}/advance`);
-    await apiAs('mgr1', 'POST', `/cases/${c1}/approval`, { decision: 'approve' });
-    await apiAs('mgr1', 'POST', `/cases/${c1}/work-order`);
-    await apiAs('tech1', 'POST', `/cases/${c1}/outcome`, { result: 'resolved', root_cause_confirmed: 'sensor_hardware_failure', verified_by: 'tech1', notes: 'Sensor replaced, temperature restored' });
-    await apiJsonAs('mgr1', `/cases/${c1}/feedback`, { confirmed_cause: 'sensor_hardware_failure', notes: 'Confirmed root cause' });
-
-    // Case 2: CRAH-DC1-02 - bus failure, escalates
-    r = await apiAs('tech1', 'POST', '/cases', { asset_id: 'CRAH-DC1-02', sensor_id: 'SA-TEMP-02', observation_type: 'temperature_measurement_missing', reading_status: 'absent' });
-    const c2 = r.case_id;
-    await apiAs('tech1', 'POST', `/cases/${c2}/advance`);
-
-    // Case 3: CHILLER-DC1-01 - chiller compressor trip, awaiting approval
-    r = await apiAs('tech1', 'POST', '/cases', { asset_id: 'CHILLER-DC1-01', sensor_id: 'CH-COMP-PRESSURE', observation_type: 'chiller_compressor_trip', reading_status: 'absent' });
-    const c3 = r.case_id;
-    await apiAs('tech1', 'POST', `/cases/${c3}/advance`);
-
-    showToast('Seeded 3 cases: 1 CLOSED, 1 ESCALATED, 1 AWAITING_APPROVAL', 'success');
-  } catch (e) {
-    showToast(`Seed error: ${e.message}`, 'error');
-  } finally {
-    await api.login(originalRole); // seeding plays several actors; restore the real one
-    navigate('dashboard');
-  }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -1413,6 +1478,7 @@ export function renderCapture(el, state, h) {
           <div class="flex gap-8 flex-wrap">
             <button class="btn btn-secondary" id="cap-sample">Load sample interview</button>
             <button class="btn btn-primary" id="cap-run" ${canCapture ? '' : 'disabled'}>Draft knowledge with AI</button>
+            <button class="btn btn-secondary" id="cap-manual" ${canCapture ? '' : 'disabled'}>Write heuristics by hand</button>
           </div>
           ${canCapture ? '' : `<div class="banner banner-info mt-16"><p><strong>View only.</strong> Capturing expert knowledge is limited to Asset Ops Managers and Knowledge Stewards. Switch role in the top bar to try it.</p></div>`}
         </div>
@@ -1480,7 +1546,8 @@ export function renderCapture(el, state, h) {
   }
 
   function modelBadge(d) {
-    return `<span class="badge badge-purple">Drafted by: ${esc(d.provider === 'adp' ? 'Tencent Cloud ADP' : 'Offline mock model')}</span>`;
+    const by = { adp: 'Tencent Cloud ADP', manual: 'Entered by hand', mock: 'Offline mock model' }[d.provider] || d.provider;
+    return `<span class="badge badge-purple">Drafted by: ${esc(by)}</span>`;
   }
 
   async function renderDraft() {
@@ -1489,7 +1556,7 @@ export function renderCapture(el, state, h) {
     $('cap-result').innerHTML = `
       <div class="flex gap-8 flex-wrap" style="margin-bottom:12px">
         ${modelBadge(draft)}
-        <span class="badge badge-green">${draft.heuristics.length} grounded in the transcript</span>
+        <span class="badge badge-green">${draft.heuristics.length} ${draft.provider === 'manual' ? 'entered (quotes re-checked on send)' : 'grounded in the transcript'}</span>
         ${draft.dropped ? `<span class="badge badge-red">${draft.dropped} discarded: not said by the expert</span>` : ''}
       </div>
       ${(() => {
@@ -1502,10 +1569,12 @@ export function renderCapture(el, state, h) {
       })()}
       <p class="muted cap-hint">Untick anything that is wrong or unclear and correct causes where needed. You cannot add words the expert did not say: the server checks every quote again.</p>
       ${draft.heuristics.map((x, i) => heuristicCard(x, i, causes, true)).join('')}
+      ${draft.provider === 'manual' ? manualForm(causes) : ''}
       <div class="cap-submit">
         <button class="btn btn-primary" id="cap-submit">Send ${draft.heuristics.length} for steward approval</button>
         <span class="muted" id="cap-submit-note">A different knowledge steward must approve before it goes live.</span>
       </div>`;
+    if (draft.provider === 'manual') wireManualForm(causes);
     const btn = $('cap-submit');
     const kept = () => [...document.querySelectorAll('.kh-keep')].filter(c => c.checked).map(c => +c.dataset.i);
     const refresh = () => {
@@ -1528,7 +1597,43 @@ export function renderCapture(el, state, h) {
       if (causeBadge) { causeBadge.textContent = info.label; causeBadge.className = 'badge badge-blue'; }
     }));
     btn.onclick = submit;
+    refresh();
   }
+
+  // Manual entry: the fallback when the AI is offline, or when the expert's
+  // know-how doesn't fit what the model drafted. The same rule applies:
+  // every heuristic must quote the expert's own words from the transcript.
+  const norm = t => t.replace(/\s+/g, ' ').trim().toLowerCase();
+  function manualForm(causes) {
+    return `<div class="card mt-16"><div class="card-header"><h3>Add a heuristic</h3></div><div class="card-body">
+      <div class="form-group"><label for="mh-cause">Cause</label><select id="mh-cause">${causeOptions(causes)}</select></div>
+      <div class="form-group"><label for="mh-when">When (the symptom the expert described)</label><input id="mh-when" type="text"></div>
+      <div class="form-group"><label for="mh-checks">Checks (one per line)</label><textarea id="mh-checks" rows="3"></textarea></div>
+      <div class="form-group"><label for="mh-never">Never (one per line)</label><textarea id="mh-never" rows="2"></textarea></div>
+      <div class="form-group"><label for="mh-esc">Escalate when (one per line)</label><textarea id="mh-esc" rows="2"></textarea></div>
+      <div class="form-group"><label for="mh-quote">Expert's own words (copy exactly from the transcript)</label><textarea id="mh-quote" rows="2"></textarea></div>
+      <button class="btn btn-secondary" id="mh-add">Add heuristic</button>
+    </div></div>`;
+  }
+  function wireManualForm(causes) {
+    const lines = id => $(id).value.split('\n').map(x => x.trim()).filter(Boolean);
+    $('mh-add').onclick = () => {
+      const quote = $('mh-quote').value.trim();
+      const when = $('mh-when').value.trim();
+      if (!when || !quote) { showToast('Add the symptom and the expert\'s own words', 'error'); return; }
+      if (!norm(text.value).includes(norm(quote))) { showToast('That quote is not in the transcript word for word', 'error'); $('mh-quote').focus(); return; }
+      const c = causes.find(x => x.id === $('mh-cause').value);
+      draft.heuristics.push({ symptom_pattern: when, likely_cause: c.id, cause_label: c.label, asset_type: c.asset_type,
+        checks: lines('mh-checks'), do_not: lines('mh-never'), escalate_when: lines('mh-esc'), evidence_quote: quote });
+      renderDraft();
+    };
+  }
+
+  $('cap-manual').onclick = () => {
+    if (!text.value.trim()) { showToast('Paste the interview transcript first', 'error'); text.focus(); return; }
+    draft = { provider: 'manual', heuristics: [], warnings: [], dropped: 0 }; submitted = null;
+    renderDraft();
+  };
 
   async function submit() {
     const btn = $('cap-submit');
@@ -1579,7 +1684,13 @@ export function renderCapture(el, state, h) {
       await renderDraft();
     } catch (e) {
       draft = null; setStep(1); setStatus('Draft failed', 'badge-red');
-      $('cap-result').innerHTML = `<div class="banner banner-error"><p><strong>No usable draft.</strong> ${esc(e.message)}</p><p>Check the transcript has the expert's own answers, then try again.</p></div>`;
+      const aiDown = /extraction failed|ADP|reach|key/i.test(e.message);
+      $('cap-result').innerHTML = `<div class="banner banner-error"><p><strong>No usable draft.</strong> ${esc(e.message)}</p>
+        <p>${aiDown
+          ? 'The AI model is unavailable, so nothing was drafted. You can still capture this interview by hand.'
+          : 'The model found nothing it could quote from the expert. Write the heuristics by hand, or check the transcript holds the expert\'s own answers.'}</p>
+        <button class="btn btn-secondary mt-16" id="cap-manual-fallback">Write heuristics by hand</button></div>`;
+      $('cap-manual-fallback').onclick = () => $('cap-manual').click();
     } finally {
       run.disabled = !canCapture; run.textContent = 'Draft again with AI';
     }

@@ -91,7 +91,7 @@ def test_approval_needs_second_steward_and_bumps_version(client):
     assert mine and all(h["approved_by"] == "steward2" for h in mine)
 
     # rollback removes them again
-    client.post(f"/kb/rollback/{v0}", params={"user": "admin1"})
+    client.post(f"/kb/rollback/{v0}", params={"user": "admin1", "reason": "test rollback"})
     live = client.get("/kb/expert-heuristics", params={"user": "mgr1"}).json()["heuristics"]
     assert not [h for h in live if h["proposal_id"] == pid]
 

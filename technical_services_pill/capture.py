@@ -154,7 +154,7 @@ def reviewed_draft(
             "reviewed draft failed grounding: " + "; ".join(item_warnings)
         )
     return {
-        "provider": provider if provider in ("adp", "mock") else llm.provider_name(),
+        "provider": provider if provider in ("adp", "mock", "manual") else llm.provider_name(),
         "heuristics": kept,
         "warnings": warnings + item_warnings,
         "dropped": 0,

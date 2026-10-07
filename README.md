@@ -64,12 +64,12 @@ work order → outcome → feedback → **validated case written back to KB**
 | `llm.py` | Provider seam for both expert capture and the AI second opinion (`mock` offline / `adp` Tencent Cloud ADP). |
 | `capture.py` | Expert interview → grounded draft knowledge. Every heuristic must quote the transcript verbatim or it's dropped. |
 | `cause_registry.py` | Canonical cause IDs, plain-English labels, and which pill owns each cause. |
-| `auth.py` | Signed session cookie identity (`POST /login`); `?user=` only works as a fallback under `TBC_DEMO_INSECURE=1`. |
+| `auth.py` | PIN-checked login and signed session cookie identity (`POST /login`); `?user=` only works as a fallback under `TBC_DEMO_INSECURE=1`. |
 | `tools.py` | Agent tool layer: evidence gatherer, diagnosis orchestrator, guardrail checker, recommendation proposer, work-order creator, feedback submitter. |
 | `rbac.py` | 5-role RBAC matrix (technician, asset_ops_manager, knowledge_steward, auditor, admin). Permission checks via `can()` / `require()`. |
 | `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace. |
 | `learning.py` | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back, proposal workflow. |
-| `audit.py` | `canonical_json`, SHA-256 `compute_hash`, `GENESIS_HASH` for hash-chain integrity. |
+| `audit.py` | `canonical_json`, keyed HMAC-SHA256 `compute_hash`, `verify_chain`, `GENESIS_HASH`. |
 | `mock_registry.py` | Demo data: 7 assets across 4 pills (2 CRAH, 2 chiller, 1 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
 | `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit. |
 | `app.py` | FastAPI app: RBAC-enforced routes, identity, persistence lifecycle, the agent-loop driver, and `/pills`. |
@@ -113,15 +113,17 @@ make serve
 ### Option C - Frontend Demo UI (what judges should run)
 
 ```bash
-pip install -r requirements.txt
-make serve          # = PYTHONPATH=. uvicorn frontend.serve:app --port 8000
+make install        # creates .venv and installs requirements
+make serve          # = .venv/bin/python -m uvicorn frontend.serve:app --port 8000
 ```
 
-Open `http://localhost:8000/ui` — the dashboard auto-seeds three demo cases
-(one CLOSED, one ESCALATED, one AWAITING_APPROVAL) the first time it loads
-empty; click **Seed Demo Cases** any time to add three more. The role
-switcher (top right) sets a real signed-in session, not a URL param — see
-*Identity and RBAC* below. A **Dark theme** toggle sits next to it; light is
+Open `http://localhost:8000/ui` and sign in with a demo PIN (`mgr1` = 2222;
+all six are in `DEMO.md`). When the server starts with no cases it seeds
+three demo scenarios (one CLOSED, one ESCALATED, one AWAITING_APPROVAL),
+recorded in the audit trail as `demo-seed`, never as a real user; an admin
+can add three more with **Seed Demo Cases**. The role switcher (top right)
+asks for each user's PIN once per browser tab and sets a real signed-in
+session, not a URL param — see *Identity and RBAC* below. A **Dark theme** toggle sits next to it; light is
 the default (projector-safe, high-contrast — see `tests/test_contrast.py`).
 Click **Demo guide** for a guided walkthrough, or follow `DEMO.md` for a
 6-minute scripted run. See `frontend/README.md` for UI implementation
@@ -162,17 +164,21 @@ snapshots.
 | `GET` | `/cases/{id}/evidence` | Retrieve gathered evidence |
 | `GET` | `/cases/{id}/diagnosis` | Retrieve diagnosis + candidate causes |
 | `GET` | `/cases/{id}/recommendation` | Retrieve draft recommendation |
-| `POST` | `/cases/{id}/approval` | Submit human decision (approve / reject / modify) |
+| `POST` | `/cases/{id}/approval` | Submit human decision (approve / reject / modify). A rationale is always required; a G2/G2b hazard also needs `hazard_acknowledged=true` |
 | `GET` | `/cases/{id}/work-order` | Retrieve work order status |
 | `POST` | `/cases/{id}/work-order` | Create + acknowledge work order (requires prior approval) |
 | `POST` | `/cases/{id}/outcome` | Record observed outcome |
-| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal (F2) |
+| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal (F2). Accepted only in FEEDBACK_QUEUED; the cause must be a known cause of this asset type; asset type and fault signature come from the case, never the client |
+| `POST` | `/cases/{id}/escalation/close` | Close an escalation with its resolution; with `confirmed_cause`, the resolution is also queued as a knowledge proposal |
 | `GET` | `/kb/stats` | Knowledge-base statistics (case count, cause priors, pending proposals) |
 | `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
 | `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
 | `POST` | `/kb/proposals/{id}/reject` | Reject a proposal (steward/admin) |
-| `GET` | `/kb/versions` | Every addressable KB version, each with its integer **and** its displayed semver label (e.g. version 1 = "1.4.0") |
-| `POST` | `/kb/rollback/{version}` | Roll back KB to a target version (admin only) |
+| `GET` | `/kb/versions` | Every KB version ever issued, its displayed label, and whether it is live or rolled back. Labels are never reused |
+| `POST` | `/kb/rollback/{version}` | Roll back to an earlier live version (admin only, `reason` required, recorded in the ledger) |
+| `GET` | `/kb/ledger` | Keyed, hash-chained governance ledger: every proposal, approval, rejection and rollback with actor and reason |
+| `GET` | `/audit/status` | Integrity summary (any broken case chain or ledger), shown as a Dashboard banner |
+| `POST` | `/demo/seed` | Admin only: add the three demo scenarios, attributed to `demo-seed` |
 | `GET` | `/pills` | Pill Registry: owner steward, KB version, knowledge count, approval rate per pill |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
 
@@ -356,11 +362,17 @@ write-back** loop (spec §7, enhanced in F2):
    `kb_match_score()` returns a similarity in `[0, 1]`.
 4. A higher `kb_match` feeds into the W3 term, raising `confidence` — so
    recurring faults are diagnosed faster and with more confidence.
-5. An admin can **roll back** the KB to a prior version via `/kb/rollback/{version}`,
-   removing all cases added after that version — reachable from the UI via
-   the **Rollback** panel on Governance (admin role), which lists every
-   addressable version by its displayed label so there's no guessing which
-   integer corresponds to "v1.4.0" on screen.
+5. An admin can **roll back** the KB to an earlier live version via
+   `/kb/rollback/{version}?reason=...`, removing everything approved after
+   it — reachable from the **Rollback** panel on Governance (admin role),
+   which asks for a reason and a confirmation. Version numbers are never
+   reused: after rolling back from v1.6.0 to v1.4.0, the next approval is
+   v1.7.0, so a case stamped "KB version used: 1.5.0" always means one
+   thing. Every approval, rejection and rollback is written to the keyed
+   governance ledger (`/kb/ledger`, shown on Governance).
+6. When an AOM closes an escalation and names the confirmed cause, the
+   resolution itself becomes a knowledge proposal: the cases the pill could
+   not solve are where the expert know-how is.
 
 **Demo proof:** the learning-loop case shows `kb_match` rising from **0.73 →
 1.00** and confidence from **0.43 → 0.50** after one approved feedback cycle
@@ -466,8 +478,11 @@ real current architecture, not an invented per-pill version (see
 
 ## Identity and RBAC
 
-`POST /login` sets an HMAC-signed session cookie (`TBC_SECRET`, auto-generated
-per process if unset) naming one of six fixed demo users. Every endpoint
+`POST /login?user_id=...&pin=...` checks that user's PIN and sets an
+HMAC-signed session cookie (`TBC_SECRET`, auto-generated per process if
+unset). Naming a user is not enough to act as them. Demo PINs are in
+`DEMO.md`; set `TBC_LOGIN_PINS="tech1:....,mgr1:...."` to replace them. A
+production deployment would put SSO here. Every endpoint
 resolves its caller from that cookie, which always wins over a `?user=` query
 param — `?user=` only works as a fallback when `TBC_DEMO_INSECURE=1` is set
 (local demos/tests), and the UI shows a persistent amber banner whenever that
@@ -488,11 +503,14 @@ outcome) — see `tests/test_identity.py`.
 ## Testing
 
 ```bash
-make test        # = PYTHONPATH=. python -m pytest -q tests
-make eval         # = PYTHONPATH=. python3 tests/evals/run_evals.py
+make test        # = PYTHONPATH=. .venv/bin/python -m pytest -q tests
+make eval         # = PYTHONPATH=. .venv/bin/python tests/evals/run_evals.py
 ```
 
-**120 tests** (verified with `make test`; this count is a snapshot — run the
+The Makefile uses `.venv/bin/python` when it exists, so no activation is
+needed after `make install`.
+
+**142 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases, F1-F3
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
@@ -514,6 +532,8 @@ checks:
 | `test_contrast.py` | Phase 5: every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
 | `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
 | `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
+| `test_judge_round2_fixes.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
+| `test_judge_round3_fixes.py` | Rejected feedback leaves no proposal; cross-asset/unknown causes refused; ledger records approvals and rollbacks; labels never reused; a re-hashed chain without the key fails and freezes the case; login PIN; seeding never attributed to real users; rationale and hazard acknowledgement; escalation resolution harvested; pump/UPS capture; manual capture with AI offline |
 
 **`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
 pass/fail table, independent of the pytest suite: ADP call shape, AI cannot
@@ -524,16 +544,24 @@ in capture. See `tests/evals/run_evals.py`.
 
 ## Audit Integrity
 
-Every state transition appends a record to a **SHA-256 hash chain** (spec §6):
+Every case state transition, and every knowledge governance action
+(proposal, approval, rejection, rollback), is appended to a **keyed hash
+chain** (spec §6):
 
 ```
-record_n.prev_hash = SHA-256(canonical_json(record_{n-1}))
+hash_n = HMAC-SHA256(audit_key, canonical_json({prev_hash: hash_{n-1}, ...fields}))
 ```
 
-- `GENESIS_HASH` anchors the chain head.
-- `verify_audit_chain()` recomputes the chain and detects any tampering.
-- RBAC ensures only authorized roles can advance states; all actions are
-  recorded with actor, timestamp, and transition name.
+- `GENESIS_HASH` anchors each chain head.
+- `verify_audit_chain()` (cases) and `verify_ledger()` (knowledge) recompute
+  the chain. Editing an entry breaks it, and so does editing every entry and
+  re-hashing, unless the editor also holds the audit key.
+- The key comes from `TBC_AUDIT_KEY`, or a generated `data/audit.key` (mode
+  0600) for local demos. **Limit:** someone with filesystem access to both
+  the database and that key file can re-sign the chain; in production the
+  key must live in a secrets manager off the database host.
+- A case whose chain fails verification is frozen (HTTP 423 on every write)
+  and a red banner appears on the Dashboard for every role.
 
 ## Project Structure
 
@@ -548,12 +576,12 @@ technical_services_pill/
 ├── ai_reasoning.py      # Advisory AI second opinion on a diagnosis
 ├── llm.py               # Provider seam (mock / Tencent Cloud ADP) for capture + second opinion
 ├── capture.py           # Expert interview -> grounded draft knowledge
-├── auth.py              # Signed session cookie identity (/login)
+├── auth.py              # PIN-checked login, signed session cookie identity
 ├── tools.py             # Agent tool layer
 ├── rbac.py              # 5-role RBAC matrix
 ├── store.py / database.py  # SQLite-backed CaseStore + in-memory cache
 ├── learning.py          # LearningStore (validated KB + Jaccard RAG + proposals)
-├── audit.py             # SHA-256 hash-chain primitives
+├── audit.py             # Keyed (HMAC-SHA256) hash-chain primitives
 ├── mock_registry.py     # Demo data: assets, seed KB, telemetry
 ├── persistence.py       # FastAPI lifecycle snapshots for cases, KB, proposals, audit
 ├── app.py               # FastAPI routes, identity, RBAC, persistence lifecycle
@@ -576,6 +604,8 @@ tests/
 ├── test_contrast.py             # Phase 5: WCAG contrast, both themes
 ├── test_pill_registry.py        # Phase 6: /pills
 ├── test_judge_fixes.py          # Rollback UI/label reconciliation, new asset fixtures
+├── test_judge_round2_fixes.py   # Round 2 judge findings
+├── test_judge_round3_fixes.py   # Round 3 judge findings (governance integrity, identity, capture)
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/

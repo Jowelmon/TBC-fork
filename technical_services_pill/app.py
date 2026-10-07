@@ -29,7 +29,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Response
 
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
-from .auth import clear_cookie, demo_insecure, issue_cookie, resolve_user
+from .auth import check_pin, clear_cookie, demo_insecure, issue_cookie, resolve_user
 from .models import (
     AgentStateName,
     HumanDecision,
@@ -56,6 +56,10 @@ async def _lifespan(_: FastAPI):
         _log.info("persistence restore: %s", summary)
         if summary.get("audit_chain_failures"):
             _log.error("invalid audit chains on restore: %s", summary["audit_chain_failures"])
+    if not STORE.list() and os.environ.get("TBC_AUTO_SEED", "1") != "0":
+        _log.info("empty store: seeded demo cases %s", seed_demo_cases())
+        if persistent:
+            persistence.save_state()
     try:
         yield
     finally:
@@ -108,6 +112,16 @@ def _get_case(case_id: str) -> AgentState:
     return state
 
 
+def _get_case_for_write(case_id: str) -> AgentState:
+    """A case whose audit chain fails verification is frozen: it can be
+    read and investigated, never advanced, approved or closed."""
+    state = _get_case(case_id)
+    if not state.verify_audit_chain():
+        raise HTTPException(
+            423, f"case {case_id} audit chain failed verification; frozen pending audit review")
+    return state
+
+
 def _asset_type(asset_id: str) -> str:
     """Asset type from the registry (e.g. "UPS"); "UNKNOWN" if unregistered."""
     from .mock_registry import ASSETS
@@ -131,14 +145,16 @@ def _fault_signature(state: AgentState, top_cause_id: str, kb_refs: list[str]) -
 # Identity: a signed session cookie, not a spoofable ?user= param (see auth.py)
 # ========================================================================== #
 @app.post("/login")
-def login(user_id: str, response: Response) -> dict:
-    """Set a signed session cookie for one of the fixed demo users.
+def login(user_id: str, response: Response, pin: str | None = None) -> dict:
+    """Check the user's PIN and set a signed session cookie for them.
 
     The top-bar role switcher calls this. Everything downstream reads the
-    caller from the cookie, so switching role here is the only way to
-    change who you act as — appending ``?user=`` to a URL no longer does.
+    caller from the cookie, so logging in here is the only way to change
+    who you act as. Naming a user is not enough: their PIN is required.
     """
     u = _user(user_id)
+    if not check_pin(u.user_id, pin):
+        raise HTTPException(401, f"wrong or missing PIN for {user_id}")
     issue_cookie(response, u.user_id)
     return {"user": u.user_id, "role": u.role.value}
 
@@ -181,28 +197,42 @@ def create_case(
         rs = ReadingStatus(reading_status)
     except ValueError:
         raise HTTPException(400, f"invalid reading_status {reading_status!r}")
+    state = _new_case(asset_id, sensor_id, observation_type, rs, raw_value, actor=user)
+    return {"case_id": state.case_id, "current_state": state.current_state.value,
+            "evidence_count": len(state.evidence)}
+
+
+def _new_case(asset_id: str, sensor_id: str, observation_type: str,
+              reading_status: ReadingStatus, raw_value: float | None = None,
+              *, actor: str) -> AgentState:
+    from .mock_registry import ASSETS
+    from .models import GuardrailResult
+    from .tools import gather_evidence_for_fault
 
     observation = Observation(
         type=observation_type,
         sensor_id=sensor_id,
         detected_at=datetime.now(timezone.utc),
-        reading_status=rs,
+        reading_status=reading_status,
         raw_value=raw_value,
         asset_id=asset_id,
     )
-    state = AgentState(asset_id=asset_id, observation=observation)
-
-    # auto-gather evidence (agent loop during GATHERING_EVIDENCE). The
-    # fault-aware gatherer routes by observation type so chiller/UPS/pump
-    # faults retrieve their own evidence contract — not the CRAH one.
-    from .tools import gather_evidence_for_fault
-
-    for ev in gather_evidence_for_fault(asset_id, observation_type):
-        state.add_evidence(ev, actor="agent")
-
-    case_id = STORE.create(state)
-    return {"case_id": case_id, "current_state": state.current_state.value,
-            "evidence_count": len(state.evidence)}
+    registered = asset_id in ASSETS
+    state = AgentState(asset_id=asset_id, observation=observation, actor=actor,
+                       asset_registered=registered)
+    if registered:
+        for ev in gather_evidence_for_fault(asset_id, observation_type):
+            state.add_evidence(ev, actor="agent")
+    else:
+        # G5: nothing is known about this asset, so nothing is gathered or
+        # diagnosed; it escalates the moment it is raised.
+        gr = GuardrailResult()
+        gr.add("G5", "asset not in registry; cannot diagnose unknown asset",
+               escalate=True, block=True)
+        state.guardrail_result = gr
+        state.escalate_for_evidence(actor="agent", reason="[G5] unknown asset; outside pill scope")
+    STORE.create(state)
+    return state
 
 
 @app.get("/cases")
@@ -227,8 +257,13 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     recorded, but the guardrail attribution is not lost.
     """
     _need(user, "view_case")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
+    _advance(state)
+    return {"case_id": case_id, "current_state": state.current_state.value,
+            "confidence": state.confidence}
 
+
+def _advance(state: AgentState) -> None:
     while state.current_state == AgentStateName.GATHERING_EVIDENCE:
         from .confidence import derive_confidence_signals, score_confidence, evidence_coverage_score
         from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
@@ -335,6 +370,25 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
             )
             state.propose_recommendation(rec, actor="agent")
             break
+        if new_st == AgentStateName.GATHERING_EVIDENCE:
+            # Low confidence: actually re-query the evidence sources. If they
+            # return nothing new, another pass would only re-run the same
+            # data, so hand the case to a human instead.
+            from .tools import gather_evidence_for_fault
+
+            seen = {(e.source, e.type, repr(e.payload)) for e in state.evidence}
+            fresh = [ev for ev in gather_evidence_for_fault(state.asset_id, state.observation.type)
+                     if (ev.source, ev.type, repr(ev.payload)) not in seen]
+            if not fresh:
+                state.escalate_for_evidence(
+                    actor="agent",
+                    reason=(f"confidence {conf:.2f} is below the recommendation threshold and "
+                            "re-querying every evidence source returned nothing new; "
+                            "needs a human"),
+                )
+                break
+            for ev in fresh:
+                state.add_evidence(ev, actor="agent")
 
     # If the case escalated via G4 (low confidence / max gathering loops)
     # but a diagnosis with a resolvable top cause exists, evaluate
@@ -369,6 +423,10 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
         if gr.must_escalate or not gr.allowed:
             state.guardrail_result = gr
             state.recommendation = rec
+            state._record_note(
+                actor="agent",
+                reason="guardrail review of the escalated case: " + "; ".join(gr.reasons),
+            )
 
     # G9: surface an AI/rules disagreement, if any, on whatever guardrail
     # result exists by now. Advisory only — never changes current_state.
@@ -380,9 +438,6 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
             ai_hypothesis=state.ai_hypothesis,
             rule_cause=state.diagnosis.top_cause_id if state.diagnosis else None,
         )
-
-    return {"case_id": case_id, "current_state": state.current_state.value,
-            "confidence": state.confidence}
 
 
 @app.get("/cases/similar")
@@ -420,6 +475,7 @@ def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     snap = STORE.snapshot(case_id)
     if snap is None:
         raise HTTPException(404, "case not found")
+    snap["asset_type"] = _asset_type(snap["asset_id"])
     return snap
 
 
@@ -509,13 +565,25 @@ def post_approval(
     modified_action_type: str | None = None,
     modified_action_target: str | None = None,
     modified_action_detail: str | None = None,
+    hazard_acknowledged: bool = False,
 ) -> dict:
     _need(user, "approve_reject_modify")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
     try:
         dec = HumanDecision(decision)
     except ValueError:
         raise HTTPException(400, f"invalid decision {decision!r}")
+    if not (rationale or "").strip():
+        raise HTTPException(400, f"a rationale is required to {dec.value}")
+    hazard = state.guardrail_result is not None and any(
+        r.startswith(("[G2]", "[G2b]")) for r in state.guardrail_result.reasons)
+    if hazard and dec != HumanDecision.REJECT and not hazard_acknowledged:
+        raise HTTPException(
+            400, "this recommendation carries a safety/environmental hazard; "
+                 "acknowledge it (hazard_acknowledged=true) before approving or modifying")
+
+    if hazard and dec != HumanDecision.REJECT:
+        rationale = f"{rationale.strip()} [safety hazard acknowledged]"
 
     modified_actions = None
     original_actions = None
@@ -580,7 +648,7 @@ def create_work_order(case_id: str, user: str = Depends(resolve_user)) -> dict:
     Spec §3 guardrail: refused unless an approve/modify decision is recorded.
     """
     _need(user, "approve_reject_modify")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
     if not state.recommendation or not state.recommendation.actions:
         raise HTTPException(409, "no recommendation to action")
     from .tools import create_work_order_for_state
@@ -601,7 +669,7 @@ def post_outcome(
     notes: str | None = None,
 ) -> dict:
     _need(user, "record_outcome")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
     try:
         res = OutcomeResult(result)
     except ValueError:
@@ -637,18 +705,46 @@ def post_feedback(
     corrections: dict | None = None,
 ) -> dict:
     _need(user, "submit_feedback")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
+    from .cause_registry import canonicalize_cause_id, cause_asset_type
+    from .decision_tree import KNOWN_CAUSE_IDS
     from .tools import submit_feedback as _fb
-    corrections = corrections or {}
-    # The proposer is always the authenticated caller; a client-supplied
-    # submitted_by would let anyone pin a proposal on someone else and then
-    # approve it themselves.
-    corrections["submitted_by"] = user
-    fb_id = _fb(case_id, corrections, state=state)
-    try:
-        state.queue_feedback(fb_id, actor=user)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc))
+
+    # Every check runs before a proposal exists: a rejected request must
+    # leave nothing behind in the governance queue.
+    if state.current_state != AgentStateName.FEEDBACK_QUEUED or state.outcome is None:
+        raise HTTPException(
+            409,
+            f"feedback is only accepted once an outcome is recorded and before the "
+            f"case closes (case is {state.current_state.value})",
+        )
+    supplied = corrections or {}
+    raw_cause = (supplied.get("confirmed_cause") or "").strip()
+    if not raw_cause:
+        raw_cause = (state.outcome.root_cause_confirmed or "").strip()
+    if not raw_cause and state.diagnosis:
+        raw_cause = state.diagnosis.top_cause_id or ""
+    confirmed = canonicalize_cause_id(raw_cause) if raw_cause else None
+    if not confirmed or confirmed not in KNOWN_CAUSE_IDS:
+        raise HTTPException(400, f"unknown confirmed_cause {raw_cause!r}")
+    case_asset_type = _asset_type(state.asset_id)
+    if cause_asset_type(confirmed) != case_asset_type:
+        raise HTTPException(
+            400,
+            f"cause {confirmed!r} belongs to the {cause_asset_type(confirmed)} pill, "
+            f"not this {case_asset_type} case",
+        )
+    # Only the cause and notes come from the client. Asset type and fault
+    # signature are derived from the case itself, the outcome from the
+    # recorded outcome, and the proposer is always the authenticated caller.
+    clean = {
+        "confirmed_cause": confirmed,
+        "notes": str(supplied.get("notes") or "")[:2000],
+        "outcome": state.outcome.result.value,
+        "submitted_by": user,
+    }
+    fb_id = _fb(case_id, clean, state=state)
+    state.queue_feedback(fb_id, actor=user)
     from .learning import STORE as _LSTORE
     stats = _LSTORE.stats()
     return {"case_id": case_id, "feedback_id": fb_id,
@@ -731,6 +827,8 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
             "kb_version_label": _LSTORE.get_kb_version_label(),
             "knowledge_count": knowledge_count,
             "proposals_submitted": len(relevant),
+            "proposals_decided": len(decided),
+            "proposals_pending": sum(1 for p in relevant if p.get("status") == "pending"),
             "proposals_approved": len(approved),
             "approval_rate": round(len(approved) / len(decided), 3) if decided else None,
         })
@@ -935,53 +1033,152 @@ def list_kb_versions(user: str = Depends(resolve_user)) -> dict:
     screen instead of making someone guess the mapping.
     """
     _need(user, "view_case")
-    from .learning import STORE as _LSTORE, kb_version_label
-    current = _LSTORE.get_kb_version()
+    from .learning import STORE as _LSTORE
     return {
-        "current_version": current,
+        "current_version": _LSTORE.get_kb_version(),
         "current_label": _LSTORE.get_kb_version_label(),
         "versions": [
-            {"version": v, "label": kb_version_label(v)} for v in range(current + 1)
+            {"version": v["version"], "label": v["label"], "status": v["status"],
+             "proposal_id": v["proposal_id"], "created_by": v["created_by"]}
+            for v in _LSTORE.list_versions()
         ],
     }
 
 
 @app.post("/kb/rollback/{target_version}")
-def rollback_kb(target_version: int, user: str = Depends(resolve_user)) -> dict:
-    """Roll back the KB to a prior version, removing cases added after it (F2).
+def rollback_kb(target_version: int, reason: str = "", user: str = Depends(resolve_user)) -> dict:
+    """Roll the KB back to an earlier live version (admin only, reason required).
 
-    Requires ``rollback_knowledge_version`` capability. Seed cases
-    (version 0) are never removed.
+    Removes knowledge added after it and records the rollback, its actor
+    and reason in the keyed governance ledger.
     """
     _need(user, "rollback_knowledge_version")
     from .learning import STORE as _LSTORE
+    if not reason.strip():
+        raise HTTPException(400, "a rollback needs a reason")
     try:
-        target_version = int(target_version)
-    except (TypeError, ValueError):
-        raise HTTPException(400, "target_version must be an integer")
-    try:
-        result = _LSTORE.rollback(target_version)
+        return _LSTORE.rollback(target_version, actor=user, reason=reason)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
-    return result
+
+
+@app.get("/kb/ledger")
+def get_kb_ledger(user: str = Depends(resolve_user)) -> dict:
+    """The keyed, hash-chained governance ledger: every proposal submitted,
+    approved or rejected and every rollback, with actor and reason."""
+    _need(user, "read_audit_trail")
+    from .learning import STORE as _LSTORE, kb_version_label
+    entries = [{**e, "label_before": kb_version_label(e["version_before"]),
+                "label_after": kb_version_label(e["version_after"])} for e in _LSTORE.ledger]
+    return {"entries": entries, "chain_valid": _LSTORE.verify_ledger()}
+
+
+SEED_ACTOR = "demo-seed"
+
+
+def seed_demo_cases() -> list[str]:
+    """Create the three demo scenarios: one CLOSED, one ESCALATED, one
+    AWAITING_APPROVAL. Every step is attributed to ``demo-seed``, never to
+    a real user, so the audit trail does not claim a manager approved it.
+    """
+    from .tools import create_work_order_for_state, submit_feedback
+
+    closed = _new_case("CRAH-DC1-01", "SA-TEMP-01", "temperature_measurement_missing",
+                       ReadingStatus.ABSENT, actor=SEED_ACTOR)
+    _advance(closed)
+    closed.record_human_decision(HumanDecisionRecord(
+        decision=HumanDecision.APPROVE, decided_by=SEED_ACTOR,
+        rationale="seeded demo scenario (not a real approval)",
+    ), actor=SEED_ACTOR)
+    create_work_order_for_state(closed, closed.recommendation.actions[0])
+    closed.record_outcome(Outcome(
+        result=OutcomeResult.RESOLVED, root_cause_confirmed="sensor_hardware_failure",
+        verified_by=SEED_ACTOR, notes="seeded: sensor replaced, temperature restored",
+    ))
+    fb_id = submit_feedback(closed.case_id, {
+        "confirmed_cause": "sensor_hardware_failure", "outcome": "resolved",
+        "submitted_by": SEED_ACTOR,
+    }, state=closed)
+    closed.queue_feedback(fb_id, actor=SEED_ACTOR)
+
+    escalated = _new_case("CRAH-DC1-02", "SA-TEMP-02", "temperature_measurement_missing",
+                          ReadingStatus.ABSENT, actor=SEED_ACTOR)
+    _advance(escalated)
+
+    awaiting = _new_case("CHILLER-DC1-01", "CH-COMP-PRESSURE", "chiller_compressor_trip",
+                         ReadingStatus.ABSENT, actor=SEED_ACTOR)
+    _advance(awaiting)
+    return [closed.case_id, escalated.case_id, awaiting.case_id]
+
+
+@app.post("/demo/seed")
+def post_demo_seed(user: str = Depends(resolve_user)) -> dict:
+    """Admin only: add the three demo scenarios, attributed to demo-seed."""
+    from .rbac import Role
+
+    if _user(user).role != Role.ADMIN:
+        raise HTTPException(403, "seeding demo cases is limited to the admin role")
+    return {"seeded": seed_demo_cases(), "actor": SEED_ACTOR}
+
+
+@app.get("/audit/status")
+def get_audit_status(user: str = Depends(resolve_user)) -> dict:
+    """Integrity summary for the dashboard banner: any case chain or the
+    governance ledger failing verification. Visible to every role."""
+    _need(user, "view_case")
+    from .learning import STORE as _LSTORE
+    broken = [cid for cid in STORE.list()
+              if (st := STORE.get(cid)) is not None and not st.verify_audit_chain()]
+    return {"broken_cases": broken, "ledger_valid": _LSTORE.verify_ledger(),
+            "ok": not broken and _LSTORE.verify_ledger()}
 
 
 @app.post("/cases/{case_id}/escalation/close")
-def close_escalation(case_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
-    """Close an escalated case (ESCALATED -> CLOSED) by an expert/manager.
+def close_escalation(
+    case_id: str, reason: str, user: str = Depends(resolve_user),
+    confirmed_cause: str | None = None,
+) -> dict:
+    """Close an escalated case (ESCALATED -> CLOSED) with the resolution.
 
-    Resolves the only state with no prior HTTP exit path: until now an
-    escalated case could never be closed via the API. ``reason`` is REQUIRED
-    (spec §5 accountability — the audit entry must record why the escalation
-    was closed). Requires ``approve_reject_modify`` capability.
+    ``reason`` (the resolution) is required. If ``confirmed_cause`` is
+    given, the resolution is also queued as a knowledge proposal for a
+    knowledge steward, so what the expert worked out is not lost.
     """
     _need(user, "approve_reject_modify")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
+    if not reason.strip():
+        raise HTTPException(400, "closing an escalation needs the resolution")
+    confirmed = None
+    if confirmed_cause:
+        from .cause_registry import canonicalize_cause_id, cause_asset_type
+        from .decision_tree import KNOWN_CAUSE_IDS
+
+        confirmed = canonicalize_cause_id(confirmed_cause.strip())
+        if confirmed not in KNOWN_CAUSE_IDS:
+            raise HTTPException(400, f"unknown confirmed_cause {confirmed_cause!r}")
+        if cause_asset_type(confirmed) != _asset_type(state.asset_id):
+            raise HTTPException(400, f"cause {confirmed!r} does not belong to this asset type")
     try:
-        state.close_escalation(actor=user, reason=reason)
+        state.close_escalation(actor=user, reason=f"escalation resolved by {user}: {reason.strip()}")
     except ValueError as exc:
         raise HTTPException(409, str(exc))
-    return {"case_id": case_id, "current_state": state.current_state.value}
+    proposal_id = None
+    if confirmed:
+        from .learning import STORE as _LSTORE
+        from .tools import build_fault_signature
+
+        diag = state.diagnosis
+        proposal = _LSTORE.record_escalation_resolution(
+            case_id=case_id, asset_id=state.asset_id, asset_type=_asset_type(state.asset_id),
+            confirmed_cause=confirmed,
+            proposed_cause=diag.top_cause_id if diag and diag.top_cause_id != "unresolvable" else None,
+            fault_signature=build_fault_signature(
+                state.observation.type, confirmed, diag.kb_refs if diag else []),
+            resolution=reason.strip(), confidence=state.confidence, submitted_by=user,
+        )
+        proposal_id = proposal["proposal_id"]
+    return {"case_id": case_id, "current_state": state.current_state.value,
+            "knowledge_proposal_id": proposal_id}
 
 
 @app.post("/cases/{case_id}/escalation/evidence")
@@ -995,7 +1192,7 @@ def request_more_evidence(case_id: str, reason: str, user: str = Depends(resolve
     capability (expert/manager role).
     """
     _need(user, "approve_reject_modify")
-    state = _get_case(case_id)
+    state = _get_case_for_write(case_id)
     try:
         state.request_more_evidence(actor=user, reason=reason)
     except ValueError as exc:

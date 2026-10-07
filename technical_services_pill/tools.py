@@ -459,8 +459,18 @@ def submit_feedback(case_id: str, corrections: dict,
                 f"feedback refused: case {case_id} has no validated outcome; "
                 "record_outcome must be called before submit_feedback"
             )
-    confirmed_cause = corrections.get("confirmed_cause", proposed_cause or "unknown")
-    asset_type = corrections.get("asset_type", asset_type)
+    from .cause_registry import canonicalize_cause_id
+    from .decision_tree import KNOWN_CAUSE_IDS
+
+    confirmed_cause = canonicalize_cause_id(
+        corrections.get("confirmed_cause") or proposed_cause or ""
+    )
+    if confirmed_cause not in KNOWN_CAUSE_IDS:
+        raise ValueError(f"feedback refused: unknown confirmed_cause {confirmed_cause!r}")
+    # A registered asset's type always comes from the registry; a caller
+    # cannot file feedback under another pill.
+    if asset_id not in ASSETS:
+        asset_type = corrections.get("asset_type", asset_type)
     # The caller may override the signature explicitly; otherwise use the
     # one actually diagnosed, so the validated case this produces matches
     # the next identical fault's query signature.

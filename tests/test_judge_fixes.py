@@ -51,9 +51,11 @@ def test_rollback_endpoint_and_versions_endpoint_agree_after_an_approval(client:
     client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
 
     after = client.get("/kb/versions", params={"user": "tech1"}).json()
-    assert after["current_version"] == before["current_version"] + 1
+    assert after["current_version"] > before["current_version"]
+    used_labels = {v["label"] for v in before["versions"]}
+    assert after["current_label"] not in used_labels, "a version label must never be reused"
     # Rolling back to the pre-approval version via the exact int /kb/versions offered.
-    resp = client.post(f"/kb/rollback/{before['current_version']}", params={"user": "admin1"})
+    resp = client.post(f"/kb/rollback/{before['current_version']}", params={"user": "admin1", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
     restored = client.get("/kb/versions", params={"user": "tech1"}).json()
     assert restored["current_label"] == before["current_label"]

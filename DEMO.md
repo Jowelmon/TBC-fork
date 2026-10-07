@@ -1,9 +1,22 @@
 # 6-minute demo script
 
 Before you start: `make reset && make serve`, open http://localhost:8000/ui.
-The app opens as `mgr1 (Asset Ops Manager)`; switch roles with the "Acting
-as" dropdown in the top bar — that's a real login (a signed session
-cookie), not a URL trick, which is itself part of the story below.
+The server seeds three demo cases (recorded as `demo-seed`). The app opens
+as `mgr1 (Asset Ops Manager)` and asks for that user's PIN; switch roles
+with the "Acting as" dropdown in the top bar. Each switch is a real login
+(PIN checked, signed session cookie), not a URL trick, which is itself part
+of the story below. A PIN is asked for once per role per browser tab.
+
+**Demo PINs** (replace with `TBC_LOGIN_PINS` on any real deployment):
+
+| User | Role | PIN |
+|---|---|---|
+| tech1 | Technician | 1111 |
+| mgr1 | Asset Ops Manager | 2222 |
+| steward1 | Knowledge Steward | 3333 |
+| steward2 | Knowledge Steward | 4444 |
+| auditor1 | Auditor | 5555 |
+| admin1 | Admin | 9999 |
 
 Every beat below is something you click, not something you claim.
 
@@ -55,9 +68,9 @@ version bump in the toast and in the nav footer.
 **Say:** "That knowledge is now live — the next matching diagnosis finds
 it automatically."
 
-**Do:** Switch role to **tech1**. Seed or open a case whose diagnosed
-cause matches what was just approved (the CRAH sensor-hardware-failure
-case from Seed Demo Cases works). Open **Diagnosis**, scroll to
+**Do:** Switch role to **tech1**. Click **New Case**, keep CRAH-DC1-01,
+**Create Case**, then **Advance** (sensor hardware failure, the cause just
+approved). Open **Diagnosis**, scroll to
 **Expert Knowledge Reused** — point out it names the expert, quotes
 them verbatim, and that the deterministic tree stays authoritative
 either way.
@@ -77,8 +90,12 @@ further down and note the routing didn't change.
 
 **Say:** "A human — not the AI, not the decision tree — makes the call."
 
-**Do:** Switch role to **mgr1**. Go to **AOM Decision**. Walk through
-the recommendation, click **Approve** with a rationale.
+**Do:** Switch role to **mgr1**. Go to **AOM Decision**. Point at what
+the AOM sees before deciding: the diagnosed cause, confidence, the
+readings behind it, the AI's advisory view, and the approved expert's
+checks and cautions. Click **Approve**: a rationale is required. On the
+chiller case the safety-hazard banner also needs an explicit
+acknowledgement before approval goes through.
 
 ## 9. Outcome and feedback (30s)
 
@@ -86,32 +103,42 @@ the recommendation, click **Approve** with a rationale.
 governance."
 
 **Do:** Go to **Outcome**. Raise the work order, record the outcome as
-resolved, submit feedback. Note this creates another pending proposal —
-same governance loop as step 4.
+resolved (the verifier is your signed-in identity, not a text box), submit
+feedback. Note this creates another pending proposal — same governance
+loop as step 4. Once the case closes, the feedback form disappears: feedback
+is accepted exactly once.
+
+**Optional (escalations teach too):** open the ESCALATED CRAH-DC1-02 case
+on **AOM Decision**, enter a resolution (e.g. "BMS vendor replaced
+CTL-02"), pick the confirmed cause, and close it. The resolution lands in
+the stewards' queue as an *Escalation resolution* proposal.
 
 ## 10. Rollback (30s)
 
 **Say:** "If approved knowledge turns out wrong, it's reversible — not
 a one-way door."
 
-**Do:** On **Governance**, note the current KB version, then (as
-`admin1`) call `POST /kb/rollback/<version>` via the Pill Registry or
-API docs at `/docs`, or just narrate: "every version is addressable;
-rolling back removes exactly what was added after it, confidence
-included — see `tests/test_confidence_uplift.py`."
+**Do:** Switch to **admin1**. On **Governance**, the **Rollback** panel
+shows every version: current, live, and rolled back. Pick an earlier
+version, type a reason, click **Roll back…** and confirm. Point at the new
+**Knowledge Governance Ledger** row (actor, reason, version from → to), and
+note that the next approval gets a brand-new label: labels are never
+reused.
 
 ## 11. Audit (30s)
 
-**Say:** "Every step is in a tamper-evident hash chain."
+**Say:** "Every step, and every knowledge decision, is in a keyed,
+tamper-evident hash chain."
 
-**Do:** Scroll to **SHA-256 Audit Trace** on Governance. Click **Copy**
-on a hash, point at **Audit Chain Valid**. Mention that changing any
-past entry breaks every hash after it (`tests/test_no_contradictions.py`
-and `EVAL-10` in `make eval` check this directly).
+**Do:** On Governance, point at **Ledger verified** and the **Case Audit
+Trace**. Changing any past entry breaks every hash after it, and
+re-hashing the whole chain does not help without the audit key
+(`tests/test_judge_round3_fixes.py`). A case whose chain fails is frozen
+and a red banner appears on the Dashboard for everyone.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 115
+**If asked "is any of this real?"** — `make test` (pytest, currently 142
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

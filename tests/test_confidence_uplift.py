@@ -84,9 +84,9 @@ def test_rollback_restores_confidence_exactly(client: TestClient):
 
     _close_with_validated_feedback(client, baseline)
     version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
-    assert version_after == version_before + 1, "approval must bump the KB version by exactly 1"
+    assert version_after > version_before, "approval must move the KB to a new version"
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1"})
+    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
 
     restored = _create_and_advance(client)

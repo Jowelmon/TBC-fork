@@ -1,6 +1,6 @@
 """Session identity: a signed cookie, not a spoofable ``?user=`` parameter.
 
-``POST /login`` sets an HMAC-signed cookie naming one of the fixed demo
+``POST /login`` checks the user's PIN and sets an HMAC-signed cookie naming one of the fixed demo
 users (``rbac.DEMO_USERS``). Every endpoint resolves its caller through
 ``resolve_user``, a FastAPI dependency: the cookie always wins when present
 and valid. ``?user=`` only works as a fallback when ``TBC_DEMO_INSECURE=1``
@@ -45,6 +45,28 @@ def _verify(token: str | None) -> str | None:
     return user_id if user_id in DEMO_USERS else None
 
 
+# Per-user login PINs. Demo defaults are published in DEMO.md so judges can
+# switch roles; set TBC_LOGIN_PINS="tech1:1234,mgr1:5678,..." to replace them.
+# A real deployment would put SSO here instead.
+_DEFAULT_PINS = {
+    "tech1": "1111", "mgr1": "2222", "steward1": "3333",
+    "steward2": "4444", "auditor1": "5555", "admin1": "9999",
+}
+
+
+def _pins() -> dict[str, str]:
+    raw = os.environ.get("TBC_LOGIN_PINS", "").strip()
+    if not raw:
+        return _DEFAULT_PINS
+    pairs = (item.split(":", 1) for item in raw.split(",") if ":" in item)
+    return {u.strip(): p.strip() for u, p in pairs}
+
+
+def check_pin(user_id: str, pin: str | None) -> bool:
+    expected = _pins().get(user_id)
+    return bool(expected and pin) and hmac.compare_digest(expected, pin)
+
+
 def demo_insecure() -> bool:
     """Whether ``?user=`` is honoured as a fallback. Off by default."""
     return os.environ.get("TBC_DEMO_INSECURE", "0").strip() == "1"
@@ -87,6 +109,7 @@ def resolve_user(request: Request, user: str | None = None) -> str:
 
 __all__ = [
     "SESSION_COOKIE",
+    "check_pin",
     "demo_insecure",
     "issue_cookie",
     "clear_cookie",

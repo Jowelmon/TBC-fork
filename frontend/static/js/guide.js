@@ -42,7 +42,7 @@ const STEPS = [
     title: 'The Asset Operations Manager decides',
     role: 'mgr1', screen: 'decision', asset: 'CHILLER-DC1-01',
     say: 'No work order exists until the AOM approves, modifies or rejects, with a rationale. A technician cannot do this step.',
-    notice: 'Approve, modify and reject all require a rationale. Every transition is written to a SHA-256 hash-chained audit trail.',
+    notice: 'Approve, modify and reject all require a rationale. Every transition is written to a keyed (HMAC-SHA256) hash-chained audit trail.',
   },
   {
     title: 'From one asset to the portfolio',
@@ -97,7 +97,7 @@ export function initGuide({ api, navigate, setRole, showToast }) {
     let caseId = null;
     if (s.asset) {
       try { caseId = await findCaseId(api, s.asset); } catch (_) { /* fall through */ }
-      if (!caseId) { showToast(`No ${s.asset} case yet. Seed demo cases on the Dashboard.`, 'error'); navigate('dashboard'); return; }
+      if (!caseId) { showToast(`No ${s.asset} case yet. Switch to admin1 and click Seed Demo Cases on the Dashboard.`, 'error'); navigate('dashboard'); return; }
     }
     navigate(s.screen, caseId);
   }

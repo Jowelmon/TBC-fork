@@ -98,7 +98,7 @@ def test_f2_approve_proposal_ingests_into_kb(client: TestClient):
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"
     version_after = resp.json()["kb_version"]
-    assert version_after == version_before + 1, "KB version must increment on approve"
+    assert version_after > version_before, "KB version must move forward on approve"
 
     # Verify it's no longer pending
     resp = client.get("/kb/queue", params={"user": "steward1"})
@@ -141,6 +141,7 @@ def test_f2_rollback_removes_approved_cases(client: TestClient):
     resp = client.get("/kb/queue", params={"user": "steward1"})
     pid1 = next(p["proposal_id"] for p in resp.json()["queue"] if p["feedback_id"] == fb1)
     client.post(f"/kb/proposals/{pid1}/approve", params={"user": "steward2"})
+    first = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
 
     fb2 = _create_closed_case(client)
     resp = client.get("/kb/queue", params={"user": "steward1"})
@@ -148,18 +149,16 @@ def test_f2_rollback_removes_approved_cases(client: TestClient):
     client.post(f"/kb/proposals/{pid2}/approve", params={"user": "steward2"})
 
     version = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
-    assert version >= 2
+    assert version > first
 
-    # Rollback to version 1 (keep only first approved proposal)
-    # Requires rollback_knowledge_version capability (admin only)
-    resp = client.post("/kb/rollback/1", params={"user": "admin1"})
+    # Roll back to the version right after the first approval (admin only)
+    resp = client.post(f"/kb/rollback/{first}", params={"user": "admin1", "reason": "test rollback"})
     assert resp.status_code == 200
-    assert resp.json()["rolled_back_to"] == 1
+    assert resp.json()["rolled_back_to"] == first
     assert resp.json()["removed_cases"] >= 1
 
-    # Version should be 1 now
     stats = client.get("/kb/stats", params={"user": "tech1"}).json()
-    assert stats["kb_version"] == 1
+    assert stats["kb_version"] == first
 
 
 def test_f2_rbac_kb_queue_requires_steward(client: TestClient):

@@ -61,7 +61,9 @@ def _login(client, user_id: str):
     every TestClient-driven scenario below logs in before acting — the same
     thing the top-bar role switcher does in /ui.
     """
-    resp = client.post("/login", params={"user_id": user_id})
+    from .auth import _pins
+
+    resp = client.post("/login", params={"user_id": user_id, "pin": _pins()[user_id]})
     resp.raise_for_status()
     return client
 

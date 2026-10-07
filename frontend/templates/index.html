@@ -14,7 +14,7 @@
       document.documentElement.setAttribute('data-theme', 'dark');
     }
   </script>
-  <link rel="stylesheet" href="/static/css/app.css?v=11">
+  <link rel="stylesheet" href="/static/css/app.css?v=14">
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to main content</a>
@@ -90,6 +90,21 @@
 
   <aside id="guide-panel" class="guide-panel" hidden aria-label="Demo guide"></aside>
 
+  <!-- PIN sign-in: switching to a role needs that user's PIN -->
+  <div id="pin-backdrop" class="pin-backdrop" hidden>
+    <form id="pin-dialog" class="pin-dialog" role="dialog" aria-modal="true" aria-labelledby="pin-title">
+      <h2 id="pin-title">Sign in</h2>
+      <p id="pin-prompt">Enter the PIN for this user.</p>
+      <label for="pin-input" class="role-label">PIN</label>
+      <input id="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" required>
+      <div class="pin-error" id="pin-error" role="alert"></div>
+      <div class="pin-actions">
+        <button type="button" class="btn btn-secondary" id="pin-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+      </div>
+    </form>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
 
@@ -102,6 +117,6 @@
       {% endfor %}
     ];
   </script>
-  <script type="module" src="/static/js/app.js?v=14"></script>
+  <script type="module" src="/static/js/app.js?v=15"></script>
 </body>
 </html>

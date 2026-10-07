@@ -218,7 +218,7 @@ def eval_09(client):
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
     client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1"})
+    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
     restored = _create_and_advance(client)
     assert restored["confidence"] == confidence_before, (

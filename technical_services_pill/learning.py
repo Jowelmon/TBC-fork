@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from .cause_registry import cause_label
 from .models import FeedbackRecord, ValidatedCase
 
 SEED_KB_MAJOR = 1
@@ -34,9 +35,19 @@ class SelfApprovalError(ValueError):
     """Raised when the approver of a knowledge proposal is its proposer."""
 
 
-def kb_version_label(approved_updates: int) -> str:
-    """Map the internal approval counter to the displayed semantic version."""
-    return f"{SEED_KB_MAJOR}.{SEED_KB_MINOR + approved_updates}.0"
+def kb_version_label(version: int) -> str:
+    """Map a KB version number to its displayed semantic version.
+
+    Version numbers are allocated once and never reused (a rollback does not
+    rewind the counter), so a label always names exactly one KB state.
+    """
+    return f"{SEED_KB_MAJOR}.{SEED_KB_MINOR + version}.0"
+
+
+LEDGER_FIELDS = (
+    "seq", "at", "actor", "action", "proposal_id", "reason",
+    "version_before", "version_after",
+)
 
 
 def _now() -> datetime:
@@ -74,9 +85,51 @@ class LearningStore:
         self._proposals: list[dict[str, Any]] = []
         self._expert_knowledge: list[dict[str, Any]] = []
         self._kb_version: int = 0  # 0 = seeded registry only
+        # Highest version number ever issued. Never decremented, so labels
+        # are never reused after a rollback.
+        self._version_seq: int = 0
+        self._versions: list[dict[str, Any]] = [{
+            "version": 0, "status": "live", "proposal_id": None,
+            "created_by": "seed", "created_at": _now(),
+        }]
+        # Keyed, hash-chained record of every governance action.
+        self.ledger: list[dict[str, Any]] = []
         # Expert heuristics captured from interviews, live once approved.
         self.expert_heuristics: list[dict[str, Any]] = []
         self._seed_from_registry()
+
+    # ------------------------------------------------------------------ #
+    # Governance ledger
+    # ------------------------------------------------------------------ #
+    def _log(self, *, actor: str, action: str, proposal_id: str | None = None,
+             reason: str = "", version_before: int | None = None,
+             version_after: int | None = None) -> dict[str, Any]:
+        from .audit import GENESIS_HASH, compute_hash
+
+        before = self._kb_version if version_before is None else version_before
+        after = self._kb_version if version_after is None else version_after
+        entry: dict[str, Any] = {
+            "seq": len(self.ledger) + 1,
+            "at": _now().isoformat(),
+            "actor": actor,
+            "action": action,
+            "proposal_id": proposal_id,
+            "reason": reason,
+            "version_before": before,
+            "version_after": after,
+            "prev_hash": self.ledger[-1]["hash"] if self.ledger else GENESIS_HASH,
+        }
+        entry["hash"] = compute_hash(entry["prev_hash"], {f: entry[f] for f in LEDGER_FIELDS})
+        self.ledger.append(entry)
+        return entry
+
+    def verify_ledger(self) -> bool:
+        from .audit import verify_chain
+
+        return verify_chain(self.ledger, LEDGER_FIELDS)
+
+    def list_versions(self) -> list[dict[str, Any]]:
+        return [{**v, "label": kb_version_label(v["version"])} for v in self._versions]
 
     # ------------------------------------------------------------------ #
     def _seed_from_registry(self) -> None:
@@ -167,6 +220,49 @@ class LearningStore:
             "kb_version": None,
         }
         self._proposals.append(proposal)
+        self._log(actor=fb.submitted_by, action="proposal_submitted", proposal_id=proposal_id,
+                  reason=f"outcome feedback on {fb.case_id}: {cause_label(fb.confirmed_cause)}")
+        return proposal
+
+    def record_escalation_resolution(
+        self, *, case_id: str, asset_id: str, asset_type: str, confirmed_cause: str,
+        proposed_cause: str | None, fault_signature: str, resolution: str,
+        confidence: float, submitted_by: str,
+    ) -> dict[str, Any]:
+        """Queue how an expert resolved an escalation as a knowledge proposal.
+
+        Escalations are where the pill did not know the answer, so the
+        expert's resolution is exactly the know-how worth keeping. Approval
+        works like outcome feedback: a different steward must approve it.
+        """
+        proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"
+        proposal: dict[str, Any] = {
+            "proposal_id": proposal_id,
+            "kind": "escalation_resolution",
+            "proposal_type": "ESCALATION_RESOLUTION",
+            "feedback_id": f"ESC-{uuid.uuid4().hex[:8].upper()}",
+            "case_id": case_id,
+            "asset_id": asset_id,
+            "asset_type": asset_type,
+            "confirmed_cause": confirmed_cause,
+            "proposed_cause": proposed_cause,
+            "corrected": proposed_cause is not None and proposed_cause != confirmed_cause,
+            "confidence": confidence,
+            "action_taken": resolution,
+            "resolution": resolution,
+            "fault_signature": fault_signature,
+            "outcome": "resolved",
+            "submitted_by": submitted_by,
+            "status": "pending",
+            "created_at": _now(),
+            "decided_by": None,
+            "decided_at": None,
+            "reason": None,
+            "kb_version": None,
+        }
+        self._proposals.append(proposal)
+        self._log(actor=submitted_by, action="proposal_submitted", proposal_id=proposal_id,
+                  reason=f"escalation resolution on {case_id}: {cause_label(confirmed_cause)}")
         return proposal
 
     def record_expert_capture(
@@ -208,6 +304,10 @@ class LearningStore:
             "kb_version": None,
         }
         self._proposals.append(proposal)
+        self._log(actor=submitted_by, action="proposal_submitted",
+                  proposal_id=proposal["proposal_id"],
+                  reason=f"expert interview with {expert_name}: "
+                         f"{len(draft['heuristics'])} heuristic(s)")
         return proposal
 
     def record_expert_knowledge(self, knowledge: dict[str, Any], *, source: str = "expert_interview") -> dict[str, Any]:
@@ -274,8 +374,17 @@ class LearningStore:
         p["status"] = "approved"
         p["decided_by"] = decided_by
         p["decided_at"] = _now()
-        self._kb_version += 1
+        version_before = self._kb_version
+        self._version_seq += 1
+        self._kb_version = self._version_seq
+        self._versions.append({
+            "version": self._kb_version, "status": "live", "proposal_id": proposal_id,
+            "created_by": decided_by, "created_at": p["decided_at"],
+        })
         p["kb_version"] = self._kb_version
+        self._log(actor=decided_by, action="proposal_approved", proposal_id=proposal_id,
+                  reason=f"approved proposal from {p.get('submitted_by')}",
+                  version_before=version_before, version_after=self._kb_version)
         if p.get("kind") == "expert_capture":
             self._ingest_expert_capture(p)
             return p
@@ -392,20 +501,28 @@ class LearningStore:
         p["decided_by"] = decided_by
         p["decided_at"] = _now()
         p["reason"] = reason
+        self._log(actor=decided_by, action="proposal_rejected", proposal_id=proposal_id,
+                  reason=reason)
         return p
 
-    def rollback(self, target_version: int) -> dict[str, Any]:
-        """Remove all validated cases added after ``target_version``.
+    def rollback(self, target_version: int, *, actor: str = "system", reason: str = "") -> dict[str, Any]:
+        """Return the KB to ``target_version``, a version still in the live lineage.
 
-        Seed cases (kb_version=0) are never removed. Resets _kb_version to
-        target_version.
+        Removes every validated case and heuristic added after it and marks
+        the later versions rolled back. Version numbers are not reused: the
+        next approval gets a fresh number, so no label ever names two states.
         """
-        if target_version < 0:
-            raise ValueError("target_version must be >= 0")
-        if target_version > self._kb_version:
+        if not reason.strip():
+            raise ValueError("a rollback needs a reason")
+        live = {v["version"] for v in self._versions if v["status"] == "live"}
+        if target_version not in live:
             raise ValueError(
-                f"target_version {target_version} > current version {self._kb_version}"
+                f"version {target_version} is not in the live lineage "
+                f"(live: {sorted(live)})"
             )
+        if target_version == self._kb_version:
+            raise ValueError(f"version {target_version} is already current")
+        version_before = self._kb_version
         removed: list[ValidatedCase] = [
             vc for vc in self.validated if vc.kb_version > target_version
         ]
@@ -414,13 +531,18 @@ class LearningStore:
         # Mark approved proposals after target_version as rolled back
         rolled_back: list[str] = []
         for p in self._proposals:
-            if p.get("kb_version") and p["kb_version"] > target_version:
+            if p["status"] == "approved" and p["kb_version"] > target_version:
                 p["status"] = "rolled_back"
                 rolled_back.append(p["proposal_id"])
         self.expert_heuristics = [
             h for h in self.expert_heuristics if h["kb_version"] <= target_version
         ]
+        for v in self._versions:
+            if v["status"] == "live" and v["version"] > target_version:
+                v["status"] = "rolled_back"
         self._kb_version = target_version
+        self._log(actor=actor, action="rollback", reason=reason.strip(),
+                  version_before=version_before, version_after=target_version)
         return {
             "rolled_back_to": target_version,
             "removed_cases": len(removed),

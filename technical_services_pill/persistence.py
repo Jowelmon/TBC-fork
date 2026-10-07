@@ -90,8 +90,13 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         store.STORE._cases.clear()
         store.STORE._cases.update(pickle.loads(rows["cases"]))
     if "learning" in rows:
+        restored = pickle.loads(rows["learning"])
+        # Snapshots written before a field existed restore without it; take
+        # that field's fresh default rather than failing on first access.
+        for key, value in learning.LearningStore().__dict__.items():
+            restored.setdefault(key, value)
         learning.STORE.__dict__.clear()
-        learning.STORE.__dict__.update(pickle.loads(rows["learning"]))
+        learning.STORE.__dict__.update(restored)
     if "tool_audit_log" in rows:
         tools.TOOL_AUDIT_LOG[:] = pickle.loads(rows["tool_audit_log"])
 

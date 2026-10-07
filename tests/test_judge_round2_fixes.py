@@ -43,7 +43,8 @@ def test_mock_extractor_still_drafts_the_sample_interviews_four_heuristics():
     result = llm._mock_extract(SAMPLE_INTERVIEW)
     causes = {h["likely_cause"] for h in result["heuristics"]}
     assert causes == {
-        "refrigerant_leak", "condenser_fouling", "comm_bus_failure", "sensor_hardware_failure",
+        "refrigerant_leak", "condenser_fouling", "communication_bus_controller_failure",
+        "sensor_hardware_failure",
     }
 
 

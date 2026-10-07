@@ -8,10 +8,12 @@ const api = {
     return localStorage.getItem('tbc_user') || 'mgr1';
   },
 
-  // Sets the signed session cookie for `userId`. Call this — not a raw
-  // ?user= param — to switch who subsequent requests act as.
-  async login(userId) {
-    const res = await fetch(`/login?user_id=${encodeURIComponent(userId)}`, {
+  // Sets the signed session cookie for `userId` after the server checks
+  // their PIN. Call this — not a raw ?user= param — to switch who
+  // subsequent requests act as.
+  async login(userId, pin) {
+    const q = new URLSearchParams({ user_id: userId, pin: pin || '' });
+    const res = await fetch(`/login?${q}`, {
       method: 'POST', credentials: 'same-origin',
     });
     const body = await res.json().catch(() => ({}));
