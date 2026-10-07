@@ -471,8 +471,11 @@ class LearningStore:
                 return p
         return None
 
-    def approve_proposal(self, proposal_id: str, *, decided_by: str) -> dict[str, Any]:
-        """Approve a pending proposal and ingest it into the live KB."""
+    def approve_proposal(self, proposal_id: str, *, decided_by: str, rationale: str) -> dict[str, Any]:
+        """Approve a pending proposal and ingest it into the live KB. The
+        reviewer's rationale is required and goes into the ledger."""
+        if not rationale.strip():
+            raise ValueError("approving knowledge needs a rationale")
         p = self._find_proposal(proposal_id)
         if p is None:
             raise ValueError(f"proposal {proposal_id} not found")
@@ -486,6 +489,7 @@ class LearningStore:
         p["status"] = "approved"
         p["decided_by"] = decided_by
         p["decided_at"] = _now()
+        p["reason"] = rationale.strip()
         version_before = self._kb_version
         self._version_seq += 1
         self._kb_version = self._version_seq
@@ -517,7 +521,7 @@ class LearningStore:
             self._ingest(vc)
             p["validated_case_id"] = vc.id
         self._log(actor=decided_by, action="proposal_approved", proposal_id=proposal_id,
-                  reason=f"approved proposal from {p.get('submitted_by')}",
+                  reason=f"approved proposal from {p.get('submitted_by')}: {rationale.strip()}",
                   version_before=version_before, version_after=self._kb_version)
         return p
 
@@ -572,15 +576,18 @@ class LearningStore:
                 ))
         p["expert_heuristic_ids"] = added
 
-    def approve_by_feedback_id(self, feedback_id: str, *, decided_by: str) -> dict[str, Any]:
+    def approve_by_feedback_id(self, feedback_id: str, *, decided_by: str,
+                               rationale: str = "outcome confirmed by the work order") -> dict[str, Any]:
         """Convenience: approve the proposal created from a given feedback_id."""
         p = self._find_by_feedback_id(feedback_id)
         if p is None:
             raise ValueError(f"no proposal for feedback_id {feedback_id}")
-        return self.approve_proposal(p["proposal_id"], decided_by=decided_by)
+        return self.approve_proposal(p["proposal_id"], decided_by=decided_by, rationale=rationale)
 
     def reject_proposal(self, proposal_id: str, *, decided_by: str, reason: str) -> dict[str, Any]:
-        """Reject a pending proposal (not ingested into KB)."""
+        """Reject a pending proposal (not ingested into KB). A reason is required."""
+        if not reason.strip():
+            raise ValueError("rejecting knowledge needs a reason")
         p = self._find_proposal(proposal_id)
         if p is None:
             raise ValueError(f"proposal {proposal_id} not found")

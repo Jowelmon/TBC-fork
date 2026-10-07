@@ -754,6 +754,11 @@ def post_approval(
             decision=dec, decided_by=user, rationale=rationale,
             modified_actions=modified_actions,
             original_actions=original_actions,
+            expert_knowledge=[
+                {k: m[k] for k in ("knowledge_id", "expert_name", "expert_role",
+                                   "kb_version_label", "checks", "do_not", "escalate_when",
+                                   "evidence_quote")}
+                for m in _expert_matches(state)["matches"]],
         )
         state.record_human_decision(hd, actor=user)
     except PydanticValidationError as exc:
@@ -909,7 +914,11 @@ class CaptureInterviewRequest(_BaseModel):
     # Optional: the heuristics the capturer kept after reviewing a draft from
     # /capture/draft. They are re-grounded against the transcript server-side.
     heuristics: list[dict] | None = None
-    provider: str | None = None
+    # The draft this review came from (/capture/draft). Which model drafted
+    # it is looked up server-side; a client cannot claim a provider.
+    draft_id: str | None = None
+    # The expert agreed to their words being recorded and reused.
+    expert_consent: bool = False
 
 
 class CaptureDraftRequest(_BaseModel):
@@ -1045,12 +1054,20 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
     from .learning import STORE as _LSTORE
     from .tools import _log
 
+    if not body.expert_consent:
+        raise HTTPException(400, "record the expert's consent to reuse their words before submitting")
     try:
         if body.heuristics is not None:
+            source = _DRAFTS.get(body.draft_id or "")
             draft = capture.reviewed_draft(
                 body.transcript, body.asset_type, body.heuristics,
-                body.provider or llm.provider_name(),
+                source["provider"] if source else "manual",
             )
+            # Anything the reviewer added that the model did not draft is
+            # marked as hand-entered, item by item.
+            drafted = {h["evidence_quote"] for h in source["heuristics"]} if source else set()
+            for h in draft["heuristics"]:
+                h["source"] = "model" if h["evidence_quote"] in drafted else "manual"
         else:
             draft = capture.draft_from_transcript(body.transcript, body.asset_type)
     except capture.CaptureError as exc:
@@ -1062,6 +1079,7 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
         draft=draft, submitted_by=user, expert_name=body.expert_name,
         expert_role=body.expert_role, asset_type=body.asset_type,
     )
+    proposal["expert_consent"] = True
     _log("capture_expert_knowledge",
          {"expert": body.expert_name, "asset_type": body.asset_type,
           "provider": draft["provider"], "submitted_by": user},
@@ -1086,7 +1104,18 @@ def post_capture_draft(body: CaptureDraftRequest, user: str = Depends(resolve_us
         raise HTTPException(422, str(exc)) from exc
     except llm.LLMError as exc:
         raise HTTPException(502, f"knowledge extraction failed: {exc}") from exc
-    return {"status": "draft", **draft}
+    import uuid
+
+    draft_id = uuid.uuid4().hex
+    _DRAFTS[draft_id] = draft
+    while len(_DRAFTS) > 200:  # drafts are short-lived; keep the newest
+        _DRAFTS.pop(next(iter(_DRAFTS)))
+    return {"status": "draft", "draft_id": draft_id, **draft}
+
+
+# Drafts this server produced, so a submitted review's provenance is the
+# server's record of which model drafted it, not the browser's claim.
+_DRAFTS: dict[str, dict] = {}
 
 
 @app.get("/kb/expert-heuristics")
@@ -1102,6 +1131,10 @@ def get_case_expert_knowledge(case_id: str, user: str = Depends(resolve_user)) -
     """Return approved expert heuristics matching this diagnosis and asset."""
     _need(user, "view_case")
     state = _get_case(case_id)
+    return _expert_matches(state)
+
+
+def _expert_matches(state: AgentState) -> dict:
     from .cause_registry import canonicalize_cause_id
     from .learning import STORE as _LSTORE, corroborating_terms, kb_version_label
 
@@ -1158,12 +1191,13 @@ def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
     """
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
-    pending = _LSTORE.list_pending_proposals()
+    pending = [{**p, "owner_steward": PILL_OWNERS.get(p.get("asset_type") or "")}
+               for p in _LSTORE.list_pending_proposals()]
     return {"queue": pending, "pending_count": len(pending)}
 
 
 @app.post("/kb/proposals/{proposal_id}/approve")
-def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dict:
+def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(resolve_user)) -> dict:
     """Approve a pending knowledge proposal and ingest it into the live KB (F2).
 
     Requires ``approve_knowledge_version`` capability. On approval the KB
@@ -1184,11 +1218,11 @@ def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dic
                 403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they (or an admin) "
                      "can approve it")
     try:
-        proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user)
+        proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user, rationale=rationale)
     except SelfApprovalError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400 if "needs a" in str(exc) else 404, str(exc)) from exc
     return {"proposal_id": proposal_id, "status": "approved",
             "decided_by": user, "kb_version": _LSTORE.get_kb_version(),
             "validated_case_id": proposal.get("validated_case_id")}
@@ -1206,7 +1240,7 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
     try:
         _LSTORE.reject_proposal(proposal_id, decided_by=user, reason=reason)
     except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400 if "needs a" in str(exc) else 404, str(exc)) from exc
     return {"proposal_id": proposal_id, "status": "rejected",
             "decided_by": user, "reason": reason}
 

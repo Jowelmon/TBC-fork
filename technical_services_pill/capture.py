@@ -46,6 +46,38 @@ def _clean_list(value: Any) -> list[str]:
             if str(v).strip() and "[REDACTED" not in str(v)][:8]
 
 
+# An instruction to defeat a safety device. Allowed only as a prohibition
+# ("Never bypass the interlock"), never as something to do.
+_UNSAFE = re.compile(
+    r"\b(bypass|override|defeat|disable|jumper|short\s+out|ignore|silence|reset)\b"
+    r"[^.]{0,40}\b(interlock|safety|trip|alarm|pressure\s+switch|protection|cut-?out|relief|limit)",
+    re.IGNORECASE,
+)
+_PROHIBITION = re.compile(r"^\s*(never|don'?t|do\s+not)\b", re.IGNORECASE)
+
+
+def _paragraph_of(sanitized: str, quote: str) -> str:
+    """The expert answer (blank-line separated paragraph) the quote is from."""
+    q = _norm(quote)
+    return next((p for p in re.split(r"\n\s*\n", sanitized) if q in _norm(p)), sanitized)
+
+
+def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
+                  warnings: list[str]) -> list[str]:
+    """Keep a check / never / escalate-when line only if the expert said it,
+    word for word, in the same answer as the quote, and it does not tell
+    anyone to defeat a safety device."""
+    kept = []
+    for line in lines:
+        if _norm(line) not in _norm(answer):
+            warnings.append(f"Item {idx}: dropped a {field} line the expert did not say in this answer.")
+        elif field != "never" and _UNSAFE.search(line) and not _PROHIBITION.match(line):
+            warnings.append(f"Item {idx}: dropped a {field} line that would defeat a safety device.")
+        else:
+            kept.append(line)
+    return kept
+
+
 _GENERIC = {"failure", "fault", "hardware", "drop", "risk", "or", "of", "after", "gateway"}
 
 
@@ -109,14 +141,21 @@ def _validate_items(
                 f"Item {idx}: the expert's words may rule out \"{cause_label(cause)}\"; "
                 "check the cause before sending."
             )
+        answer = _paragraph_of(sanitized, quote)
+        symptom = str(item.get("symptom_pattern", "")).strip()[:300]
+        if not symptom or _norm(symptom) not in _norm(answer) or _UNSAFE.search(symptom):
+            symptom = quote  # the expert's own words, never a paraphrase
+        names = {"checks": "check", "do_not": "never", "escalate_when": "escalate-when"}
+        lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings)
+                 for f in _LIST_FIELDS}
         kept.append({
             "check_cause": check_cause,
-            "symptom_pattern": str(item.get("symptom_pattern", "")).strip()[:300],
+            "symptom_pattern": symptom,
             "likely_cause": cause,
             "cause_label": cause_label(cause),
             "asset_type": owner,
             "new_cause": is_new,
-            **{f: _clean_list(item.get(f)) for f in _LIST_FIELDS},
+            **lists,
             "evidence_quote": quote,
         })
     return kept, warnings

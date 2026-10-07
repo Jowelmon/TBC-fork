@@ -52,7 +52,7 @@ def _close_with_validated_feedback(client: TestClient, snap: dict) -> None:
 
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     proposal_id = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb_id)
-    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2"})
+    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 200, resp.text
 
 

@@ -48,7 +48,7 @@ def test_rollback_endpoint_and_versions_endpoint_agree_after_an_approval(client:
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
     after = client.get("/kb/versions", params={"user": "tech1"}).json()
     assert after["current_version"] > before["current_version"]

@@ -29,8 +29,9 @@ def _case(client, asset, sensor, fault, reading="absent"):
 def _approve_sample(client) -> str:
     sample = client.get("/capture/sample", params={"user": "steward1"}).json()
     pid = client.post("/capture/interview", params={"user": "steward1"}, json={
-        k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")}).json()["proposal_id"]
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"}).status_code == 200
+        **{k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")},
+        "expert_consent": True}).json()["proposal_id"]
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"}).status_code == 200
     return pid
 
 

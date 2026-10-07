@@ -71,7 +71,7 @@ work order → outcome → feedback → **validated case written back to KB**
 | `learning.py` | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back, proposal workflow. |
 | `evidence_flags.py` | Which evidence readings are abnormal, using the decision trees' own thresholds; drives the red highlights on screen. |
 | `audit.py` | `canonical_json`, keyed HMAC-SHA256 `compute_hash`, `verify_chain`, `GENESIS_HASH`. |
-| `mock_registry.py` | Demo data: 7 assets across 4 pills (2 CRAH, 2 chiller, 1 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
+| `mock_registry.py` | Demo data: 8 assets across 4 pills (2 CRAH, 2 chiller, 2 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
 | `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit. |
 | `app.py` | FastAPI app: RBAC-enforced routes, identity, persistence lifecycle, the agent-loop driver, and `/pills`. |
 | `demo.py` | End-to-end lifecycle, multi-asset routing, and AI HARVEST capture-to-reuse demo. |
@@ -137,9 +137,10 @@ details.
 The FastAPI app restores state at startup and snapshots successful mutations
 to `data/tbc.sqlite` (cases, proposals, KB versions, tool audit log); audit
 chains are re-verified on load. This applies to both the API and UI entry
-points. `make reset` removes this snapshot database; the separate per-case
-SQLite store remains intact. Set `TBC_PERSIST=0` to disable these app-level
-snapshots.
+points. `make reset` stops a running server (so its shutdown save cannot
+recreate the data) and then deletes both this snapshot database and the
+per-case store `technical_services_pill.sqlite3`. Set `TBC_PERSIST=0` to
+disable these app-level snapshots.
 
 ### Makefile Targets
 
@@ -391,7 +392,16 @@ write-back** loop (spec §7, enhanced in F2):
 8. Each pill's owning steward approves its knowledge (if the owner proposed
    it, the other steward stands in); the approver, not the proposer, is
    recorded as the validator.
-9. An approved expert interview is guidance, not an observed outcome: it
+9. What a steward approves is exactly what reaches the AOM. Every check,
+   "never" and "escalate when" line must be the expert's own words from the
+   same answer as the quote, and lines that would defeat a safety device
+   are dropped (a "never bypass…" prohibition is kept). The queue shows each
+   heuristic in full; approving needs a rationale and rejecting a reason,
+   both recorded in the ledger. Which model drafted the knowledge is the
+   server's record of its own draft, never the browser's claim, and the
+   expert's consent is recorded. Each AOM decision keeps the expert
+   knowledge it was made with, so a later rollback doesn't rewrite history.
+10. An approved expert interview is guidance, not an observed outcome: it
    never moves a cause's confirmation rate. It raises confidence only on a
    case whose evidence names the signals the expert described: the
    distinctive words of the expert's condition are matched against the
@@ -556,7 +566,7 @@ make eval         # = PYTHONPATH=. .venv/bin/python tests/evals/run_evals.py
 The Makefile uses `.venv/bin/python` when it exists, so no activation is
 needed after `make install`.
 
-**179 tests** (verified with `make test`; this count is a snapshot — run the
+**189 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases, F1-F3
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
@@ -579,6 +589,7 @@ checks:
 | `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
 | `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
 | `test_judge_round2_fixes.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
+| `test_judge_round7_fixes.py` | Ungrounded, borrowed or safety-defeating check/never/escalate lines dropped (prohibitions kept); paraphrased symptoms fall back to the expert's words; approval needs a rationale and rejection a reason, both ledgered; queue names the owning steward; provider comes from the server-held draft, hand entries marked; expert consent required; a decision keeps the expert knowledge it was made with |
 | `test_judge_round6_fixes.py` | A re-score that escalates drops the recommendation; abnormal highlights follow the decision trees' thresholds; "no opinion" is not a G9 disagreement; cause priors are verified and rebuilt from validated cases; a quote that rules out its own cause is flagged; `/assets` registry; per-pill proposal credit |
 | `test_judge_round5_fixes.py` | Approved interview moves the pump case from escalated to approval; edits to the version stamp, state, an expert's checks or name detected; deleting a case or wiping the tool log detected; no injection fragment reaches a heuristic; escalation instructions are not cause heuristics; AI disagreement reaches the AOM with routing unchanged; PIN-less switches never count towards lockout; logout revokes the session |
 | `test_judge_round4_fixes.py` | Truncation and unhashed-field edits detected; ledger truncation and KB edits detected; JSON snapshots; rolled-back knowledge blocks approval until re-scored; single-proposal revoke; validated_by is the approver; AI second opinion disagrees with readable citations; plain-language ADP errors; every escalation has a reason; fault/asset mismatch refused; owning steward enforced; expert corroboration; PIN lockout and unlock cookie |
@@ -621,10 +632,11 @@ hash_n = HMAC-SHA256(audit_key, canonical_json({prev_hash: hash_{n-1}, ...fields
   the audit key.
 - State is saved as JSON, never `pickle`, so loading a snapshot cannot run
   code.
-- The key comes from `TBC_AUDIT_KEY`, or a generated `data/audit.key` (mode
-  0600) for local demos. **Limit:** someone with filesystem access to both
-  the database and that key file can re-sign the chain; in production the
-  key must live in a secrets manager off the database host.
+- The key comes from `TBC_AUDIT_KEY`, or a generated `~/.tbc/audit.key`
+  (mode 0600, outside the project and its `data/` directory) for local
+  demos. **Limit:** someone with access to both the database and that key
+  can re-sign the chain; in production the key must live in a secrets
+  manager off the database host.
 - A case whose chain fails verification is frozen (HTTP 423 on every write)
   and a red banner appears on the Dashboard for every role.
 
@@ -675,6 +687,7 @@ tests/
 ├── test_judge_round4_fixes.py   # Round 4 judge findings (audit coverage, stale knowledge, AI, governance)
 ├── test_judge_round5_fixes.py   # Round 5 judge findings (reuse payoff, audit coverage, capture, identity)
 ├── test_judge_round6_fixes.py   # Round 6 judge findings (re-score, highlights, priors, capture check)
+├── test_judge_round7_fixes.py   # Round 7 judge findings (grounded actions, steward rationale, provenance)
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/

@@ -72,7 +72,7 @@ def test_ledger_records_approval_rejection_and_rollback_with_reasons(client):
     fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
     pid = next(p["proposal_id"] for p in LSTORE.list_all_proposals() if p["feedback_id"] == fb["feedback_id"])
     before = client.get("/kb/versions", params={"user": "tech1"}).json()
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert client.post(f"/kb/rollback/{before['current_version']}",
                        params={"user": "admin1"}).status_code == 400  # reason required
     assert client.post(f"/kb/rollback/{before['current_version']}",
@@ -91,7 +91,7 @@ def test_version_label_is_never_reused_after_rollback(client):
         cid = _to_feedback_queued(client)
         fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
         pid = next(p["proposal_id"] for p in LSTORE.list_all_proposals() if p["feedback_id"] == fb["feedback_id"])
-        client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+        client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
         return client.get("/kb/versions", params={"user": "tech1"}).json()["current_label"]
 
     start = client.get("/kb/versions", params={"user": "tech1"}).json()["current_version"]
@@ -193,7 +193,7 @@ def test_closing_an_escalation_can_harvest_the_resolution(client):
     p = next(p for p in LSTORE.list_all_proposals() if p["proposal_id"] == resp["knowledge_proposal_id"])
     assert p["kind"] == "escalation_resolution"
     assert p["resolution"] == "BMS vendor replaced CTL-02"
-    assert client.post(f"/kb/proposals/{p['proposal_id']}/approve", params={"user": "steward1"}).status_code == 200
+    assert client.post(f"/kb/proposals/{p['proposal_id']}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript"}).status_code == 200
 
 
 def test_escalation_audit_names_the_guardrail_that_fired(client):
@@ -227,7 +227,7 @@ def test_manual_capture_works_with_the_ai_offline(client, monkeypatch):
     monkeypatch.setenv("TBC_LLM_PROVIDER", "adp")
     monkeypatch.delenv("ADP_APP_KEY", raising=False)
     body = {"expert_name": "J. Lim", "expert_role": "Pump fitter", "asset_type": "Pump",
-            "transcript": PUMP, "provider": "manual", "heuristics": [{
+            "transcript": PUMP, "expert_consent": True, "heuristics": [{
                 "symptom_pattern": "pumping gravel", "likely_cause": "cavitation",
                 "checks": ["Check the strainer"], "do_not": [], "escalate_when": [],
                 "evidence_quote": "If it sounds like it's pumping gravel, that's cavitation."}]}

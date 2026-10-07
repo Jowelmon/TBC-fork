@@ -55,7 +55,7 @@ def test_approval_rate_reflects_a_real_approved_proposal(client: TestClient):
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
     pills = client.get("/pills", params={"user": "tech1"}).json()["pills"]
     crah = next(p for p in pills if p["asset_type"] == "CRAH")

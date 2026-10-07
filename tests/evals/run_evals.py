@@ -178,9 +178,9 @@ def eval_07(client):
     assert version_after_submit == version_before, "KB version must not move before approval"
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1"})
+    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 403, "the proposer must not be able to approve their own proposal"
-    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 200, "a different steward must be able to approve"
     return "pending proposal, self-approval blocked, second steward approved"
 
@@ -216,7 +216,7 @@ def eval_09(client):
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
     resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text

@@ -31,7 +31,7 @@ def _approved_feedback(client, approver="steward2"):
         "user": "tech1", "result": "resolved", "root_cause_confirmed": "sensor_hardware_failure"})
     fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
     pid = next(p["proposal_id"] for p in LSTORE.list_all_proposals() if p["feedback_id"] == fb["feedback_id"])
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": approver}).status_code == 200
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": approver, "rationale": "reviewed against the transcript"}).status_code == 200
     return pid
 
 
@@ -174,8 +174,8 @@ def test_owning_steward_is_enforced(client):
     pid = client.post(f"/cases/{cid}/escalation/close", params={
         "user": "mgr1", "reason": "vendor fixed bus",
         "confirmed_cause": "communication_bus_controller_failure"}).json()["knowledge_proposal_id"]
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"}).status_code == 403
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1"}).status_code == 200
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"}).status_code == 403
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript"}).status_code == 200
 
 
 def test_expert_knowledge_only_counts_when_seen_in_evidence(client):

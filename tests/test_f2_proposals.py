@@ -92,7 +92,7 @@ def test_f2_approve_proposal_ingests_into_kb(client: TestClient):
     )
 
     # Approve it
-    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2"})
+    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"
     version_after = resp.json()["kb_version"]
@@ -138,13 +138,13 @@ def test_f2_rollback_removes_approved_cases(client: TestClient):
     # Approve first proposal
     resp = client.get("/kb/queue", params={"user": "steward1"})
     pid1 = next(p["proposal_id"] for p in resp.json()["queue"] if p["feedback_id"] == fb1)
-    client.post(f"/kb/proposals/{pid1}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid1}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     first = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
 
     fb2 = _create_closed_case(client)
     resp = client.get("/kb/queue", params={"user": "steward1"})
     pid2 = next(p["proposal_id"] for p in resp.json()["queue"] if p["feedback_id"] == fb2)
-    client.post(f"/kb/proposals/{pid2}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid2}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
     version = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
     assert version > first
@@ -178,9 +178,9 @@ def test_f2_proposer_cannot_approve_own_proposal(client: TestClient):
     pid = queue[-1]["proposal_id"]
     assert queue[-1]["submitted_by"] == "steward1"
 
-    own = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1"})
+    own = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript"})
     assert own.status_code == 403
-    other = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    other = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert other.status_code == 200
 
 

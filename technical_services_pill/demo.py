@@ -455,6 +455,7 @@ def _run_expert_harvest() -> bool:
             "expert_role": "Senior M&E Technician",
             "asset_type": "CRAH",
             "transcript": SAMPLE_INTERVIEW,
+            "expert_consent": True,
         },
     )
     response.raise_for_status()
@@ -479,7 +480,8 @@ def _run_expert_harvest() -> bool:
     pump_before = pump_case()
 
     _login(client, "steward2")  # a DIFFERENT steward must approve
-    approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve")
+    approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve",
+                           params={"rationale": "quotes checked against the interview"})
     approval.raise_for_status()
     print(
         f"2. Different steward approved {draft['proposal_id']}; "
@@ -558,7 +560,8 @@ def _run_expert_harvest() -> bool:
     if feedback_proposal is None:
         print("5. Feedback proposal missing from steward queue; demo failed")
         return False
-    learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve")
+    learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve",
+                          params={"rationale": "outcome confirmed by the work order"})
     learned.raise_for_status()
     print(f"5. Steward validated outcome; KB is now v{kb_version_label(learned.json()['kb_version'])}")
     return True

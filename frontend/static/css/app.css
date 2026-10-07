@@ -802,3 +802,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 }
 code { font-size: max(0.9em, 13px); }
 .kb-ref { border-bottom: 1px dotted currentColor; cursor: help; }
+.q-heuristic { margin-bottom: 10px; }
+.q-field { font-size: 15px; margin-top: 4px; }
+.q-field ul { margin: 2px 0 0 18px; }
+.q-field-lbl { font-weight: 600; color: var(--text-dim); margin-right: 6px; }

@@ -147,6 +147,9 @@ class HumanDecisionRecord(BaseModel):
     original_actions: list[RecommendationAction] | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now())
     signature: str | None = None
+    # The approved expert knowledge on screen when the decision was made,
+    # kept with the decision so later rollbacks don't rewrite history.
+    expert_knowledge: list[dict[str, Any]] | None = None
 
     model_config = ConfigDict(validate_assignment=True)
 

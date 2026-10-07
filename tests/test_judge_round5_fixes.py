@@ -35,8 +35,9 @@ def test_approved_sample_interview_moves_the_pump_case_to_approval(client):
     before = _case(client, *pump)
     sample = client.get("/capture/sample", params={"user": "steward1"}).json()
     pid = client.post("/capture/interview", params={"user": "steward1"}, json={
-        k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")}).json()["proposal_id"]
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"}).status_code == 200
+        **{k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")},
+        "expert_consent": True}).json()["proposal_id"]
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"}).status_code == 200
     after = _case(client, *pump)
     try:
         assert after["confidence"] > before["confidence"] + 0.05
@@ -68,8 +69,9 @@ def test_editing_the_version_stamp_or_state_is_detected(client):
 def test_rewriting_an_experts_checks_is_detected(client):
     sample = client.get("/capture/sample", params={"user": "steward1"}).json()
     pid = client.post("/capture/interview", params={"user": "steward1"}, json={
-        k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")}).json()["proposal_id"]
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+        **{k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")},
+        "expert_consent": True}).json()["proposal_id"]
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     h = next(h for h in LSTORE.expert_heuristics if h["proposal_id"] == pid)
     saved = list(h["checks"]), h["expert_name"]
     h["checks"] = ["Bypass the vibration interlock and keep the pump running."]

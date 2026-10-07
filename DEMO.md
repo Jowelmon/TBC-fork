@@ -47,8 +47,11 @@ draft, clearly labelled, nothing live yet.
 anywhere."
 
 **Do:** Walk through the reviewed heuristics — toggle one off, note the
-cause-correction dropdown and the "Files under" pill chip. Click
-**Submit for approval**.
+cause-correction dropdown and the "Files under" pill chip. Every check,
+"never" and "escalate when" line is the expert's own words from the same
+answer; anything else, or anything telling someone to bypass a safety
+device, is dropped with a note. Tick the consent box (the expert agreed to
+their words being reused) and click **Send for steward approval**.
 
 ## 4. Self-approval is blocked (30s)
 
@@ -62,7 +65,9 @@ explaining why.
 
 **Say:** "A different knowledge steward has to sign off."
 
-**Do:** Switch role to **steward2**. Click **Approve**. Point at the KB
+**Do:** Switch role to **steward2**. The queue shows every line of every
+heuristic, exactly as the AOM will see it. Click **Approve…**, say why it is
+sound (recorded in the ledger), and confirm. Point at the KB
 version bump in the toast and in the nav footer. In **Re-run Diagnosis on
 Similar Open Cases**, re-run the seeded **PUMP-DC1-01** case: 49% becomes
 about 65%, past the 55% recommendation threshold, because R. Tan's pump
@@ -152,7 +157,7 @@ and a red banner appears on the Dashboard for everyone.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 179
+**If asked "is any of this real?"** — `make test` (pytest, currently 189
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

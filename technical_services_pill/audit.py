@@ -10,10 +10,11 @@ verification for someone who also holds the audit key. Anyone with the
 database but not the key cannot forge a valid chain.
 
 The key comes from ``TBC_AUDIT_KEY``. Without it, a random key is generated
-once and kept in ``TBC_AUDIT_KEY_FILE`` (default ``data/audit.key``, mode
-0600) so chains survive a restart. That default is for local demos only: in
-production the key must live outside the database host (e.g. a secrets
-manager), otherwise filesystem access to both lets someone re-sign the chain.
+once and kept in ``TBC_AUDIT_KEY_FILE`` (default ``~/.tbc/audit.key``, mode
+0600, outside the project and its ``data/`` directory) so chains survive a
+restart. That default is for local demos only: in production the key must
+live off the database host (e.g. a secrets manager), otherwise filesystem
+access to both lets someone re-sign the chain.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ def _load_key() -> bytes:
     env = os.environ.get("TBC_AUDIT_KEY", "").strip()
     if env:
         return env.encode()
-    path = Path(os.environ.get("TBC_AUDIT_KEY_FILE", str(Path("data") / "audit.key")))
+    path = Path(os.environ.get("TBC_AUDIT_KEY_FILE", str(Path.home() / ".tbc" / "audit.key")))
     if path.exists():
         return path.read_text().strip().encode()
     path.parent.mkdir(parents=True, exist_ok=True)
