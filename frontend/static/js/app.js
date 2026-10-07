@@ -2,7 +2,8 @@
 
 import { api } from './api.js?v=6';
 import { initGuide } from './guide.js?v=9';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=20';
+import { initCloud, setCloudStatus, setCloudMood, cloudThinking } from './cloud.js?v=3';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=23';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -117,6 +118,7 @@ async function refreshKbVersion() {
 
 function navigate(screen, caseId = null) {
   state.screen = screen;
+  setCloudMood(null); // screens set a mood again if their case calls for one
   refreshKbVersion();
   if (caseId) state.caseId = caseId;
 
@@ -262,21 +264,19 @@ navItems.forEach(item => {
 // model is answering, offline, or the offline (non-LLM) models are in use.
 async function refreshSystemInfo() {
   const chip = document.getElementById('model-chip');
-  const avatar = document.getElementById('ai-presence');
   const banner = document.getElementById('insecure-banner');
   try {
     const info = await api.get('/system/info');
     const view = {
-      online: ['ai-avatar--active', 'badge-purple', `AI: ${info.llm_label}`],
-      ready: ['ai-avatar--idle', 'badge-purple', `AI: ${info.llm_label}`],
-      offline: ['ai-avatar--offline', 'badge-red', `AI offline (${info.llm_label})`],
-      'offline-model': ['ai-avatar--idle', 'badge-purple', 'AI: offline models (no LLM)'],
-    }[info.ai_status] || ['ai-avatar--idle', 'badge-purple', `AI: ${info.llm_label}`];
-    avatar.className = `ai-avatar ${view[0]}`;
+      online: ['online', 'badge-purple', `AI: ${info.llm_label}`],
+      ready: ['ready', 'badge-purple', `AI: ${info.llm_label}`],
+      offline: ['offline', 'badge-red', `AI offline (${info.llm_label})`],
+      'offline-model': ['ready', 'badge-purple', 'AI: offline models (no LLM)'],
+    }[info.ai_status] || ['ready', 'badge-purple', `AI: ${info.llm_label}`];
+    setCloudStatus(view[0], info.ai_status === 'offline' ? info.ai_status_message : '');
     chip.className = `badge ${view[1]}`;
     chip.textContent = view[2];
     chip.title = info.ai_status_message;
-    avatar.title = info.ai_status_message;
     if (banner) banner.hidden = !info.demo_insecure;
   } catch (_) { chip.hidden = true; }
 }
@@ -285,6 +285,7 @@ async function refreshSystemInfo() {
 // Identity lives in a signed session cookie (auth.py): log in as the
 // last-used role before any other request, so the cookie — not a client
 // -controlled ?user= — is what the server sees from here on.
+initCloud();
 (async () => {
   while (!(await signIn(state.role))) {
     showToast('Sign in to continue', 'error');
@@ -297,3 +298,4 @@ async function refreshSystemInfo() {
 
 // Expose for debugging
 window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion, refreshSystemInfo };
+window.__cloud__ = { setCloudMood, cloudThinking };

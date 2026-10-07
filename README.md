@@ -499,9 +499,15 @@ an independent second opinion on a *completed* rule-based diagnosis
 
 Shown on the Diagnosis screen as its own card, clearly separate from the
 "Rule-based diagnosis (expert decision tree)" card, and summarised on AOM
-Decision. An animated AI avatar sits in the top bar on every screen (green:
-answering; grey: offline models; dim: AI offline, with the reason on hover)
-and on the Capture draft card.
+Decision. The AI's on-screen presence is a small cloud with a face
+(`frontend/static/js/cloud.js`) floating over every screen. Drag it anywhere
+(mouse, touch, or arrow keys when focused); it remembers where you put it.
+Its face follows the AI: smiling when Tencent Cloud ADP is answering, calm
+on the offline models, thinking during a model call, worried on a case
+where the second opinion disagrees with the rules, asleep when the AI is
+offline. Click it (or press Enter) for the same in words. Smaller versions
+sit on the AI Second Opinion and Capture draft cards. It only reports; it
+never acts.
 
 ## Pill Registry
 

@@ -538,57 +538,49 @@ textarea { resize: vertical; min-height: 70px; }
 .tier-advisory    { background: var(--purple-bg); color: var(--purple-text); }
 .tier-advisory::before    { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--purple); }
 
-/* ── AI avatar: a small animated presence on the AI Second Opinion card,
-   not a literal face -- an abstract "something is here" indicator (in the
-   spirit of a minimal assistant presence, not a chat/voice surface). Its
-   colour reflects the opinion's actual state once loaded: idle (grey,
-   waiting), active/agrees (purple pulse), alert/disagrees (amber pulse),
-   offline (dim, static). ───────────────────────────────────────────── */
-.ai-avatar {
-  display: inline-block;
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: radial-gradient(circle at 32% 32%, #C084FC, #7E22CE 75%);
-  box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.45);
-  animation: ai-avatar-pulse 2.4s ease-in-out infinite;
+/* ── AI cloud: the assistant's on-screen presence (cloud.js) ─────────────
+   A floating, draggable cloud with a face whose expression follows the
+   AI's state. It only reports; it never acts. */
+#ai-cloud {
+  position: fixed; right: 24px; bottom: 24px; z-index: 900;
+  cursor: grab; touch-action: none; user-select: none;
+  filter: drop-shadow(0 6px 10px rgba(15, 23, 42, .18));
+  animation: cloud-float 4.5s ease-in-out infinite;
 }
-.ai-avatar--idle {
-  background: radial-gradient(circle at 32% 32%, #CBD5E1, #64748B 75%);
-  animation: none;
+#ai-cloud.dragging { cursor: grabbing; animation: none; }
+#ai-cloud:focus-visible { outline: 2px solid var(--blue-text); outline-offset: 4px; border-radius: 16px; }
+.cloud-face { line-height: 0; }
+.cf-body { stroke: #6B83A8; stroke-width: 2.2; }
+.cf-eye { fill: #1E293B; }
+.cf-line { fill: none; stroke: #1E293B; stroke-width: 2.4; stroke-linecap: round; }
+.cf-cheek { fill: #FDA4AF; opacity: .55; }
+.cf-dots circle { fill: #6366F1; animation: cloud-dot 1.2s ease-in-out infinite; }
+.cf-dots circle:nth-child(2) { animation-delay: .2s; }
+.cf-dots circle:nth-child(3) { animation-delay: .4s; }
+.cf-zzz { fill: #64748B; font: 700 16px/1 sans-serif; animation: cloud-zzz 2.4s ease-in-out infinite; }
+.cf-zzz2 { font-size: 13px; animation-delay: .8s; }
+.cf-bang { fill: #B45309; font: 800 20px/1 sans-serif; }
+.cloud--ready .cf-eyes, .cloud--online .cf-eyes { animation: cloud-blink 5s infinite; transform-origin: 0 -2px; }
+.cloud--offline .cf-body { stroke: #9CA3AF; }
+.cloud--offline .cf-cheek { opacity: .2; }
+.cloud--alert .cf-body { stroke: #D97706; }
+.cloud--online .cf-body { stroke: #60A5FA; }
+.cloud-bubble {
+  position: absolute; right: 0; bottom: calc(100% + 8px); width: 260px;
+  background: var(--bg-card); color: var(--text-bright); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; font-size: 14px; line-height: 1.45;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, .15); cursor: default;
 }
-.ai-avatar--active {
-  background: radial-gradient(circle at 32% 32%, #86EFAC, #15803D 75%);
-  box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45);
-  animation-name: ai-avatar-pulse-green;
-}
-.ai-avatar--alert {
-  background: radial-gradient(circle at 32% 32%, #FDE68A, #B45309 75%);
-  box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5);
-  animation-name: ai-avatar-pulse-amber;
-}
-.ai-avatar--offline {
-  background: radial-gradient(circle at 32% 32%, #94A3B8, #334155 75%);
-  animation: none;
-  opacity: 0.55;
-}
-@keyframes ai-avatar-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.45); }
-  70% { box-shadow: 0 0 0 7px rgba(168, 85, 247, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
-}
-@keyframes ai-avatar-pulse-green {
-  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.45); }
-  70% { box-shadow: 0 0 0 7px rgba(22, 163, 74, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
-}
-@keyframes ai-avatar-pulse-amber {
-  0% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5); }
-  70% { box-shadow: 0 0 0 7px rgba(217, 119, 6, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
-}
+.cloud-bubble[hidden] { display: none; }
+.card-cloud { display: inline-flex; line-height: 0; }
+:root[data-theme="dark"] .cf-eye { fill: #0F172A; }
+:root[data-theme="dark"] #ai-cloud { filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .5)); }
+@keyframes cloud-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@keyframes cloud-blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
+@keyframes cloud-dot { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@keyframes cloud-zzz { 0% { opacity: 0; transform: translateY(4px); } 50% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
 @media (prefers-reduced-motion: reduce) {
-  .ai-avatar { animation: none; }
+  #ai-cloud, .cf-eyes, .cf-dots circle, .cf-zzz { animation: none !important; }
 }
 
 /* ── Loading Skeleton ─────────────────────────────────────────────────────────── */
