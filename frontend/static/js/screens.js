@@ -53,7 +53,7 @@ const plain = v => String(v || '').replace(/_/g, ' ');
 // the engine is, the readings that drove it, and the AI's advisory view.
 function decisionFacts(s, esc, confBand) {
   const diag = s.diagnosis || {};
-  const cb = confBand(s.confidence);
+  const cb = confBand(s.confidence, s.current_state);
   const obs = s.observation || {};
   const abnormal = [`Trigger: ${plain(obs.type)} (reading ${obs.reading_status || 'unknown'})`];
   (s.evidence || []).forEach(ev => {
@@ -65,7 +65,7 @@ function decisionFacts(s, esc, confBand) {
       if (_ABNORMAL_WHEN_FALSE.has(k) && v === false) abnormal.push(`${_humaniseKey(k)}: no`);
       const t = _ABNORMAL_THRESHOLDS[k];
       if (t && typeof v === 'number' && ((t.max !== undefined && v > t.max) || (t.min !== undefined && v < t.min))) {
-        abnormal.push(`${_humaniseKey(k)}: ${v}${t.suffix || ''}`);
+        abnormal.push(`${_humaniseKey(k)}: ${v}`);
       }
     });
   });
@@ -188,7 +188,7 @@ function renderEvidencePlain(payload) {
       if (t) {
         if (t.max !== undefined && val > t.max) abnormal = true;
         if (t.min !== undefined && val < t.min) abnormal = true;
-        displayVal = val + (t.suffix || '');
+        displayVal = val + (FIELD_LABELS[key] ? '' : (t.suffix || ''));
       } else {
         displayVal = String(val);
       }
@@ -247,7 +247,7 @@ export function renderDashboard(el, state, h) {
     <div class="stats-row" id="stats-row"></div>
     <div class="card">
       <div class="table-wrap">
-        <table>
+        <table id="cases-table">
           <thead><tr>
             <th>Case ID</th><th>Asset</th><th>Fault</th><th>Sensor</th>
             <th>Reading</th><th>Status</th><th>Confidence</th><th>Action</th>
@@ -311,6 +311,8 @@ export function renderDashboard(el, state, h) {
       const parts = [];
       if (st.broken_cases.length) parts.push(`case audit chain failed for ${st.broken_cases.map(esc).join(', ')} (frozen: no further actions allowed)`);
       if (!st.ledger_valid) parts.push('the knowledge governance ledger failed verification');
+      if (!st.registry_valid) parts.push('the set of cases does not match its seal (a case was added or removed outside the app)');
+      if (!st.tool_log_valid) parts.push('the tool audit log failed verification');
       setHTML('integrity-banner', `<div class="banner banner-error" role="alert"><p><strong>Audit integrity alert:</strong> ${parts.join('; ')}. An auditor should review this before anyone relies on it.</p></div>`);
     } catch (_) { /* banner is best-effort */ }
   })();
@@ -386,7 +388,7 @@ export function renderDashboard(el, state, h) {
         <div class="empty-state">
           <div class="empty-state-icon">[ ]</div>
           <div class="empty-state-title">No cases found</div>
-          <div class="empty-state-desc">The server seeds three demo scenarios when it starts with no cases; an Admin can also click "Seed Demo Cases". Or click "New Case" to raise one.</div>
+          <div class="empty-state-desc">The server seeds the demo scenarios when it starts with no cases; an Admin can also click "Seed Demo Cases". Or click "New Case" to raise one.</div>
         </div>
       </td></tr>`;
       return;
@@ -397,7 +399,7 @@ export function renderDashboard(el, state, h) {
       // that as a confidence band would read as "Escalate" for a case
       // that was never diagnosed at all, contradicting the status column.
       const confCell = c.diagnosis
-        ? (() => { const cb = confBand(c.confidence); return `<span class="badge ${cb.cls}">${cb.label}</span>`; })()
+        ? (() => { const cb = confBand(c.confidence, c.current_state); return `<span class="badge ${cb.cls}">${cb.label}</span>`; })()
         : '<span class="muted">Not yet diagnosed</span>';
       const canAdv = c.current_state === 'GATHERING_EVIDENCE';
       return `<tr class="clickable" tabindex="0" role="link" aria-label="Open case ${c.case_id} on ${c.asset_id}" onclick="window.__app__.navigate('diagnosis', '${c.case_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.__app__.navigate('diagnosis', '${c.case_id}')}">
@@ -445,7 +447,7 @@ export function renderDiagnosis(el, state, h) {
         loadCauses(),
       ]);
       const obs = s.observation || {};
-      const cb = confBand(s.confidence);
+      const cb = confBand(s.confidence, s.current_state);
 
       const nextHintText = {
         GATHERING_EVIDENCE: 'click Advance Agent to run the decision tree.',
@@ -550,7 +552,7 @@ export function renderDiagnosis(el, state, h) {
           const evRefs = (c.evidence_refs || []).map(r => `<code>${esc(r)}</code>`).join(' ') || '—';
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;${top ? 'border-color:var(--green);background:var(--green-bg);' : ''}">
             ${top ? '<span class="badge badge-green">Top</span> ' : ''}<strong>${esc(causeLabel(c.id))}</strong>
-            <span class="muted" style="margin-left:auto;font-size:12px">Evidence: ${evRefs}</span>
+            <span class="muted" style="margin-left:auto;font-size:14px">Evidence: ${evRefs}</span>
           </div>`;
         }).join('');
         diagBody.innerHTML = `
@@ -596,7 +598,7 @@ export function renderDiagnosis(el, state, h) {
       if (!s.diagnosis) {
         expertBody.innerHTML = `<div class="banner banner-info"><p>Approved expert heuristics will appear here when they match the diagnosed cause and asset type.</p></div>`;
       } else if (!expertKnowledge.matches.length) {
-        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the decision-tree cause <code>${esc(expertKnowledge.cause_id || 'unresolved')}</code>.</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
+        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the diagnosed cause (${esc(causeLabel(expertKnowledge.cause_id))}).</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
       } else {
         expertBody.innerHTML = `
           <p class="muted expert-reuse-intro">Supporting knowledge from a steward-approved expert interview. Match basis: ${esc(expertKnowledge.match_basis)}. The decision tree remains authoritative.</p>
@@ -839,6 +841,11 @@ export function renderDecision(el, state, h) {
         if (whoToCall) {
           html += `<div class="banner banner-info"><p><strong>Who to call:</strong> ${esc(whoToCall)}</p></div>`;
         }
+        if (s.diagnosis && s.diagnosis.top_cause_id !== 'unresolvable') {
+          // The AOM resolving an escalation sees the same facts an approver would.
+          html += `<div class="card"><div class="card-header"><h3>What the pill found</h3></div><div class="card-body">
+            ${decisionFacts(s, esc, confBand)}${expertChecks(ek, esc)}</div></div>`;
+        }
         html += `<div class="card"><div class="card-header"><h3>Resolve Escalation</h3></div><div class="card-body" id="esc-actions"></div></div>`;
       } else if (!s.human_decision) {
         html += `<div class="banner banner-info"><p>No recommendation to review yet. Case status: ${statePill(s.current_state)}</p></div>`;
@@ -876,10 +883,11 @@ export function renderDecision(el, state, h) {
         } else {
           html += `<div class="card"><div class="card-header"><h3>Decision Controls</h3></div><div class="card-body">
             <div class="flex gap-8" style="margin-bottom:16px">
-              <button class="btn btn-green" id="btn-approve">Approve</button>
+              ${s.knowledge_withdrawn ? '' : '<button class="btn btn-green" id="btn-approve">Approve</button>'}
               <button class="btn btn-red" id="btn-reject">Reject</button>
-              <button class="btn btn-secondary" id="btn-modify">Modify</button>
+              ${s.knowledge_withdrawn ? '' : '<button class="btn btn-secondary" id="btn-modify">Modify</button>'}
             </div>
+            ${s.knowledge_withdrawn ? '<p class="muted" style="margin-bottom:12px">Approve and Modify return once the case is re-scored. Reject is still available.</p>' : ''}
             <div id="decision-form"></div>
           </div></div>`;
         }
@@ -895,14 +903,16 @@ export function renderDecision(el, state, h) {
         } else {
           escBody.innerHTML = `
             <div class="form-group"><label for="esc-reason">Reason or resolution</label><input id="esc-reason" type="text" placeholder="e.g. BMS vendor replaced controller CTL-02; tags reporting again"></div>
+            ${s.asset_type === 'UNKNOWN' ? '<p class="muted" style="margin-bottom:8px">This asset is not in the registry, so there is no data source to re-query. Close it with what was found, and register the asset if the pill should cover it.</p>' : ''}
             <div class="form-group"><label for="esc-cause">Confirmed cause (optional: sends this resolution to a knowledge steward so the pill can learn it)</label>
               <select id="esc-cause"><option value="">-- not confirmed --</option>${causeOptions((_causes || []).filter(c => c.asset_type === s.asset_type))}</select></div>
             <div class="flex gap-8 flex-wrap">
-              <button class="btn btn-secondary" id="btn-esc-evidence">Request more evidence (reason required)</button>
+              ${s.asset_type === 'UNKNOWN' ? '' : '<button class="btn btn-secondary" id="btn-esc-evidence">Request more evidence (reason required)</button>'}
               <button class="btn btn-red" id="btn-esc-close">Close escalation (resolution required)</button>
             </div>
           `;
-          document.getElementById('btn-esc-evidence').onclick = async () => {
+          const btnEv = document.getElementById('btn-esc-evidence');
+          if (btnEv) btnEv.onclick = async () => {
             const reason = document.getElementById('esc-reason').value.trim();
             if (!reason) { showToast('Give a reason to request more evidence', 'error'); return; }
             try {
@@ -1367,9 +1377,10 @@ export function renderGovernance(el, state, h) {
             await api.post(`/kb/proposals/${id}/approve`);
             showToast(`${id} approved and live in the knowledge base`, 'success');
             refreshAll();
-            if (p.kind !== 'expert_capture' && p.confirmed_cause) {
-              await loadRerunCandidates(p.confirmed_cause, p.asset_type);
-            }
+            const targets = p.kind === 'expert_capture'
+              ? (p.heuristics || []).filter(x => !x.new_cause).map(x => [x.likely_cause, x.asset_type])
+              : (p.confirmed_cause ? [[p.confirmed_cause, p.asset_type]] : []);
+            if (targets.length) await loadRerunCandidates(targets);
           }
           catch (e) { aBtn.disabled = false; showToast(`Error: ${e.message}`, 'error'); }
         };
@@ -1393,24 +1404,32 @@ export function renderGovernance(el, state, h) {
 
   // Re-run diagnosis on similar still-open cases after a proposal approves
   // (Phase 3: "confidence the KB can move" — show the before/after, live).
-  async function loadRerunCandidates(cause, assetType) {
+  // targets: [[cause, assetType], ...] — every cause the approval touched.
+  async function loadRerunCandidates(targets) {
     const card = document.getElementById('rerun-card');
     const body = document.getElementById('rerun-body');
     if (!card || !body) return;
     try {
-      const params = new URLSearchParams({ cause });
-      if (assetType) params.set('asset_type', assetType);
-      const { matches } = await api.get(`/cases/similar?${params}`);
+      const seen = new Set();
+      const matches = [];
+      for (const [cause, assetType] of targets) {
+        const params = new URLSearchParams({ cause });
+        if (assetType) params.set('asset_type', assetType);
+        for (const m of (await api.get(`/cases/similar?${params}`)).matches) {
+          if (!seen.has(m.case_id)) { seen.add(m.case_id); matches.push({ ...m, cause }); }
+        }
+      }
       card.hidden = false;
+      const names = [...new Set(targets.map(([c]) => causeLabel(c)))].join(', ');
       if (!matches.length) {
-        body.innerHTML = `<p class="muted">No other open case is currently diagnosed as <strong>${esc(causeLabel(cause))}</strong> to re-score.</p>`;
+        body.innerHTML = `<p class="muted">No open case is currently diagnosed as <strong>${esc(names)}</strong> to re-score.</p>`;
         return;
       }
       body.innerHTML = `
-        <p class="muted" style="margin-bottom:10px">These open cases were diagnosed as <strong>${esc(causeLabel(cause))}</strong> before this approval. Re-run shows what the KB update just changed, without touching the case.</p>
+        <p class="muted" style="margin-bottom:10px">Open cases diagnosed with what was just approved. Re-run shows what the new knowledge changes, without touching the case.</p>
         ${matches.map(m => `
           <div class="rerun-row" id="rerun-row-${esc(m.case_id)}">
-            <div><code>${esc(m.case_id)}</code> <span class="muted">${esc(m.asset_id)} · ${esc(m.current_state)}</span></div>
+            <div><code>${esc(m.case_id)}</code> <span class="muted">${esc(m.asset_id)} · ${esc(causeLabel(m.cause))} · ${esc(plain(m.current_state).toLowerCase())}</span></div>
             <button class="btn btn-secondary btn-sm" id="rerun-btn-${esc(m.case_id)}">Re-run diagnosis</button>
             <span id="rerun-result-${esc(m.case_id)}"></span>
           </div>
@@ -1426,8 +1445,10 @@ export function renderGovernance(el, state, h) {
             const before = (preview.before * 100).toFixed(1);
             const after = (preview.after * 100).toFixed(1);
             const up = preview.after >= preview.before;
+            const crosses = preview.before < 0.55 && preview.after >= 0.55;
             document.getElementById(`rerun-result-${m.case_id}`).innerHTML =
-              ` <span class="badge ${up ? 'badge-green' : 'badge-grey'}">${before}% &rarr; ${after}%</span>`;
+              ` <span class="badge ${up ? 'badge-green' : 'badge-grey'}">${before}% &rarr; ${after}%</span>` +
+              (crosses ? ` <span class="muted">now clears the 55% recommendation threshold${m.current_state === 'ESCALATED' ? '; on AOM Decision, "Request more evidence" re-diagnoses it with this knowledge' : ''}</span>` : '');
           } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
           btn.disabled = false;
         };
@@ -1437,6 +1458,7 @@ export function renderGovernance(el, state, h) {
       body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
     }
   }
+
 
   // Load KB stats
   async function loadStats() {

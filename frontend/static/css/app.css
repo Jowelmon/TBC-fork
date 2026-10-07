@@ -796,3 +796,13 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .decision-fact .val { font-size: 16px; font-weight: 600; color: var(--text-bright); margin-top: 2px; }
 .hazard-ack { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0 12px; font-size: 15px; color: var(--text-bright); }
 .hazard-ack input { width: auto; margin-top: 3px; flex: none; }
+
+/* Projector widths: keep Status and Confidence on screen by dropping the
+   Sensor and Reading columns (both are on the Diagnosis screen). */
+@media (max-width: 1100px) {
+  #cases-table th:nth-child(4), #cases-table td:nth-child(4),
+  #cases-table th:nth-child(5), #cases-table td:nth-child(5) { display: none; }
+  #cases-table th, #cases-table td { padding-left: 8px; padding-right: 8px; }
+  .role-badge { display: none; }
+}
+code { font-size: max(0.9em, 13px); }

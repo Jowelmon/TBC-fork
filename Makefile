@@ -21,7 +21,11 @@ demo:  ## Run the end-to-end console demo
 serve:  ## Start the app with the UI on :8000 (open http://localhost:8000/ui)
 	PYTHONPATH=. $(PY) -m uvicorn frontend.serve:app --port 8000
 
-reset:  ## Remove all demo state (cases, proposals, KB); the UI re-seeds demo cases on next load
+reset:  ## Stop a running server, then remove all demo state (cases, proposals, KB); restart with make serve
+	@# A server shutting down saves its state; let it finish first, or the
+	@# snapshot reappears right after it is deleted.
+	@pkill -f "uvicorn frontend.serve" 2>/dev/null && echo "stopped running server" || true
+	@while pgrep -f "uvicorn frontend.serve" >/dev/null; do sleep 1; done
 	rm -f data/tbc.sqlite technical_services_pill.sqlite3
 
 docker-up:  ## Build and start the API container

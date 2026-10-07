@@ -1,7 +1,7 @@
 # 6-minute demo script
 
 Before you start: `make reset && make serve`, open http://localhost:8000/ui.
-The server seeds four demo cases (recorded as `demo-seed`). The app opens
+The server seeds five demo cases (recorded as `demo-seed`). The app opens
 as `mgr1 (Asset Ops Manager)` and asks for that user's PIN; switch roles
 with the "Acting as" dropdown in the top bar. Each switch is a real login
 (PIN checked, signed session cookie), not a URL trick, which is itself part
@@ -63,7 +63,11 @@ explaining why.
 **Say:** "A different knowledge steward has to sign off."
 
 **Do:** Switch role to **steward2**. Click **Approve**. Point at the KB
-version bump in the toast and in the nav footer.
+version bump in the toast and in the nav footer. In **Re-run Diagnosis on
+Similar Open Cases**, re-run the seeded **PUMP-DC1-01** case: 49% becomes
+about 65%, past the 55% recommendation threshold, because R. Tan's pump
+answer is now approved knowledge and the case's evidence shows what he
+described.
 
 ## 6. Diagnosis reuses that knowledge (45s)
 
@@ -87,8 +91,10 @@ Point at the "Advisory only — does not affect routing" tag, the
 agree/disagree badge, and that it's grounded only in evidence actually
 shown above it. Then open the seeded **UPS-DC1-02** case: the rules say
 battery end of life, the AI flags thermal runaway risk (41°C and rising),
-and G9 records the disagreement without changing the routing. The avatar in
-the top bar shows the AI's state on every screen.
+and G9 records the disagreement. The case still goes to the AOM for
+approval: the AI informs the decision, it never makes or blocks it. The
+avatar in the top bar shows the AI's state on every screen (green when
+Tencent Cloud ADP is answering).
 
 ## 8. The AOM approves (45s)
 
@@ -145,7 +151,7 @@ and a red banner appears on the Dashboard for everyone.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 156
+**If asked "is any of this real?"** — `make test` (pytest, currently 165
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

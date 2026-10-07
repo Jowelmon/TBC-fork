@@ -20,3 +20,9 @@ os.environ.setdefault("TBC_AUDIT_KEY_FILE", os.path.join(_TMP, "audit.key"))
 # (tests/test_identity.py) override this per-test.
 os.environ.setdefault("TBC_DEMO_INSECURE", "1")
 os.environ.setdefault("TBC_AUTO_SEED", "0")
+
+# Tests never call a live model, even when a developer's .env (loaded by
+# frontend.serve) configures Tencent Cloud ADP. Existing env vars win over
+# .env, so pinning them here keeps the suite offline and deterministic.
+os.environ["TBC_LLM_PROVIDER"] = "mock"
+os.environ["ADP_APP_KEY"] = ""

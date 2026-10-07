@@ -170,17 +170,22 @@ class LearningStore:
             "versions": [(v["version"], v["status"]) for v in self._versions],
             "validated": sorted(
                 (vc.id, vc.case_id, vc.asset_type, vc.confirmed_cause, vc.outcome,
-                 vc.kb_version, vc.weight, vc.fault_signature, vc.validated_by)
+                 vc.kb_version, vc.weight, vc.fault_signature, vc.validated_by, vc.action_taken)
                 for vc in self.validated
             ),
+            # Every field shown to an AOM is covered, not only the ids:
+            # rewriting an expert's checks or name must fail verification.
             "heuristics": sorted(
                 (h["id"], h["likely_cause"], h["asset_type"], h["evidence_quote"],
-                 h["kb_version"], h["approved_by"])
+                 h["kb_version"], h["approved_by"], h.get("expert_name"), h.get("expert_role"),
+                 h.get("symptom_pattern"), tuple(h.get("checks") or ()),
+                 tuple(h.get("do_not") or ()), tuple(h.get("escalate_when") or ()))
                 for h in self.expert_heuristics
             ),
             "proposals": [
                 (p["proposal_id"], p["status"], p.get("submitted_by"), p.get("decided_by"),
-                 p.get("confirmed_cause"), p.get("asset_type"), p.get("kb_version"), p.get("reason"))
+                 p.get("confirmed_cause"), p.get("asset_type"), p.get("kb_version"), p.get("reason"),
+                 p.get("expert_name"), p.get("resolution"), p.get("heuristics"))
                 for p in self._proposals
             ],
         }
@@ -623,18 +628,28 @@ class LearningStore:
         return kb_version_label(self._kb_version)
 
     # ------------------------------------------------------------------ #
+    def _similarity(self, fault_signature: str, vc: ValidatedCase,
+                    evidence_terms: set[str] | None) -> float:
+        """How strongly one KB entry supports this case.
+
+        Validated outcomes: Jaccard overlap of fault signatures. Expert
+        heuristics: how many distinctive words of the condition the expert
+        described appear in this case's evidence (three or more is full
+        support); none means the heuristic does not apply to this case.
+        """
+        if vc.case_id == "EXPERT":
+            matched = corroborating_terms(vc.fault_signature, evidence_terms)
+            return min(1.0, len(matched) / 3)
+        return jaccard(fault_signature, vc.fault_signature)
+
     def get_similar(self, fault_signature: str, asset_type: str | None = None, k: int = 3,
                     evidence_terms: set[str] | None = None) -> list[ValidatedCase]:
-        """Top-k validated cases by Jaccard token overlap + asset-type bonus.
-
-        Expert-interview entries only count when the condition the expert
-        described is visible in this case's evidence (``evidence_terms``).
-        """
+        """Top-k KB entries supporting this case, plus an asset-type bonus."""
         scored: list[tuple[float, ValidatedCase]] = []
         for vc in self.validated:
-            if vc.case_id == "EXPERT" and not corroborating_terms(vc.fault_signature, evidence_terms):
-                continue
-            sim = jaccard(fault_signature, vc.fault_signature)
+            sim = self._similarity(fault_signature, vc, evidence_terms)
+            if vc.case_id == "EXPERT" and sim <= 0.0:
+                continue  # the expert's condition is not in this case's evidence
             if asset_type and vc.asset_type == asset_type:
                 sim += 0.1  # 【ASSUMPTION】 asset-type prior bonus
             sim *= vc.weight
@@ -664,11 +679,8 @@ class LearningStore:
         if not similar:
             return 0.2  # 【ASSUMPTION】 low-but-nonzero baseline
         matching = [vc for vc in similar if vc.confirmed_cause == confirmed_cause]
-        best_sim = (
-            max(jaccard(fault_signature, vc.fault_signature) for vc in matching)
-            if matching
-            else 0.0
-        )
+        best_sim = max((self._similarity(fault_signature, vc, evidence_terms) for vc in matching),
+                       default=0.0)
         prior = self.cause_prior(confirmed_cause)
         # weight similarity 0.6, prior 0.4  【ASSUMPTION】
         return min(1.0, 0.6 * best_sim + 0.4 * prior)

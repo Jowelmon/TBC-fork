@@ -1,8 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
 import { api } from './api.js?v=6';
-import { initGuide } from './guide.js?v=8';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=17';
+import { initGuide } from './guide.js?v=9';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=20';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -83,9 +83,11 @@ function statePill(stateVal) {
   return `<span class="badge ${m.cls}">${m.label}</span>`;
 }
 
-function confBand(conf) {
-  // Miora spec confidence bands
+function confBand(conf, state) {
+  // Miora spec confidence bands. An escalated case is with a human whatever
+  // its score, so it never reads as "Medium" or "Recommendable".
   if (conf === null || conf === undefined) return { cls: 'badge-grey', label: 'N/A' };
+  if (state === 'ESCALATED') return { cls: 'badge-red', label: (conf * 100).toFixed(0) + '% · escalated' };
   if (conf < 0.35) return { cls: 'badge-red', label: (conf * 100).toFixed(0) + '% Escalate' };
   if (conf < 0.55) return { cls: 'badge-yellow', label: (conf * 100).toFixed(0) + '% Medium' };
   return { cls: 'badge-green', label: (conf * 100).toFixed(0) + '% Recommendable' };

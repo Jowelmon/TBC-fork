@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from .agent_state import AgentState
 from .confidence import peer_agreement_from_registry, score_confidence, evidence_coverage_score
 from .decision_tree import evaluate_decision_tree
+from .learning import kb_version_label
 from .models import (
     AgentStateName,
     CandidateCause,
@@ -291,7 +292,7 @@ def _run_learning_loop() -> tuple[str, float, float]:
     # F2: steward approves the proposal to ingest it into the live KB
     _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward2")
     print(f"feedback {fb_id} proposal approved -> promoted to KB")
-    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, version={_LSTORE.get_kb_version()}")
+    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, KB v{_LSTORE.get_kb_version_label()}")
     # re-diagnose identical signature -> should reuse the new validated case
     _diagnose_asset("diagnose #2 (after  feedback)")
     st2, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
@@ -467,13 +468,32 @@ def _run_expert_harvest() -> bool:
     for heuristic in draft["heuristics"]:
         print(f"   {heuristic['likely_cause']}: {heuristic['evidence_quote']}")
 
+    def pump_case() -> tuple[str, float]:
+        _login(client, "tech1")
+        cid = client.post("/cases", params={
+            "asset_id": "PUMP-DC1-01", "sensor_id": "PUMP-DC1-01-VIB",
+            "observation_type": "pump_vibration_high", "reading_status": "invalid",
+        }).json()["case_id"]
+        r = client.post(f"/cases/{cid}/advance").json()
+        return r["current_state"], r["confidence"]
+
+    pump_before = pump_case()
+
     _login(client, "steward2")  # a DIFFERENT steward must approve
     approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve")
     approval.raise_for_status()
     print(
         f"2. Different steward approved {draft['proposal_id']}; "
-        f"KB version {approval.json()['kb_version']}"
+        f"KB v{kb_version_label(approval.json()['kb_version'])}"
     )
+    pump_after = pump_case()
+    print(
+        f"   Same pump alarm before vs after: {pump_before[0]} at {pump_before[1]:.2f} -> "
+        f"{pump_after[0]} at {pump_after[1]:.2f} (captured know-how changed the routing)"
+    )
+    if not (pump_before[0] == "ESCALATED" and pump_after[0] == "AWAITING_APPROVAL"):
+        print("   expected the approved interview to move the pump case to approval; demo failed")
+        return False
 
     _login(client, "tech1")
     created = client.post("/cases", params={
@@ -498,7 +518,7 @@ def _run_expert_harvest() -> bool:
     match = matches[0]
     print(
         f"3. New incident diagnosed as {cause_id}; reused {match['knowledge_id']} "
-        f"from {match['expert_name']} (KB {match['kb_version_label']})"
+        f"from {match['expert_name']} (KB v{match['kb_version_label']})"
     )
 
     _login(client, "mgr1")
@@ -541,7 +561,7 @@ def _run_expert_harvest() -> bool:
         return False
     learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve")
     learned.raise_for_status()
-    print(f"5. Steward validated outcome; KB is now {learned.json()['kb_version']}")
+    print(f"5. Steward validated outcome; KB is now v{kb_version_label(learned.json()['kb_version'])}")
     return True
 
 

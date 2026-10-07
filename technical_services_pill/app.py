@@ -196,17 +196,21 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict:
     already proven can be switched back to without it.
     """
     u = _user(body.user_id)
-    wait = locked_for(u.user_id)
-    if wait:
-        raise HTTPException(429, f"too many wrong PINs for {u.user_id}; try again in {wait}s")
+    key = f"{u.user_id}@{request.client.host if request.client else '-'}"
     unlocked = unlocked_users(request)
-    if body.pin is None and u.user_id in unlocked:
-        pass
+    if body.pin is None:
+        # A switch back to a user this browser already proved; asking without
+        # a PIN is not a guess, so it never counts towards a lockout.
+        if u.user_id not in unlocked:
+            raise HTTPException(401, f"PIN required for {u.user_id}")
     else:
+        wait = locked_for(key)
+        if wait:
+            raise HTTPException(429, f"too many wrong PINs for {u.user_id}; try again in {wait}s")
         ok = check_pin(u.user_id, body.pin)
-        record_pin_result(u.user_id, ok)
+        record_pin_result(key, ok)
         if not ok:
-            raise HTTPException(401, f"wrong or missing PIN for {u.user_id}")
+            raise HTTPException(401, f"wrong PIN for {u.user_id}")
         issue_unlock(response, unlocked | {u.user_id})
     issue_cookie(response, u.user_id)
     return _me(u.user_id)
@@ -227,7 +231,10 @@ def me(user: str = Depends(resolve_user)) -> dict:
 
 
 @app.post("/logout")
-def logout(response: Response) -> dict:
+def logout(request: Request, response: Response) -> dict:
+    from .auth import SESSION_COOKIE, revoke
+
+    revoke(request.cookies.get(SESSION_COOKIE))
     clear_cookie(response)
     return {"status": "logged out"}
 
@@ -949,8 +956,10 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
         knowledge_count = sum(1 for vc in _LSTORE.validated if vc.asset_type == asset_type)
         knowledge_count += sum(1 for h in _LSTORE.expert_heuristics if h.get("asset_type") == asset_type)
         relevant = [p for p in all_proposals if p.get("asset_type") == asset_type]
-        decided = [p for p in relevant if p.get("status") in ("approved", "rejected")]
-        approved = [p for p in decided if p.get("status") == "approved"]
+        # A rolled-back or revoked proposal was still approved at the time.
+        ever_approved = ("approved", "rolled_back", "revoked")
+        decided = [p for p in relevant if p.get("status") in (*ever_approved, "rejected")]
+        approved = [p for p in decided if p.get("status") in ever_approved]
         pills.append({
             "asset_type": asset_type,
             "owner_steward": owner,
@@ -1255,9 +1264,10 @@ SEED_ACTOR = "demo-seed"
 
 
 def seed_demo_cases() -> list[str]:
-    """Create the demo scenarios: one CLOSED, one ESCALATED, one
-    AWAITING_APPROVAL, and a borderline UPS where the AI second opinion
-    disagrees with the rules (G9). Every step is attributed to ``demo-seed``, never to
+    """Create the demo scenarios: one CLOSED, one ESCALATED (bus fault), one
+    AWAITING_APPROVAL, a borderline UPS where the AI second opinion
+    disagrees with the rules (G9), and a pump that escalates until expert
+    knowledge about its fault is approved. Every step is attributed to ``demo-seed``, never to
     a real user, so the audit trail does not claim a manager approved it.
     """
     from .tools import create_work_order_for_state, submit_feedback
@@ -1291,7 +1301,13 @@ def seed_demo_cases() -> list[str]:
     disagreement = _new_case("UPS-DC1-02", "UPS-DC1-02-BATT", "ups_battery_fault",
                              ReadingStatus.INVALID, actor=SEED_ACTOR)
     _advance(disagreement)
-    return [closed.case_id, escalated.case_id, awaiting.case_id, disagreement.case_id]
+
+    # Escalates on low confidence until expert knowledge about pump
+    # misalignment is captured and approved (the sample interview has it).
+    pump = _new_case("PUMP-DC1-01", "PUMP-DC1-01-VIB", "pump_vibration_high",
+                     ReadingStatus.INVALID, actor=SEED_ACTOR)
+    _advance(pump)
+    return [closed.case_id, escalated.case_id, awaiting.case_id, disagreement.case_id, pump.case_id]
 
 
 @app.post("/demo/seed")
@@ -1312,8 +1328,14 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     from .learning import STORE as _LSTORE
     broken = [cid for cid in STORE.list()
               if (st := STORE.get(cid)) is not None and not st.verify_audit_chain()]
-    return {"broken_cases": broken, "ledger_valid": _LSTORE.verify_ledger(),
-            "ok": not broken and _LSTORE.verify_ledger()}
+    from .tools import verify_tool_log
+
+    ledger_ok = _LSTORE.verify_ledger()
+    registry_ok = STORE.verify_registry()
+    tool_log_ok = verify_tool_log()
+    return {"broken_cases": broken, "ledger_valid": ledger_ok, "registry_valid": registry_ok,
+            "tool_log_valid": tool_log_ok,
+            "ok": not broken and ledger_ok and registry_ok and tool_log_ok}
 
 
 @app.post("/cases/{case_id}/escalation/close")

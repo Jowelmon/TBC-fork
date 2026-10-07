@@ -119,8 +119,10 @@ make serve          # = .venv/bin/python -m uvicorn frontend.serve:app --port 80
 
 Open `http://localhost:8000/ui` and sign in with a demo PIN (`mgr1` = 2222;
 all six are in `DEMO.md`). When the server starts with no cases it seeds
-four demo scenarios (one CLOSED, one ESCALATED, one AWAITING_APPROVAL, and
-a borderline UPS where the AI second opinion disagrees with the rules),
+five demo scenarios: one CLOSED, a bus fault ESCALATED to the BMS pill, a
+chiller AWAITING_APPROVAL, a borderline UPS awaiting approval where the AI
+second opinion disagrees with the rules (G9, routing unchanged), and a pump
+ESCALATED at 49% that clears 55% once the sample interview is approved,
 recorded in the audit trail as `demo-seed`, never as a real user; an admin
 can add more with **Seed Demo Cases**. The role switcher (top right) asks
 for a user's PIN the first time you switch to them; after that this browser
@@ -204,7 +206,7 @@ and never blocks, escalates, or requires approval.
 | **G2** | Fault classified safety-critical (cooling lost **AND** temperature rising) | Must escalate |
 | **G2b** | Cause involves environmental/pressure hazard (e.g. refrigerant leak) | Force `AWAITING_APPROVAL` with safety flag (does NOT auto-escalate) |
 | **G3** | Root cause maps to another pill's domain (chiller, power, BMS bus, leasing, tenant) | Coordinate + escalate |
-| **G4** | `confidence < ESCALATE_CONFIDENCE` (0.35) | Escalate, do not recommend |
+| **G4** | `confidence < ESCALATE_CONFIDENCE` (0.35); or below `MIN_RECO_CONFIDENCE` (0.55) when re-querying every evidence source returns nothing new; or re-scored below 0.55 after knowledge is withdrawn | Escalate to a human, do not recommend |
 | **G5** | Asset not in registry / unknown asset | Escalate (short-circuit, no diagnosis) |
 | **G6** | Any recommended action | Force `AWAITING_APPROVAL` — no auto-execute |
 | **G7** | Sensor metadata / tag name contains prompt-injection patterns | Sanitize before any LLM sees it |
@@ -388,9 +390,14 @@ write-back** loop (spec §7, enhanced in F2):
    it, the other steward stands in); the approver, not the proposer, is
    recorded as the validator.
 9. An approved expert interview is guidance, not an observed outcome: it
-   never moves a cause's confirmation rate, and it only raises confidence
-   on a case whose evidence shows the condition the expert described (the
-   matched words are shown on screen).
+   never moves a cause's confirmation rate. It raises confidence only on a
+   case whose evidence names the signals the expert described: the
+   distinctive words of the expert's condition are matched against the
+   case's evidence field names, set flags and text values (three or more
+   matches is full support), and the matched words are shown on screen.
+   It checks that the same signals are present, not their thresholds: an
+   expert's "axial higher than radial" matches "axial" but does not compare
+   the two readings.
 
 **Demo proof:** the learning-loop case shows `kb_match` rising from **0.73 →
 1.00** and confidence from **0.43 → 0.50** after one approved feedback cycle
@@ -541,7 +548,7 @@ make eval         # = PYTHONPATH=. .venv/bin/python tests/evals/run_evals.py
 The Makefile uses `.venv/bin/python` when it exists, so no activation is
 needed after `make install`.
 
-**156 tests** (verified with `make test`; this count is a snapshot — run the
+**165 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases, F1-F3
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
@@ -564,6 +571,7 @@ checks:
 | `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
 | `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
 | `test_judge_round2_fixes.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
+| `test_judge_round5_fixes.py` | Approved interview moves the pump case from escalated to approval; edits to the version stamp, state, an expert's checks or name detected; deleting a case or wiping the tool log detected; no injection fragment reaches a heuristic; escalation instructions are not cause heuristics; AI disagreement reaches the AOM with routing unchanged; PIN-less switches never count towards lockout; logout revokes the session |
 | `test_judge_round4_fixes.py` | Truncation and unhashed-field edits detected; ledger truncation and KB edits detected; JSON snapshots; rolled-back knowledge blocks approval until re-scored; single-proposal revoke; validated_by is the approver; AI second opinion disagrees with readable citations; plain-language ADP errors; every escalation has a reason; fault/asset mismatch refused; owning steward enforced; expert corroboration; PIN lockout and unlock cookie |
 | `test_judge_round3_fixes.py` | Rejected feedback leaves no proposal; cross-asset/unknown causes refused; ledger records approvals and rollbacks; labels never reused; a re-hashed chain without the key fails and freezes the case; login PIN; seeding never attributed to real users; rationale and hazard acknowledgement; escalation resolution harvested; pump/UPS capture; manual capture with AI offline |
 
@@ -584,15 +592,21 @@ chain** (spec §6):
 hash_n = HMAC-SHA256(audit_key, canonical_json({prev_hash: hash_{n-1}, ...fields}))
 ```
 
-- Each case entry also records a digest of the case's full state at that
-  point (evidence, diagnosis, recommendation, guardrail result, AI opinion,
-  decision, outcome), so editing `human_decision.decided_by` or the
-  diagnosed cause afterwards fails verification, not only editing an entry.
-- Each ledger entry records a digest of the knowledge base's contents and
-  every proposal's status, so editing knowledge outside the governance flow
-  fails verification.
-- Both chains carry a keyed **seal** over their length and head, so deleting
-  the newest entries (truncation) is caught.
+- Each case entry also records a digest of the case's state at that point:
+  current state, evidence, diagnosis, confidence and its breakdown
+  (including the KB version it was scored against), recommendation,
+  guardrail result, AI opinion, decision, outcome, work order and feedback
+  ids. Editing any of these afterwards fails verification.
+- Each ledger entry records a digest of the knowledge base: every validated
+  case, every approved heuristic's full text (symptom, checks, cautions,
+  escalation conditions, quote, expert name and role), every proposal's
+  status and content, and the version history.
+- Each chain carries a keyed **seal** over its length and head, so deleting
+  the newest entries (truncation) is caught. The set of case ids and the
+  tool audit log (itself a keyed chain) are sealed too, so deleting a whole
+  case or wiping the tool log is caught.
+- `/audit/status` reports all of these; any failure shows a red banner on
+  the Dashboard for every role.
 - `verify_audit_chain()` (cases) and `verify_ledger()` (knowledge) recompute
   all of this. Re-hashing a forged chain fails unless the editor also holds
   the audit key.
@@ -649,6 +663,7 @@ tests/
 ├── test_judge_round2_fixes.py   # Round 2 judge findings
 ├── test_judge_round3_fixes.py   # Round 3 judge findings (governance integrity, identity, capture)
 ├── test_judge_round4_fixes.py   # Round 4 judge findings (audit coverage, stale knowledge, AI, governance)
+├── test_judge_round5_fixes.py   # Round 5 judge findings (reuse payoff, audit coverage, capture, identity)
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/

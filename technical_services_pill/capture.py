@@ -42,7 +42,8 @@ def _norm(text: str) -> str:
 def _clean_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(v).strip() for v in value if str(v).strip()][:8]
+    return [str(v).strip() for v in value
+            if str(v).strip() and "[REDACTED" not in str(v)][:8]
 
 
 def _validate_items(
@@ -63,6 +64,9 @@ def _validate_items(
             warnings.append(f"Item {idx} was not a heuristic object and was dropped.")
             continue
         quote = str(item.get("evidence_quote", "")).strip()
+        if "[REDACTED" in quote or "[REDACTED" in str(item.get("symptom_pattern", "")):
+            warnings.append(f"Item {idx} was dropped: it contains text redacted as an injection attempt.")
+            continue
         if not quote or _norm(quote) not in haystack:
             warnings.append(
                 f"Item {idx} was dropped as ungrounded: its supporting quote is "
@@ -104,6 +108,9 @@ def _sanitize(transcript: str) -> tuple[str, list[str]]:
     if len(transcript) > MAX_TRANSCRIPT_CHARS:
         raise CaptureError(f"transcript exceeds {MAX_TRANSCRIPT_CHARS} characters")
     sanitized = sanitize_metadata(transcript)
+    # Redact the whole sentence around an injection attempt, not only the
+    # matched phrase, so no fragment of it can be quoted into knowledge.
+    sanitized = re.sub(r"[^.!?\n]*\[REDACTED[^\]]*\][^.!?\n]*[.!?]?", " [REDACTED-INJECTION].", sanitized)
     warnings = []
     if sanitized != transcript:
         warnings.append(
@@ -173,5 +180,9 @@ Interviewer: And chillers?
 Senior technician: With a chiller tripping on low pressure, I check the refrigerant charge before anything else. If the charge is down and there's an oil stain near the joints, that's a refrigerant leak until proven otherwise. Never top up the gas and walk away, it'll just leak out again and you've vented refrigerant. I get the safety officer involved for any leak, that's a regulatory thing.
 
 If the approach temperature keeps creeping up week by week, look at the condenser first. A fouled condenser is the usual story there, especially after the dry season.
+
+Interviewer: What about the chilled water pumps?
+
+Senior technician: If the axial vibration is high and the 2x peak dominates, that's misalignment at the coupling. Check the alignment with the laser kit before you touch anything else. Never just tighten the base bolts and hope, the vibration comes straight back.
 """
 

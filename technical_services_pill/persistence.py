@@ -69,6 +69,7 @@ def _state() -> dict[str, Any]:
             **{f: getattr(ls, f) for f in _LEARNING_FIELDS},
         },
         "tool_audit_log": tools.TOOL_AUDIT_LOG,
+        "seals": {"registry": store.STORE.registry_seal, "tool_log": tools.TOOL_LOG_SEAL["seal"]},
     }
 
 
@@ -117,6 +118,9 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
             setattr(ls, f, rec[f])
     if "tool_audit_log" in data:
         tools.TOOL_AUDIT_LOG[:] = data["tool_audit_log"]
+    if "seals" in data:
+        store.STORE.registry_seal = data["seals"]["registry"]
+        tools.TOOL_LOG_SEAL["seal"] = data["seals"]["tool_log"]
 
     broken = [cid for cid, st in store.STORE._cases.items() if not st.verify_audit_chain()]
     return {
@@ -127,4 +131,6 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         "pending_proposals": len(learning.STORE.list_pending_proposals()),
         "audit_chain_failures": broken,
         "ledger_valid": learning.STORE.verify_ledger(),
+        "registry_valid": store.STORE.verify_registry(),
+        "tool_log_valid": tools.verify_tool_log(),
     }

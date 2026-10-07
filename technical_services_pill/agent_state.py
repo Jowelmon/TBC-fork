@@ -179,6 +179,8 @@ class AgentState:
             return v.model_dump(mode="json") if hasattr(v, "model_dump") else v
 
         material = {
+            "current_state": self.current_state.value,
+            "confidence_breakdown": self.confidence_breakdown,
             "asset_id": self.asset_id,
             "observation": dump(self.observation),
             "evidence": [dump(e) for e in self.evidence],

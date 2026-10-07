@@ -315,6 +315,7 @@ _CAUSE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 _CHECK_WORDS = ("check", "look at", "first thing", "confirm", "measure", "listen", "make sure")
 _DONT_STARTS = ("never ", "don't ", "do not ", "dont ")
 _ESCALATE_WORDS = ("call", "escalate", "vendor", "safety officer", "get the")
+_ESCALATE_TRIGGERS = ("call the", "call a", "call in", "escalate", "get the safety", "ring the")
 
 # A cause is denied only when the negation governs that cause: a negation
 # word in the same clause, at most three words before the fault phrase
@@ -350,7 +351,9 @@ def _sentence_triggers_cause(sentence: str, keywords: tuple[str, ...]) -> bool:
     float voltage"), a later mention in the same sentence does not count.
     """
     lowered = _SPEAKER.sub("", sentence).lower()
-    if lowered.startswith(_DONT_STARTS):
+    # Warnings and escalation instructions are advice about what to do, not
+    # symptoms: they belong to a heuristic, they never start one.
+    if lowered.startswith(_DONT_STARTS) or any(w in lowered for w in _ESCALATE_TRIGGERS):
         return False
     spans = [pos for k in keywords for pos in _keyword_spans(k, lowered)]
     return bool(spans) and not any(_denied(lowered, pos) for pos in spans)

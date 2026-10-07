@@ -512,6 +512,17 @@ KNOWLEDGE_BASE: dict[str, list[dict]] = {
     ],
     "cases": [
         {
+            # Historical UPS outcome from the site's maintenance records.
+            "id": "KB-CASE-2024-052",
+            "asset_type": "UPS",
+            "fault_signature": "ups battery fault battery eol low soh aged bank",
+            "root_cause": "battery_eol",
+            "action_taken": "battery_replacement",
+            "outcome": "resolved",
+            "validated": True,
+            "kb_ref": "KB-CASE-2024-052",
+        },
+        {
             "id": "KB-CASE-2024-011",
             "asset_type": "CRAH",
             "fault_signature": "supply_air_temp_absent past_calibration_interval "

@@ -56,19 +56,46 @@ from .models import (
 
 
 # --- Tool audit log (spec §6 trace reconstructability) --------------------
+# Keyed hash chain with a seal over length and head, like the case and
+# knowledge chains, so wiping or editing the log is detectable.
 TOOL_AUDIT_LOG: list[dict] = []
+TOOL_LOG_SEAL: dict[str, str | None] = {"seal": None}
+_TOOL_FIELDS = ("tool", "inputs", "output_type", "timestamp", "actor")
+
+
+def _seal_tool_log() -> None:
+    from .audit import compute_hash
+
+    head = TOOL_AUDIT_LOG[-1]["hash"] if TOOL_AUDIT_LOG else ""
+    TOOL_LOG_SEAL["seal"] = compute_hash("seal", {"length": len(TOOL_AUDIT_LOG), "head": head})
+
+
+def verify_tool_log() -> bool:
+    from .audit import compute_hash, verify_chain
+
+    if not verify_chain(TOOL_AUDIT_LOG, _TOOL_FIELDS):
+        return False
+    head = TOOL_AUDIT_LOG[-1]["hash"] if TOOL_AUDIT_LOG else ""
+    return TOOL_LOG_SEAL["seal"] == compute_hash("seal", {"length": len(TOOL_AUDIT_LOG), "head": head})
 
 
 def _log(tool: str, inputs: dict, output: Any) -> None:
-    TOOL_AUDIT_LOG.append(
-        {
-            "tool": tool,
-            "inputs": inputs,
-            "output_type": type(output).__name__,
-            "timestamp": datetime.now().isoformat(),
-            "actor": "agent",
-        }
-    )
+    import json
+
+    from .audit import GENESIS_HASH, compute_hash
+
+    entry = {
+        "tool": tool,
+        # Stored as it will be after a JSON round trip, so the hash survives a restart.
+        "inputs": json.loads(json.dumps(inputs, default=str)),
+        "output_type": type(output).__name__,
+        "timestamp": datetime.now().isoformat(),
+        "actor": "agent",
+        "prev_hash": TOOL_AUDIT_LOG[-1]["hash"] if TOOL_AUDIT_LOG else GENESIS_HASH,
+    }
+    entry["hash"] = compute_hash(entry["prev_hash"], {f: entry[f] for f in _TOOL_FIELDS})
+    TOOL_AUDIT_LOG.append(entry)
+    _seal_tool_log()
 
 
 def _now() -> datetime:

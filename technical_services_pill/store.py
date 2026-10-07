@@ -36,6 +36,20 @@ class CaseStore:
             data = self._db.get_case_state(case_id)
             if data is not None:
                 self._cases[case_id] = self._restore_from_snapshot(data)
+        self.registry_seal: str | None = None
+        self.reseal()
+
+    def reseal(self) -> None:
+        """Keyed seal over the set of case ids: deleting or inserting a case
+        outside the API no longer passes verification."""
+        from .audit import compute_hash
+
+        self.registry_seal = compute_hash("registry", {"cases": sorted(self._cases)})
+
+    def verify_registry(self) -> bool:
+        from .audit import compute_hash
+
+        return self.registry_seal == compute_hash("registry", {"cases": sorted(self._cases)})
 
     def _restore_from_snapshot(self, data: dict[str, Any]) -> AgentState:
         obs = Observation.model_validate(data["observation"])
@@ -62,6 +76,7 @@ class CaseStore:
         case_id = state.case_id or f"CASE-{uuid.uuid4().hex[:8]}"
         state.case_id = case_id
         self._cases[case_id] = state
+        self.reseal()
         self._db.save_case_state(case_id, state.snapshot())
         return case_id
 

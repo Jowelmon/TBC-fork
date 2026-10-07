@@ -38,13 +38,13 @@ def test_mock_extractor_does_not_draft_a_heuristic_for_a_denied_cause():
     )
 
 
-def test_mock_extractor_still_drafts_the_sample_interviews_four_heuristics():
+def test_mock_extractor_still_drafts_the_sample_interviews_heuristics():
     from technical_services_pill.capture import SAMPLE_INTERVIEW
     result = llm._mock_extract(SAMPLE_INTERVIEW)
     causes = {h["likely_cause"] for h in result["heuristics"]}
     assert causes == {
         "refrigerant_leak", "condenser_fouling", "communication_bus_controller_failure",
-        "sensor_hardware_failure",
+        "sensor_hardware_failure", "shaft_misalignment",
     }
 
 

@@ -31,25 +31,42 @@ SESSION_COOKIE = "tbc_session"
 UNLOCK_COOKIE = "tbc_unlocked"
 MAX_FAILURES = 5
 LOCKOUT_SECONDS = 300
-_failures: dict[str, list[float]] = {}  # user -> [count, locked_until]
+_failures: dict[str, list[float]] = {}  # "user@client" -> [count, locked_until]
 _SECRET = os.environ.get("TBC_SECRET") or secrets.token_hex(32)
 
 
+SESSION_SECONDS = 60 * 60 * 8
+_revoked_nonces: set[str] = set()
+
+
+def _mac(body: str) -> str:
+    return hmac.new(_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+
+
 def _sign(user_id: str) -> str:
-    mac = hmac.new(_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
-    return f"{user_id}.{mac}"
+    """``user.issued_at.nonce.mac``: sessions expire, and logging out revokes
+    that exact session, so a copied cookie stops working."""
+    body = f"{user_id}.{int(time.time())}.{secrets.token_hex(8)}"
+    return f"{body}.{_mac(body)}"
 
 
 def _verify(token: str | None) -> str | None:
-    """Return the user id iff the cookie's signature is valid and the user
-    still exists. Any tampering, truncation, or unknown user id -> None."""
-    if not token or "." not in token:
+    """Return the user id iff the cookie is genuine, unexpired, not logged
+    out, and names a known user. Anything else -> None."""
+    if not token or token.count(".") != 3:
         return None
-    user_id, _, mac = token.rpartition(".")
-    expected = hmac.new(_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(mac, expected):
+    body, _, mac = token.rpartition(".")
+    if not hmac.compare_digest(mac, _mac(body)):
+        return None
+    user_id, issued, nonce = body.split(".")
+    if not issued.isdigit() or time.time() - int(issued) > SESSION_SECONDS or nonce in _revoked_nonces:
         return None
     return user_id if user_id in DEMO_USERS else None
+
+
+def revoke(token: str | None) -> None:
+    if token and token.count(".") == 3:
+        _revoked_nonces.add(token.split(".")[2])
 
 
 # Per-user login PINs. Demo defaults are published in DEMO.md so judges can
@@ -74,20 +91,22 @@ def check_pin(user_id: str, pin: str | None) -> bool:
     return bool(expected and pin) and hmac.compare_digest(expected, pin)
 
 
-def locked_for(user_id: str) -> int:
-    """Seconds left on a lockout after too many wrong PINs, or 0."""
-    _, until = _failures.get(user_id, [0, 0.0])
+def locked_for(key: str) -> int:
+    """Seconds left on a lockout after too many wrong PINs, or 0. ``key`` is
+    user plus client address, so one client guessing cannot lock the real
+    user out everywhere else."""
+    _, until = _failures.get(key, [0, 0.0])
     return max(0, int(until - time.time()))
 
 
-def record_pin_result(user_id: str, ok: bool) -> None:
+def record_pin_result(key: str, ok: bool) -> None:
     if ok:
-        _failures.pop(user_id, None)
+        _failures.pop(key, None)
         return
-    count, _ = _failures.get(user_id, [0, 0.0])
+    count, _ = _failures.get(key, [0, 0.0])
     count += 1
     until = time.time() + LOCKOUT_SECONDS if count >= MAX_FAILURES else 0.0
-    _failures[user_id] = [0 if until else count, until]
+    _failures[key] = [0 if until else count, until]
 
 
 def unlocked_users(request: Request) -> set[str]:
@@ -105,7 +124,7 @@ def issue_unlock(response: Response, users: set[str]) -> None:
     body = ",".join(sorted(users))
     mac = hmac.new(_SECRET.encode(), f"unlock:{body}".encode(), hashlib.sha256).hexdigest()
     response.set_cookie(UNLOCK_COOKIE, f"{body}.{mac}", httponly=True, samesite="lax",
-                        max_age=60 * 60 * 12)
+                        max_age=SESSION_SECONDS)
 
 
 def demo_insecure() -> bool:
@@ -116,7 +135,7 @@ def demo_insecure() -> bool:
 def issue_cookie(response: Response, user_id: str) -> None:
     response.set_cookie(
         SESSION_COOKIE, _sign(user_id),
-        httponly=True, samesite="lax", max_age=60 * 60 * 12,
+        httponly=True, samesite="lax", max_age=SESSION_SECONDS,
     )
 
 
@@ -153,6 +172,7 @@ __all__ = [
     "SESSION_COOKIE",
     "check_pin",
     "issue_unlock",
+    "revoke",
     "locked_for",
     "record_pin_result",
     "unlocked_users",
