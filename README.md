@@ -69,6 +69,7 @@ work order → outcome → feedback → **validated case written back to KB**
 | `rbac.py` | 5-role RBAC matrix (technician, asset_ops_manager, knowledge_steward, auditor, admin). Permission checks via `can()` / `require()`. |
 | `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace. |
 | `learning.py` | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back, proposal workflow. |
+| `evidence_flags.py` | Which evidence readings are abnormal, using the decision trees' own thresholds; drives the red highlights on screen. |
 | `audit.py` | `canonical_json`, keyed HMAC-SHA256 `compute_hash`, `verify_chain`, `GENESIS_HASH`. |
 | `mock_registry.py` | Demo data: 7 assets across 4 pills (2 CRAH, 2 chiller, 1 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
 | `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit. |
@@ -186,6 +187,7 @@ snapshots.
 | `POST` | `/cases/{id}/rescore` | Re-score a case awaiting approval against the current KB (required after the knowledge it used was rolled back or revoked) |
 | `GET` | `/kb/proposals` | All proposals, filterable by `status` (stewards/admin) |
 | `POST` | `/kb/proposals/{id}/revoke` | Withdraw one approved proposal's knowledge, `reason` required |
+| `GET` | `/assets` | Registered assets with the fault their pill diagnoses and a default sensor (builds the New Case form) |
 | `GET` | `/me` | The session's user, role and capabilities (the UI gates on capabilities, never user names) |
 | `GET` | `/pills` | Pill Registry: owner steward, KB version, knowledge count, approval rate per pill |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
@@ -462,7 +464,7 @@ AppKey (ADP console: your app > Publish > Service status > API management >
 Copy) into `ADP_APP_KEY`. `.env` is gitignored. The top bar shows which model
 is active.
 
-**Demo guide:** the "Demo guide" button in the top bar walks an eight-step
+**Demo guide:** the "Demo guide" button in the top bar walks a nine-step
 tour of the whole loop, setting the role and screen for each step.
 
 **Console AI HARVEST proof:** `make demo` also runs a complete interview-to-
@@ -554,7 +556,7 @@ make eval         # = PYTHONPATH=. .venv/bin/python tests/evals/run_evals.py
 The Makefile uses `.venv/bin/python` when it exists, so no activation is
 needed after `make install`.
 
-**165 tests** (verified with `make test`; this count is a snapshot — run the
+**179 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases, F1-F3
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
@@ -577,6 +579,7 @@ checks:
 | `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
 | `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
 | `test_judge_round2_fixes.py` | Negation-aware capture, G2b reason reaches the Decision screen, G5 via API |
+| `test_judge_round6_fixes.py` | A re-score that escalates drops the recommendation; abnormal highlights follow the decision trees' thresholds; "no opinion" is not a G9 disagreement; cause priors are verified and rebuilt from validated cases; a quote that rules out its own cause is flagged; `/assets` registry; per-pill proposal credit |
 | `test_judge_round5_fixes.py` | Approved interview moves the pump case from escalated to approval; edits to the version stamp, state, an expert's checks or name detected; deleting a case or wiping the tool log detected; no injection fragment reaches a heuristic; escalation instructions are not cause heuristics; AI disagreement reaches the AOM with routing unchanged; PIN-less switches never count towards lockout; logout revokes the session |
 | `test_judge_round4_fixes.py` | Truncation and unhashed-field edits detected; ledger truncation and KB edits detected; JSON snapshots; rolled-back knowledge blocks approval until re-scored; single-proposal revoke; validated_by is the approver; AI second opinion disagrees with readable citations; plain-language ADP errors; every escalation has a reason; fault/asset mismatch refused; owning steward enforced; expert corroboration; PIN lockout and unlock cookie |
 | `test_judge_round3_fixes.py` | Rejected feedback leaves no proposal; cross-asset/unknown causes refused; ledger records approvals and rollbacks; labels never reused; a re-hashed chain without the key fails and freezes the case; login PIN; seeding never attributed to real users; rationale and hazard acknowledgement; escalation resolution harvested; pump/UPS capture; manual capture with AI offline |
@@ -644,6 +647,7 @@ technical_services_pill/
 ├── store.py / database.py  # SQLite-backed CaseStore + in-memory cache
 ├── learning.py          # LearningStore (validated KB + Jaccard RAG + proposals)
 ├── audit.py             # Keyed (HMAC-SHA256) hash-chain primitives
+├── evidence_flags.py    # Abnormal-reading rules shared with the UI
 ├── mock_registry.py     # Demo data: assets, seed KB, telemetry
 ├── persistence.py       # FastAPI lifecycle snapshots for cases, KB, proposals, audit
 ├── app.py               # FastAPI routes, identity, RBAC, persistence lifecycle
@@ -670,6 +674,7 @@ tests/
 ├── test_judge_round3_fixes.py   # Round 3 judge findings (governance integrity, identity, capture)
 ├── test_judge_round4_fixes.py   # Round 4 judge findings (audit coverage, stale knowledge, AI, governance)
 ├── test_judge_round5_fixes.py   # Round 5 judge findings (reuse payoff, audit coverage, capture, identity)
+├── test_judge_round6_fixes.py   # Round 6 judge findings (re-score, highlights, priors, capture check)
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/

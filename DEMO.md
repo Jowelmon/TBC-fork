@@ -152,7 +152,7 @@ and a red banner appears on the Dashboard for everyone.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 165
+**If asked "is any of this real?"** — `make test` (pytest, currently 179
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

@@ -49,6 +49,15 @@ function causeOptions(causes, selected = '') {
 }
 
 const plain = v => String(v || '').replace(/_/g, ' ');
+// "kb:technical_services:pump_tree:v1:Q2" -> "Pump tree v1, Q2"; the full
+// reference stays in the tooltip.
+const kbRef = r => {
+  const parts = String(r).split(':');
+  const label = parts.length >= 4
+    ? `${plain(parts[2]).replace(/^\w/, c => c.toUpperCase()).replace(/^(Ups|Crah)\b/, m => m.toUpperCase())} ${parts.slice(3).join(', ')}`
+    : String(r);
+  return `<span class="kb-ref" title="${_esc(r)}">${_esc(label)}</span>`;
+};
 // Model calls make the on-screen cloud "think" while they run.
 const thinking = p => (window.__cloud__ ? window.__cloud__.cloudThinking(p) : p);
 const cloudMood = m => window.__cloud__ && window.__cloud__.setCloudMood(m);
@@ -61,20 +70,14 @@ function decisionFacts(s, esc, confBand) {
   const obs = s.observation || {};
   const abnormal = [`Trigger: ${plain(obs.type)} (reading ${obs.reading_status || 'unknown'})`];
   (s.evidence || []).forEach(ev => {
-    const p = ev.payload || {};
-    Object.entries(p).forEach(([k, v]) => {
-      if ((_ABNORMAL_BOOL_KEYS.has(k) && v === true) || (k === 'alarms' && Array.isArray(v) && v.length)) {
-        abnormal.push(k === 'alarms' ? `Alarms: ${v.map(plain).join(', ')}` : _humaniseKey(k));
-      }
-      if (_ABNORMAL_WHEN_FALSE.has(k) && v === false) abnormal.push(`${_humaniseKey(k)}: no`);
-      const t = _ABNORMAL_THRESHOLDS[k];
-      if (t && typeof v === 'number' && ((t.max !== undefined && v > t.max) || (t.min !== undefined && v < t.min))) {
-        abnormal.push(`${_humaniseKey(k)}: ${v}`);
-      }
+    (ev.abnormal || []).forEach(k => {
+      abnormal.push(`${_humaniseKey(k)}: ${_formatValue(k, ev.payload[k], true)}`);
     });
   });
   const hyp = s.ai_hypothesis;
-  const ai = !hyp ? 'Not run' : hyp.status === 'unavailable' ? 'AI offline' : hyp.agrees_with_rules ? 'Agrees' : `Disagrees: ${causeLabel(hyp.hypothesis)}`;
+  const ai = !hyp ? 'Not run' : hyp.status === 'unavailable' ? 'AI offline'
+    : !hyp.hypothesis ? 'No opinion (evidence too thin)'
+    : hyp.agrees_with_rules ? 'Agrees' : `Disagrees: ${causeLabel(hyp.hypothesis)}`;
   return `<div class="decision-facts">
       <div class="decision-fact"><div class="lbl">Diagnosed cause</div><div class="val">${esc(causeLabel(diag.top_cause_id))}</div></div>
       <div class="decision-fact"><div class="lbl">Confidence</div><div class="val"><span class="badge ${cb.cls}">${esc(cb.label)}</span></div></div>
@@ -129,33 +132,11 @@ const WEIGHTS = [
 // F5: Evidence display toggle state (plain English vs raw JSON)
 let _evidenceRawMode = false;
 
-// F5: Keys whose value `true` indicates an abnormal/fault condition
-const _ABNORMAL_BOOL_KEYS = new Set([
-  'low_pressure_switch', 'high_pressure_switch', 'leak_detected',
-  'motor_overcurrent', 'temp_rising', 'greasing_overdue',
-  'soft_foot_detected', 'directional_dominant', 'on_battery',
-  'calibration_overdue', 'past_eol', 'recent_disturbance', 'recent_change', 'tag_remap',
-  'bearing_freq_present', 'temp_rising',
-]);
-// Flags where FALSE is the abnormal reading.
-const _ABNORMAL_WHEN_FALSE = new Set(['balance_ok', 'charger_ok', 'starter_ok', 'contactor_ok',
-  'bus_alive', 'other_tags_reporting', 'gateway_healthy', 'scada_link_healthy', 'fans_running']);
 const FIELD_LABELS = {
   soh_pct: 'State of health (%)', age_months: 'Age (months)', battery_temp_c: 'Battery temp (°C)',
   temp_c: 'Temp (°C)', charge_pct: 'Refrigerant charge (%)', approach_temp: 'Approach temp (°C)',
   axial_mm_s: 'Axial vibration (mm/s)', npsh_margin: 'NPSH margin', load_pct: 'Load (%)',
   flow_pct: 'Flow (%)', float_voltage: 'Float voltage (V)', battery_voltage: 'Battery voltage (V)',
-};
-
-// F5: Numeric thresholds for abnormal values { key: { max?, min?, equals?, suffix? } }
-const _ABNORMAL_THRESHOLDS = {
-  charge_pct:       { max: 70, suffix: '%' },
-  soh_pct:          { max: 60, suffix: '%' },
-  battery_temp_c:   { max: 35, suffix: '°C' },
-  temp_c:           { max: 60, suffix: '°C' },
-  approach_temp:    { min: 3.0, suffix: '°C' },
-  axial_mm_s:       { max: 4.5, suffix: ' mm/s' },
-  dominant_order:   { equals: '2x' },
 };
 
 function _humaniseKey(key) {
@@ -164,48 +145,24 @@ function _humaniseKey(key) {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-function renderEvidencePlain(payload) {
+// Which fields are abnormal comes from the server (evidence_flags.py), which
+// uses the decision trees' own thresholds; this only formats values.
+function _formatValue(key, val, abnormal) {
+  if (typeof val === 'boolean') return abnormal && key.endsWith('_switch') ? 'TRIPPED' : (val ? 'Yes' : 'No');
+  if (key === 'alarms' && Array.isArray(val)) return val.length ? val.map(plain).join(', ') : 'None';
+  if (val !== null && typeof val === 'object') return JSON.stringify(val);
+  return String(val);
+}
+
+function renderEvidencePlain(payload, abnormalKeys = []) {
   if (!payload || typeof payload !== 'object') {
     return '<span class="muted">—</span>';
   }
   const entries = Object.entries(payload);
   return `<div class="evidence-plain">` + entries.map(([key, val]) => {
     const label = _humaniseKey(key);
-    let displayVal = val;
-    let abnormal = false;
-
-    if (_ABNORMAL_BOOL_KEYS.has(key) && val === true) {
-      abnormal = true;
-      displayVal = key.endsWith('_switch') ? 'TRIPPED' : 'Yes';
-    } else if (_ABNORMAL_WHEN_FALSE.has(key) && val === false) {
-      abnormal = true;
-      displayVal = 'No';
-    } else if (key === 'alarms' && Array.isArray(val) && val.length > 0) {
-      abnormal = true;
-      displayVal = val.join(', ');
-    } else if (key === 'alarms' && Array.isArray(val) && val.length === 0) {
-      displayVal = 'None';
-    } else if (typeof val === 'boolean') {
-      displayVal = val ? 'Yes' : 'No';
-    } else if (typeof val === 'number') {
-      const t = _ABNORMAL_THRESHOLDS[key];
-      if (t) {
-        if (t.max !== undefined && val > t.max) abnormal = true;
-        if (t.min !== undefined && val < t.min) abnormal = true;
-        displayVal = val + (FIELD_LABELS[key] ? '' : (t.suffix || ''));
-      } else {
-        displayVal = String(val);
-      }
-    } else if (typeof val === 'string') {
-      const t = _ABNORMAL_THRESHOLDS[key];
-      if (t && t.equals !== undefined && val === t.equals) {
-        abnormal = true;
-      }
-      displayVal = val;
-    } else {
-      displayVal = JSON.stringify(val);
-    }
-
+    const abnormal = abnormalKeys.includes(key);
+    const displayVal = _formatValue(key, val, abnormal);
     const cls = abnormal ? 'evidence-abnormal' : 'evidence-normal';
     return `<div class="evidence-field ${cls}">
       <span class="evidence-field-label">${_esc(label)}</span>
@@ -268,15 +225,7 @@ export function renderDashboard(el, state, h) {
       <div class="card-header"><h3>Create New Case</h3></div>
       <div class="card-body">
         <div class="grid-2">
-          <div class="form-group"><label>Asset ID</label><select id="nc-asset">
-            <option value="CRAH-DC1-01">CRAH-DC1-01 (CRAH)</option>
-            <option value="CRAH-DC1-02">CRAH-DC1-02 (CRAH)</option>
-            <option value="CHILLER-DC1-01">CHILLER-DC1-01 (Chiller)</option>
-            <option value="CHILLER-DC1-02">CHILLER-DC1-02 (Chiller)</option>
-            <option value="UPS-DC1-01">UPS-DC1-01 (UPS)</option>
-            <option value="UPS-DC1-02">UPS-DC1-02 (UPS)</option>
-            <option value="PUMP-DC1-01">PUMP-DC1-01 (Pump)</option>
-            <option value="PUMP-DC1-02">PUMP-DC1-02 (Pump)</option>
+          <div class="form-group"><label for="nc-asset">Asset ID</label><select id="nc-asset">
             <option value="__other__">Other / unregistered asset (demonstrates G5 escalation)</option>
           </select>
           <input id="nc-asset-other" type="text" placeholder="e.g. NOPE-999" style="display:none;margin-top:8px">
@@ -328,21 +277,27 @@ export function renderDashboard(el, state, h) {
   };
   const assetSelect = document.getElementById('nc-asset');
   const assetOther = document.getElementById('nc-asset-other');
-  // Each pill diagnoses one fault type; offer only the faults this asset's
-  // pill can diagnose (the server rejects a mismatch too).
-  const FAULT_FOR = { CRAH: 'temperature_measurement_missing', CHILLER: 'chiller_compressor_trip', UPS: 'ups_battery_fault', PUMP: 'pump_vibration_high' };
-  const SENSOR_FOR = { 'CRAH-DC1-01': 'SA-TEMP-01', 'CRAH-DC1-02': 'SA-TEMP-02' };
+  // The asset list, each asset's fault type and default sensor come from
+  // the registry (/assets); only the fault an asset's pill diagnoses is
+  // offered, and the server rejects a mismatch too.
+  let registry = [];
   const syncFault = () => {
     const other = assetSelect.value === '__other__';
     assetOther.style.display = other ? 'block' : 'none';
-    const fault = FAULT_FOR[assetSelect.value.split('-')[0]];
+    const a = registry.find(x => x.asset_id === assetSelect.value);
     const sel = document.getElementById('nc-fault');
-    [...sel.options].forEach(o => { o.disabled = !other && o.value !== fault; });
-    if (fault) sel.value = fault;
-    document.getElementById('nc-sensor').value = other ? 'UNKNOWN-SENSOR' : (SENSOR_FOR[assetSelect.value] || `${assetSelect.value}-SENSOR`);
+    [...sel.options].forEach(o => { o.disabled = !other && (!a || o.value !== a.fault_type); });
+    if (a) sel.value = a.fault_type;
+    document.getElementById('nc-sensor').value = a ? a.default_sensor : 'UNKNOWN-SENSOR';
   };
   assetSelect.addEventListener('change', syncFault);
-  syncFault();
+  api.get('/assets').then(({ assets }) => {
+    registry = assets;
+    assetSelect.insertAdjacentHTML('afterbegin', assets.map(a =>
+      `<option value="${esc(a.asset_id)}">${esc(a.asset_id)} (${esc(a.type)})</option>`).join(''));
+    assetSelect.selectedIndex = 0;
+    syncFault();
+  }).catch(() => {});
   document.getElementById('btn-create').onclick = async () => {
     const assetId = assetSelect.value === '__other__' ? assetOther.value.trim() : assetSelect.value;
     if (!assetId) { showToast('Enter an asset ID', 'error'); assetOther.focus(); return; }
@@ -402,7 +357,9 @@ export function renderDashboard(el, state, h) {
       // Confidence is 0.0 by default before a diagnosis exists -- showing
       // that as a confidence band would read as "Escalate" for a case
       // that was never diagnosed at all, contradicting the status column.
-      const confCell = c.diagnosis
+      const confCell = c.knowledge_withdrawn
+        ? `<span class="badge badge-red" title="${esc(c.knowledge_withdrawn)}">${(c.confidence * 100).toFixed(0)}% · knowledge withdrawn</span>`
+        : c.diagnosis
         ? (() => { const cb = confBand(c.confidence, c.current_state); return `<span class="badge ${cb.cls}">${cb.label}</span>`; })()
         : '<span class="muted">Not yet diagnosed</span>';
       const canAdv = c.current_state === 'GATHERING_EVIDENCE';
@@ -451,13 +408,15 @@ export function renderDiagnosis(el, state, h) {
         loadCauses(),
       ]);
       const obs = s.observation || {};
-      const cb = confBand(s.confidence, s.current_state);
+      const cb = s.diagnosis ? confBand(s.confidence, s.current_state) : { cls: 'badge-grey', label: 'Not yet diagnosed' };
 
       const nextHintText = {
         GATHERING_EVIDENCE: 'click Advance Agent to run the decision tree.',
         DIAGNOSING: 'the agent is diagnosing; refresh in a moment.',
         RECOMMENDING: 'a recommendation is being prepared.',
-        AWAITING_APPROVAL: 'move to AOM Decision to approve, reject or modify it.',
+        AWAITING_APPROVAL: s.knowledge_withdrawn
+          ? 'knowledge this diagnosis used was withdrawn: re-score it on AOM Decision before anyone approves it.'
+          : 'move to AOM Decision to approve, reject or modify it.',
         EXECUTING: 'a work order is being raised; check the Outcome screen.',
         MONITORING_OUTCOME: 'record the outcome once work is complete, on the Outcome screen.',
         RECORDING_OUTCOME: 'outcome recording is in progress.',
@@ -480,6 +439,10 @@ export function renderDiagnosis(el, state, h) {
         </div>
         <div>${s.current_state === 'GATHERING_EVIDENCE' ? `<button class="btn btn-primary" id="btn-adv">Advance Agent</button>` : ''}</div>
       </div>`;
+
+      if (s.knowledge_withdrawn) {
+        html += `<div class="banner banner-error"><p><strong>Knowledge withdrawn:</strong> ${esc(s.knowledge_withdrawn)}. The confidence below may no longer hold; re-score on AOM Decision before approval.</p></div>`;
+      }
 
       // Two-column: evidence + diagnosis
       html += `<div class="grid-2">
@@ -530,7 +493,7 @@ export function renderDiagnosis(el, state, h) {
           const payload = JSON.stringify(ev.payload, null, 2);
           const payloadHtml = _evidenceRawMode
             ? `<pre class="evidence-payload">${esc(payload)}</pre>`
-            : renderEvidencePlain(ev.payload);
+            : renderEvidencePlain(ev.payload, ev.abnormal || []);
           return `<div class="evidence-item">
             <div class="evidence-dot dot-${src}"></div>
             <div style="flex:1;min-width:0">
@@ -553,7 +516,7 @@ export function renderDiagnosis(el, state, h) {
         const diag = s.diagnosis;
         const causes = (diag.candidate_causes || []).map(c => {
           const top = c.id === diag.top_cause_id;
-          const evRefs = (c.evidence_refs || []).map(r => `<code>${esc(r)}</code>`).join(' ') || '—';
+          const evRefs = (c.evidence_refs || []).map(kbRef).join(', ') || '—';
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;${top ? 'border-color:var(--green);background:var(--green-bg);' : ''}">
             ${top ? '<span class="badge badge-green">Top</span> ' : ''}<strong>${esc(causeLabel(c.id))}</strong>
             <span class="muted" style="margin-left:auto;font-size:14px">Evidence: ${evRefs}</span>
@@ -561,7 +524,7 @@ export function renderDiagnosis(el, state, h) {
         }).join('');
         diagBody.innerHTML = `
           <div style="font-size:16px;margin-bottom:8px"><span class="muted">Root Cause:</span> <strong style="color:var(--blue-text)">${esc(causeLabel(diag.top_cause_id))}</strong></div>
-          ${diag.kb_refs && diag.kb_refs.length ? `<div class="muted" style="margin-bottom:8px">KB: ${diag.kb_refs.map(r => `<code>${esc(r)}</code>`).join(' ')}</div>` : ''}
+          ${diag.kb_refs && diag.kb_refs.length ? `<div class="muted" style="margin-bottom:8px">Knowledge used: ${diag.kb_refs.map(kbRef).join(', ')}</div>` : ''}
           <h4 style="margin:14px 0 8px">Candidate Causes</h4>
           ${causes}
         `;
@@ -577,14 +540,16 @@ export function renderDiagnosis(el, state, h) {
       } else {
         const modelLabel = hyp.status === 'unavailable' ? 'AI offline' : (sysInfo.llm_label || 'AI model');
         const agrees = hyp.agrees_with_rules;
-        const mood = hyp.status === 'unavailable' ? 'offline' : agrees ? 'online' : 'alert';
+        const mood = hyp.status === 'unavailable' ? 'offline' : !hyp.hypothesis ? 'ready' : agrees ? 'online' : 'alert';
         if (aiAvatar) aiAvatar.innerHTML = cloudSvg(mood, 34);
         if (mood === 'alert') cloudMood('alert');
         aiBody.innerHTML = `
           <span class="tier-label tier-advisory">Advisory only — does not affect routing</span>
           <div class="flex gap-8 align-center flex-wrap" style="margin:8px 0">
             <span class="badge ${hyp.status === 'unavailable' ? 'badge-red' : 'badge-purple'}">${esc(modelLabel)}</span>
-            ${hyp.status === 'ok' ? `<span class="badge ${agrees ? 'badge-green' : 'badge-yellow'}">${agrees ? 'Agrees with rule-based diagnosis' : 'Disagrees with rule-based diagnosis (G9)'}</span>` : ''}
+            ${hyp.status === 'ok' ? (hyp.hypothesis
+              ? `<span class="badge ${agrees ? 'badge-green' : 'badge-yellow'}">${agrees ? 'Agrees with rule-based diagnosis' : 'Disagrees with rule-based diagnosis (G9)'}</span>`
+              : '<span class="badge badge-grey">No independent opinion</span>') : ''}
           </div>
           ${hyp.hypothesis ? `<div style="margin-bottom:8px"><span class="muted">AI hypothesis:</span> <strong>${esc(causeLabel(hyp.hypothesis))}</strong></div>` : ''}
           <p class="muted" style="margin-bottom:8px">${esc(hyp.summary || '')}</p>
@@ -618,7 +583,8 @@ export function renderDiagnosis(el, state, h) {
               <p><strong>Matched pattern:</strong> ${esc(item.symptom_pattern)}</p>
               ${corroboration(item, esc)}
               ${item.checks.length ? `<div><strong>Expert checks:</strong><ul class="expert-list">${item.checks.map(check => `<li>${esc(check)}</li>`).join('')}</ul></div>` : ''}
-              ${item.do_not.length ? `<div><strong>Expert cautions:</strong><ul class="expert-list">${item.do_not.map(caution => `<li>${esc(caution)}</li>`).join('')}</ul></div>` : ''}
+              ${item.do_not.length ? `<div><strong>Never:</strong><ul class="expert-list">${item.do_not.map(caution => `<li>${esc(caution)}</li>`).join('')}</ul></div>` : ''}
+              ${(item.escalate_when || []).length ? `<div><strong>Escalate when:</strong><ul class="expert-list">${item.escalate_when.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
               <blockquote class="expert-quote">“${esc(item.evidence_quote)}”</blockquote>
             </article>
           `).join('')}
@@ -700,13 +666,13 @@ export function renderDiagnosis(el, state, h) {
         const rec = s.recommendation;
         const actions = (rec.actions || []).map(a => `
           <div style="display:flex;gap:12px;padding:12px;background:var(--bg-input);border-radius:6px;border:1px solid var(--border);margin-bottom:8px">
-            <span class="badge badge-blue">${esc(a.type)}</span>
-            <div><div><strong>Target:</strong> ${esc(a.target)}</div><div><strong>Detail:</strong> ${esc(a.detail)}</div></div>
+            <span class="badge badge-blue">${esc(plain(a.type))}</span>
+            <div><div><strong>Target:</strong> ${esc(plain(a.target))}</div><div><strong>Detail:</strong> ${esc(a.detail)}</div></div>
           </div>
         `).join('');
         recBody.innerHTML = `${actions}
-          <div class="muted" style="margin-top:8px"><strong>Evidence Refs:</strong> ${(rec.evidence_refs||[]).map(r => `<code>${esc(r)}</code>`).join(' ') || 'none'}</div>
-          <div class="muted" style="margin-top:4px"><strong>KB Refs:</strong> ${(rec.kb_refs||[]).map(r => `<code>${esc(r)}</code>`).join(' ') || 'none'}</div>
+          <div class="muted" style="margin-top:8px"><strong>Grounded in evidence:</strong> ${(rec.evidence_refs||[]).map(r => esc(plain(r))).join(', ') || 'none'}</div>
+          <div class="muted" style="margin-top:4px"><strong>Knowledge used:</strong> ${(rec.kb_refs||[]).map(kbRef).join(', ') || 'none'}</div>
         `;
       }
 
@@ -782,7 +748,7 @@ export function renderDecision(el, state, h) {
       const canApprove = api.can('approve_reject_modify');
       const hazardReason = ((s.guardrail_result && s.guardrail_result.reasons) || [])
         .find(r => r.startsWith('[G2b]') || r.startsWith('[G2]'));
-      if (s.ai_hypothesis && s.ai_hypothesis.status === 'ok' && !s.ai_hypothesis.agrees_with_rules) cloudMood('alert');
+      if (s.ai_hypothesis && s.ai_hypothesis.status === 'ok' && s.ai_hypothesis.hypothesis && !s.ai_hypothesis.agrees_with_rules) cloudMood('alert');
 
       const decisionHint = s.current_state === 'ESCALATED'
         ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
@@ -796,7 +762,7 @@ export function renderDecision(el, state, h) {
       // G3-after-G4 path) -- treat that as "no recommendation" here too,
       // so it falls through to the escalation panel below instead of a
       // hollow "Recommendation Under Review" card.
-      if (s.recommendation && (s.recommendation.actions || []).length > 0) {
+      if (s.current_state !== 'ESCALATED' && s.recommendation && (s.recommendation.actions || []).length > 0) {
         // Safety/environmental hazard (G2b) belongs right next to the
         // decision itself -- not only in the Diagnosis screen's guardrail
         // grid, which an approver reviewing here may never have scrolled to.
@@ -867,13 +833,13 @@ export function renderDecision(el, state, h) {
               <div class="diff-col original">
                 <div class="diff-col-header">Original Actions (Recommended)</div>
                 <div class="diff-col-body">
-                  ${(hd.original_actions || []).map(a => `<div class="diff-field"><div class="diff-field-label">Type</div><div class="diff-field-value">${esc(a.type)}</div><div class="diff-field-label">Target</div><div class="diff-field-value">${esc(a.target)}</div><div class="diff-field-label">Detail</div><div class="diff-field-value">${esc(a.detail)}</div></div>`).join('')}
+                  ${(hd.original_actions || []).map(a => `<div class="diff-field"><div class="diff-field-label">Type</div><div class="diff-field-value">${esc(plain(a.type))}</div><div class="diff-field-label">Target</div><div class="diff-field-value">${esc(plain(a.target))}</div><div class="diff-field-label">Detail</div><div class="diff-field-value">${esc(a.detail)}</div></div>`).join('')}
                 </div>
               </div>
               <div class="diff-col modified">
                 <div class="diff-col-header">Modified Actions (Human-Adjusted)</div>
                 <div class="diff-col-body">
-                  ${hd.modified_actions.map(a => `<div class="diff-field"><div class="diff-field-label">Type</div><div class="diff-field-value">${esc(a.type)}</div><div class="diff-field-label">Target</div><div class="diff-field-value">${esc(a.target)}</div><div class="diff-field-label">Detail</div><div class="diff-field-value">${esc(a.detail)}</div></div>`).join('')}
+                  ${hd.modified_actions.map(a => `<div class="diff-field"><div class="diff-field-label">Type</div><div class="diff-field-value">${esc(plain(a.type))}</div><div class="diff-field-label">Target</div><div class="diff-field-value">${esc(plain(a.target))}</div><div class="diff-field-label">Detail</div><div class="diff-field-value">${esc(a.detail)}</div></div>`).join('')}
                 </div>
               </div>
             </div>
@@ -1274,6 +1240,12 @@ export function renderGovernance(el, state, h) {
       const { proposals } = await api.get('/kb/proposals?status=approved');
       await loadCauses();
       if (!proposals.length) { body.innerHTML = '<p class="muted">No approved proposals in the live knowledge base.</p>'; return; }
+      // Re-run candidates for the latest approval, so the list survives a reload.
+      const latest = proposals.reduce((a, b) => (b.kb_version > a.kb_version ? b : a));
+      const targets = latest.kind === 'expert_capture'
+        ? (latest.heuristics || []).filter(x => !x.new_cause).map(x => [x.likely_cause, x.asset_type])
+        : (latest.confirmed_cause ? [[latest.confirmed_cause, latest.asset_type]] : []);
+      if (targets.length) loadRerunCandidates(targets);
       body.innerHTML = `<p class="muted" style="margin-bottom:8px">Revoke withdraws one proposal's knowledge and leaves everything else. Open cases scored with it are blocked from approval until re-scored.</p>` +
         proposals.slice().reverse().map(p => {
           const pid = esc(p.proposal_id);
@@ -1380,10 +1352,6 @@ export function renderGovernance(el, state, h) {
             await api.post(`/kb/proposals/${id}/approve`);
             showToast(`${id} approved and live in the knowledge base`, 'success');
             refreshAll();
-            const targets = p.kind === 'expert_capture'
-              ? (p.heuristics || []).filter(x => !x.new_cause).map(x => [x.likely_cause, x.asset_type])
-              : (p.confirmed_cause ? [[p.confirmed_cause, p.asset_type]] : []);
-            if (targets.length) await loadRerunCandidates(targets);
           }
           catch (e) { aBtn.disabled = false; showToast(`Error: ${e.message}`, 'error'); }
         };
@@ -1662,6 +1630,7 @@ export function renderCapture(el, state, h) {
           <span class="badge badge-grey" title="The pill this knowledge will be filed under">Files under: ${esc(filed)}</span>
         </div>
         ${x.new_cause ? '<div class="kh-new">New cause: the engine cannot diagnose it until an engineer adds a decision-tree branch. Kept as reference knowledge.</div>' : ''}
+        ${x.check_cause ? '<div class="kh-new">Check the cause: the expert\'s own words may rule it out. Correct it below or untick this item.</div>' : ''}
         ${editable && !x.new_cause ? `<div class="form-group kh-cause"><label for="kh-cause-${i}">Cause (correct it if the AI got it wrong)</label><select id="kh-cause-${i}" class="kh-cause-sel" data-i="${i}">${causeOptions(causes, x.likely_cause)}</select></div>` : ''}
         <div class="kh-row"><span class="kh-label">When</span>${esc(x.symptom_pattern)}</div>
         ${fieldList('Checks', (x.checks || []).filter(c => c !== x.symptom_pattern))}${fieldList('Never', x.do_not)}${fieldList('Escalate when', x.escalate_when)}

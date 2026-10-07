@@ -21,15 +21,12 @@ import sys
 from datetime import datetime, timezone
 
 from technical_services_pill import (
-    ESCALATE_CONFIDENCE,
-    MIN_RECO_CONFIDENCE,
     AgentState,
     AgentStateName,
     CandidateCause,
     Diagnosis,
     EvidenceItem,
     GuardrailContext,
-    GuardrailResult,
     HumanDecision,
     HumanDecisionRecord,
     Observation,

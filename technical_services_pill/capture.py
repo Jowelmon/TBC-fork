@@ -46,6 +46,19 @@ def _clean_list(value: Any) -> list[str]:
             if str(v).strip() and "[REDACTED" not in str(v)][:8]
 
 
+_GENERIC = {"failure", "fault", "hardware", "drop", "risk", "or", "of", "after", "gateway"}
+
+
+def _rules_out(quote: str, cause: str) -> bool:
+    """True if the expert's own words deny the cause the item is filed
+    under, e.g. "it's almost never the sensor" filed as a sensor failure."""
+    words = {w for w in re.findall(r"[a-z]+", cause_label(cause).lower()) if w not in _GENERIC}
+    keywords = next((k for c, k in llm._CAUSE_KEYWORDS if c == cause), ())
+    low = quote.lower()
+    return any(llm._denied(low, pos)
+               for term in (*words, *keywords) for pos in llm._keyword_spans(term, low))
+
+
 def _validate_items(
     sanitized: str, items: list[Any], asset_type: str,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -90,7 +103,14 @@ def _validate_items(
                 f"filed under {owner}, not {asset_type}."
             )
 
+        check_cause = not is_new and _rules_out(quote, cause)
+        if check_cause:
+            warnings.append(
+                f"Item {idx}: the expert's words may rule out \"{cause_label(cause)}\"; "
+                "check the cause before sending."
+            )
         kept.append({
+            "check_cause": check_cause,
             "symptom_pattern": str(item.get("symptom_pattern", "")).strip()[:300],
             "likely_cause": cause,
             "cause_label": cause_label(cause),

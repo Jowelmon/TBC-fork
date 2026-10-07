@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .mock_registry import (
     ASSETS,
@@ -33,26 +33,19 @@ from .mock_registry import (
     KNOWLEDGE_BASE,
     KNOWLEDGE_VERSION,
     _is_past_calibration,
-    get_registry,
 )
 from .models import (
-    ESCALATE_CONFIDENCE,
-    MIN_RECO_CONFIDENCE,
-    AgentStateName,
     EvidenceItem,
     GuardrailContext,
     GuardrailResult,
     HumanDecision,
-    HumanDecisionRecord,
     Outcome,
-    OutcomeResult,
     Recommendation,
     RecommendationAction,
 )
 
-# Avoid a hard import cycle: AgentState imports nothing from this module, so a
-# local import inside the action tools is safe and keeps the module loadable
-# even before agent_state.py is present (used by unit tests of read-tools).
+if TYPE_CHECKING:  # annotation only; a runtime import would be circular
+    from .agent_state import AgentState
 
 
 # --- Tool audit log (spec §6 trace reconstructability) --------------------
@@ -375,7 +368,7 @@ def get_similar_cases(fault_signature: str, asset_type: str = "CRAH", k: int = 3
 # 4. Output / action tools (integrate with AgentState)
 # ========================================================================== #
 def request_human_approval(
-    state: "AgentStateLike",
+    state: "AgentState",
     recommendation: Recommendation,
     *,
     guardrail_ctx: GuardrailContext | None = None,
@@ -403,7 +396,7 @@ def _create_work_order(action: RecommendationAction, asset_id: str, case_id: str
 
 
 def create_work_order_for_state(
-    state: "AgentStateLike", action: RecommendationAction
+    state: "AgentState", action: RecommendationAction
 ) -> str:
     """State-aware WO creator: refuses if no approve/modify decision exists.
 
@@ -421,7 +414,7 @@ def create_work_order_for_state(
     return wo_id
 
 
-def record_outcome_for_state(state: "AgentStateLike", outcome: Outcome) -> None:
+def record_outcome_for_state(state: "AgentState", outcome: Outcome) -> None:
     """Record a maintenance outcome against the state machine."""
     state.record_outcome(outcome)
 

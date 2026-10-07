@@ -9,8 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from technical_services_pill.app import app
-from technical_services_pill.learning import STORE as LSTORE
-from technical_services_pill.store import STORE as CASE_STORE
 
 
 @pytest.fixture()

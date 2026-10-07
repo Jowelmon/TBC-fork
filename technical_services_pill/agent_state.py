@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import ConfigDict, Field, model_validator
 
 from .audit import GENESIS_HASH
 from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
@@ -36,7 +35,6 @@ from .models import (
     MIN_EVIDENCE_COUNT,
     MIN_RECO_CONFIDENCE,
     AgentStateName,
-    CandidateCause,
     Diagnosis,
     EvidenceItem,
     GuardrailContext,
@@ -505,6 +503,8 @@ class AgentState:
                          f"below the {MIN_RECO_CONFIDENCE:.2f} recommendation threshold",
                    escalate=True)
             self.guardrail_result = gr
+            # An escalated case carries no actionable recommendation.
+            self.recommendation = None
             self._transition(AgentStateName.ESCALATED, actor=actor,
                              reason=f"{reason}; confidence {confidence:.2f} now below threshold")
         else:

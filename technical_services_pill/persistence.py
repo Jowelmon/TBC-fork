@@ -34,8 +34,9 @@ CREATE TABLE IF NOT EXISTS snapshots (
 )
 """
 
+# _cause_stats is not saved: it is rebuilt from the validated cases on load.
 _LEARNING_FIELDS = (
-    "_cause_stats", "_proposals", "_kb_version", "_version_seq", "_versions",
+    "_proposals", "_kb_version", "_version_seq", "_versions",
     "ledger", "ledger_seal", "_revocations", "expert_heuristics",
 )
 
@@ -116,6 +117,7 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         ls.validated = [ValidatedCase.model_validate(v) for v in rec["validated"]]
         for f in _LEARNING_FIELDS:
             setattr(ls, f, rec[f])
+        ls.rebuild_stats()
     if "tool_audit_log" in data:
         tools.TOOL_AUDIT_LOG[:] = data["tool_audit_log"]
     if "seals" in data:

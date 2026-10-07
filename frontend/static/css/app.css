@@ -795,6 +795,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   #cases-table th:nth-child(4), #cases-table td:nth-child(4),
   #cases-table th:nth-child(5), #cases-table td:nth-child(5) { display: none; }
   #cases-table th, #cases-table td { padding-left: 8px; padding-right: 8px; }
-  .role-badge { display: none; }
+  .role-badge, .role-label { display: none; }
+  #role-switcher .btn-sm { padding: 4px 8px; }
+  #model-chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #topbar h1 { font-size: 20px; }
 }
 code { font-size: max(0.9em, 13px); }
+.kb-ref { border-bottom: 1px dotted currentColor; cursor: help; }

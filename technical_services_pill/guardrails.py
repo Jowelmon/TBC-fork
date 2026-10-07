@@ -215,7 +215,8 @@ def flag_ai_disagreement(
         return result
     if not ai_hypothesis or ai_hypothesis.get("status") != "ok":
         return result
-    if ai_hypothesis.get("agrees_with_rules"):
+    if ai_hypothesis.get("agrees_with_rules") or not ai_hypothesis.get("hypothesis"):
+        # Agreement, or no opinion at all: neither is a disagreement.
         return result
     from .cause_registry import cause_label
 

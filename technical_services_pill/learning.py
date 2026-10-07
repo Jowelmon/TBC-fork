@@ -196,6 +196,8 @@ class LearningStore:
 
         if not self.ledger or not verify_chain(self.ledger, LEDGER_FIELDS):
             return False
+        if self._cause_stats != self._derived_stats():
+            return False
         if self.ledger[-1]["kb_digest"] != self._kb_digest():
             return False
         return self.ledger_seal == compute_hash(
@@ -290,6 +292,23 @@ class LearningStore:
         st["total"] += 1
         if vc.outcome == "resolved":
             st["confirmed"] += 1
+
+    def _derived_stats(self) -> dict[str, dict[str, int]]:
+        """Cause confirmation counts, computed from the validated cases."""
+        stats: dict[str, dict[str, int]] = {}
+        for vc in self.validated:
+            if vc.case_id == "EXPERT":
+                continue
+            st = stats.setdefault(vc.confirmed_cause, {"confirmed": 0, "total": 0})
+            st["total"] += 1
+            if vc.outcome == "resolved":
+                st["confirmed"] += 1
+        return stats
+
+    def rebuild_stats(self) -> None:
+        """Priors are never stored on their own: they are rebuilt from the
+        hashed validated cases, so they cannot be edited independently."""
+        self._cause_stats = self._derived_stats()
 
     def _remove(self, vc: ValidatedCase) -> None:
         """Remove a validated case and update stats."""

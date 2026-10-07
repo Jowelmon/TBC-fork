@@ -23,9 +23,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from .agent_state import AgentState
@@ -105,7 +104,7 @@ def _need(user_id: str, capability: str):
     try:
         require(u.role, capability)
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return u
 
 
@@ -270,7 +269,7 @@ def create_case(
     try:
         rs = ReadingStatus(reading_status)
     except ValueError:
-        raise HTTPException(400, f"invalid reading_status {reading_status!r}")
+        raise HTTPException(400, f"invalid reading_status {reading_status!r}") from None
     asset_type = _asset_type(asset_id)
     allowed = FAULTS_BY_ASSET_TYPE.get(asset_type)
     if allowed is not None and observation_type not in allowed:
@@ -581,7 +580,11 @@ def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     snap = STORE.snapshot(case_id)
     if snap is None:
         raise HTTPException(404, "case not found")
+    from .evidence_flags import abnormal_fields
+
     snap["asset_type"] = _asset_type(snap["asset_id"])
+    for ev in snap["evidence"]:
+        ev["abnormal"] = abnormal_fields(ev.get("payload"))
     state = STORE.get(case_id)
     snap["knowledge_withdrawn"] = (
         _knowledge_withdrawn(state) if state.current_state == AgentStateName.AWAITING_APPROVAL else None)
@@ -685,7 +688,7 @@ def rescore_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
         state.rescore(conf, breakdown, actor=user,
                       reason=f"re-scored against KB v{breakdown['kb_version_label']}")
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     return {"case_id": case_id, "current_state": state.current_state.value, "confidence": conf}
 
 
@@ -705,7 +708,7 @@ def post_approval(
     try:
         dec = HumanDecision(decision)
     except ValueError:
-        raise HTTPException(400, f"invalid decision {decision!r}")
+        raise HTTPException(400, f"invalid decision {decision!r}") from None
     if not (rationale or "").strip():
         raise HTTPException(400, f"a rationale is required to {dec.value}")
     withdrawn = _knowledge_withdrawn(state)
@@ -754,9 +757,9 @@ def post_approval(
         )
         state.record_human_decision(hd, actor=user)
     except PydanticValidationError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     if dec == HumanDecision.MODIFY:
         # apply the manager's modified action set while preserving G8
         # grounding metadata (kb_refs / evidence_refs) from the original
@@ -792,7 +795,7 @@ def create_work_order(case_id: str, user: str = Depends(resolve_user)) -> dict:
     try:
         wo_id = create_work_order_for_state(state, state.recommendation.actions[0])
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     return {"case_id": case_id, "work_order_id": wo_id,
             "current_state": state.current_state.value}
 
@@ -810,7 +813,7 @@ def post_outcome(
     try:
         res = OutcomeResult(result)
     except ValueError:
-        raise HTTPException(400, f"invalid result {result!r}")
+        raise HTTPException(400, f"invalid result {result!r}") from None
     # Validate root_cause_confirmed against the diagnosed cause universe so
     # free-text typos cannot flow into the KB via the feedback loop (spec §7).
     # None/blank stays allowed (outcome recorded without cause confirmation).
@@ -831,7 +834,7 @@ def post_outcome(
     try:
         state.record_outcome(outcome)
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     return {"case_id": case_id, "current_state": state.current_state.value}
 
 
@@ -938,6 +941,23 @@ PILL_OWNERS: dict[str, str] = {
 }
 
 
+@app.get("/assets")
+def list_assets(user: str = Depends(resolve_user)) -> dict:
+    """Registered assets with the fault their pill diagnoses and a default
+    sensor, so the New Case form is built from the registry itself."""
+    _need(user, "view_case")
+    from .mock_registry import ASSETS, SENSORS
+
+    out = []
+    for asset_id, a in sorted(ASSETS.items()):
+        sensor = next((sid for sid, s in SENSORS.items() if s.get("asset_id") == asset_id),
+                      f"{asset_id}-SENSOR")
+        out.append({"asset_id": asset_id, "type": a.get("type"),
+                    "fault_type": sorted(FAULTS_BY_ASSET_TYPE.get(a.get("type"), []))[0],
+                    "default_sensor": sensor})
+    return {"assets": out}
+
+
 @app.get("/pills")
 def list_pills(user: str = Depends(resolve_user)) -> dict:
     """Registry of the four Intelligence Pills this deployment covers.
@@ -955,7 +975,11 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
     for asset_type, owner in PILL_OWNERS.items():
         knowledge_count = sum(1 for vc in _LSTORE.validated if vc.asset_type == asset_type)
         knowledge_count += sum(1 for h in _LSTORE.expert_heuristics if h.get("asset_type") == asset_type)
-        relevant = [p for p in all_proposals if p.get("asset_type") == asset_type]
+        # An interview touching several pills counts for each pill it files
+        # knowledge under, not only for its main asset type.
+        relevant = [p for p in all_proposals
+                    if p.get("asset_type") == asset_type
+                    or any(h.get("asset_type") == asset_type for h in p.get("heuristics") or [])]
         # A rolled-back or revoked proposal was still approved at the time.
         ever_approved = ("approved", "rolled_back", "revoked")
         decided = [p for p in relevant if p.get("status") in (*ever_approved, "rejected")]
@@ -1030,9 +1054,9 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
         else:
             draft = capture.draft_from_transcript(body.transcript, body.asset_type)
     except capture.CaptureError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
     except llm.LLMError as exc:
-        raise HTTPException(502, f"knowledge extraction failed: {exc}")
+        raise HTTPException(502, f"knowledge extraction failed: {exc}") from exc
 
     proposal = _LSTORE.record_expert_capture(
         draft=draft, submitted_by=user, expert_name=body.expert_name,
@@ -1059,9 +1083,9 @@ def post_capture_draft(body: CaptureDraftRequest, user: str = Depends(resolve_us
     try:
         draft = capture.draft_from_transcript(body.transcript, body.asset_type)
     except capture.CaptureError as exc:
-        raise HTTPException(422, str(exc))
+        raise HTTPException(422, str(exc)) from exc
     except llm.LLMError as exc:
-        raise HTTPException(502, f"knowledge extraction failed: {exc}")
+        raise HTTPException(502, f"knowledge extraction failed: {exc}") from exc
     return {"status": "draft", **draft}
 
 
@@ -1162,9 +1186,9 @@ def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dic
     try:
         proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user)
     except SelfApprovalError as exc:
-        raise HTTPException(403, str(exc))
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
     return {"proposal_id": proposal_id, "status": "approved",
             "decided_by": user, "kb_version": _LSTORE.get_kb_version(),
             "validated_case_id": proposal.get("validated_case_id")}
@@ -1180,9 +1204,9 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
     try:
-        proposal = _LSTORE.reject_proposal(proposal_id, decided_by=user, reason=reason)
+        _LSTORE.reject_proposal(proposal_id, decided_by=user, reason=reason)
     except ValueError as exc:
-        raise HTTPException(404, str(exc))
+        raise HTTPException(404, str(exc)) from exc
     return {"proposal_id": proposal_id, "status": "rejected",
             "decided_by": user, "reason": reason}
 
@@ -1195,7 +1219,7 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
     try:
         return _LSTORE.revoke_proposal(proposal_id, actor=user, reason=reason)
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/kb/proposals")
@@ -1246,7 +1270,7 @@ def rollback_kb(target_version: int, reason: str = "", user: str = Depends(resol
     try:
         return _LSTORE.rollback(target_version, actor=user, reason=reason)
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/kb/ledger")
@@ -1366,7 +1390,7 @@ def close_escalation(
     try:
         state.close_escalation(actor=user, reason=f"escalation resolved by {user}: {reason.strip()}")
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     proposal_id = None
     if confirmed:
         from .learning import STORE as _LSTORE
@@ -1401,7 +1425,7 @@ def request_more_evidence(case_id: str, reason: str, user: str = Depends(resolve
     try:
         state.request_more_evidence(actor=user, reason=reason)
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        raise HTTPException(409, str(exc)) from exc
     return {"case_id": case_id, "current_state": state.current_state.value}
 
 
