@@ -1,6 +1,6 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
-import { api } from './api.js?v=3';
+import { api } from './api.js?v=4';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -11,6 +11,11 @@ function setHTML(id, html) {
 
 const isForbidden = e => /403|lacks capability|forbidden/i.test(e?.message || '');
 const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Role-based access:</strong> ${what} is limited to ${roles}. Switch role in the top bar to see it.</p></div>`;
+
+// A one-line orientation cue at the top of every screen, so someone who
+// just landed on it (or is watching over a shoulder) knows what to do or
+// expect next without reading the whole card stack first.
+const nextHint = text => `<p class="next-hint">${_esc(text)}</p>`;
 
 // F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
@@ -42,7 +47,7 @@ function causeOptions(causes, selected = '') {
     `<optgroup label="${_esc(at)}">${cs.map(c => `<option value="${_esc(c.id)}" ${c.id === (ALIASES[selected] || selected) ? 'selected' : ''}>${_esc(c.label)}</option>`).join('')}</optgroup>`).join('');
 }
 
-// ── Guardrail definitions for G1-G8 grid ───────────────────
+// ── Guardrail definitions for G1-G9 grid ───────────────────
 const GUARDRAILS = [
   { id: 'G1', desc: 'BMS setpoint/interlock block' },
   { id: 'G2', desc: 'Safety-critical escalate' },
@@ -52,15 +57,16 @@ const GUARDRAILS = [
   { id: 'G6', desc: 'Force approval' },
   { id: 'G7', desc: 'Sanitize injection' },
   { id: 'G8', desc: 'Ungrounded reject' },
+  { id: 'G9', desc: 'AI disagreement flag (advisory)' },
 ];
 
 // ── Confidence weights for W1-W5 breakdown ────────────────
 const WEIGHTS = [
-  { id: 'W1', val: 0.30, label: 'Evidence Coverage', sign: '+' },
-  { id: 'W2', val: 0.20, label: 'Peer Agreement', sign: '+' },
-  { id: 'W3', val: 0.25, label: 'KB Match', sign: '+' },
-  { id: 'W4', val: 0.10, label: 'Data Staleness', sign: '-' },
-  { id: 'W5', val: 0.15, label: 'Conflict Penalty', sign: '-' },
+  { id: 'W1', val: 0.30, key: 'evidence_coverage', label: 'Evidence Coverage', sign: '+' },
+  { id: 'W2', val: 0.20, key: 'peer_agreement', label: 'Peer Agreement', sign: '+' },
+  { id: 'W3', val: 0.25, key: 'kb_match', label: 'KB Match', sign: '+' },
+  { id: 'W4', val: 0.10, key: 'data_staleness', label: 'Data Staleness', sign: '-' },
+  { id: 'W5', val: 0.15, key: 'conflict_penalty', label: 'Conflict Penalty', sign: '-' },
 ];
 
 // F5: Evidence display toggle state (plain English vs raw JSON)
@@ -146,6 +152,24 @@ export function renderDashboard(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate, seedDemoCases } = h;
 
   el.innerHTML = `
+    ${nextHint('click a case to see its diagnosis, or seed demo cases / create a new one to get started.')}
+    <details class="card why-panel">
+      <summary><h3 style="display:inline">Why this exists</h3></summary>
+      <div class="card-body">
+        <p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
+        <p><strong>Users:</strong> technicians trigger and work cases; Asset Ops Managers approve every recommendation before anything happens; Knowledge Stewards review and govern what the pill learns from interviews and closed cases.</p>
+        <p><strong>Value:</strong> <em>assumption: manual triage without captured expert knowledge takes roughly 90 minutes per fault; replace with a measured Keppel baseline.</em> This pill's claim is narrower and checkable: a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). Nothing above the <em>assumption</em> line is Keppel data — it isn't.</p>
+      </div>
+    </details>
+    <details class="card why-panel">
+      <summary><h3 style="display:inline">Deployment path</h3></summary>
+      <div class="card-body">
+        <p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
+        <p><strong>Stage 2 -- Production on Tencent Cloud:</strong> containerised deploy (the repo's own Dockerfile), SQLite swapped for a managed database, secrets moved to Tencent Cloud's secret manager, real CMMS work-order integration.</p>
+        <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, a real steward roster in place of the fixed two-steward registry demo.</p>
+        <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>
+      </div>
+    </details>
     <div class="flex justify-between align-center" style="margin-bottom:20px">
       <div></div>
       <div class="flex gap-8">
@@ -177,8 +201,10 @@ export function renderDashboard(el, state, h) {
             <option value="CRAH-DC1-01">CRAH-DC1-01 (CRAH)</option>
             <option value="CRAH-DC1-02">CRAH-DC1-02 (CRAH)</option>
             <option value="CHILLER-DC1-01">CHILLER-DC1-01 (Chiller)</option>
+            <option value="CHILLER-DC1-02">CHILLER-DC1-02 (Chiller)</option>
             <option value="UPS-DC1-01">UPS-DC1-01 (UPS)</option>
             <option value="PUMP-DC1-01">PUMP-DC1-01 (Pump)</option>
+            <option value="PUMP-DC1-02">PUMP-DC1-02 (Pump)</option>
           </select></div>
           <div class="form-group"><label>Sensor ID</label><input id="nc-sensor" type="text" value="SA-TEMP-01" placeholder="e.g. SA-TEMP-01"></div>
           <div class="form-group"><label>Fault Type</label><select id="nc-fault">
@@ -264,7 +290,12 @@ export function renderDashboard(el, state, h) {
     }
     tbody.innerHTML = cases.map(c => {
       const obs = c.observation || {};
-      const cb = confBand(c.confidence);
+      // Confidence is 0.0 by default before a diagnosis exists -- showing
+      // that as a confidence band would read as "Escalate" for a case
+      // that was never diagnosed at all, contradicting the status column.
+      const confCell = c.diagnosis
+        ? (() => { const cb = confBand(c.confidence); return `<span class="badge ${cb.cls}">${cb.label}</span>`; })()
+        : '<span class="muted">Not yet diagnosed</span>';
       const canAdv = c.current_state === 'GATHERING_EVIDENCE';
       return `<tr class="clickable" tabindex="0" role="link" aria-label="Open case ${c.case_id} on ${c.asset_id}" onclick="window.__app__.navigate('diagnosis', '${c.case_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.__app__.navigate('diagnosis', '${c.case_id}')}">
         <td><code>${esc(c.case_id)}</code></td>
@@ -273,7 +304,7 @@ export function renderDashboard(el, state, h) {
         <td>${esc(obs.sensor_id || '-')}</td>
         <td>${esc(obs.reading_status || '-')}</td>
         <td>${statePill(c.current_state)}</td>
-        <td><span class="badge ${cb.cls}">${cb.label}</span></td>
+        <td>${confCell}</td>
         <td onclick="event.stopPropagation()">
           ${canAdv ? `<button class="btn btn-sm btn-primary" onclick="advCase('${c.case_id}')">Advance</button>` : '<span class="muted">-</span>'}
         </td>
@@ -303,15 +334,30 @@ export function renderDiagnosis(el, state, h) {
 
   async function load() {
     try {
-      const [s, expertKnowledge] = await Promise.all([
+      const [s, expertKnowledge, sysInfo] = await Promise.all([
         api.get(`/cases/${cid}`),
         api.get(`/cases/${cid}/expert-knowledge`),
+        api.get('/system/info'),
+        loadCauses(),
       ]);
       const obs = s.observation || {};
       const cb = confBand(s.confidence);
 
+      const nextHintText = {
+        GATHERING_EVIDENCE: 'click Advance Agent to run the decision tree.',
+        DIAGNOSING: 'the agent is diagnosing; refresh in a moment.',
+        RECOMMENDING: 'a recommendation is being prepared.',
+        AWAITING_APPROVAL: 'move to AOM Decision to approve, reject or modify it.',
+        EXECUTING: 'a work order is being raised; check the Outcome screen.',
+        MONITORING_OUTCOME: 'record the outcome once work is complete, on the Outcome screen.',
+        RECORDING_OUTCOME: 'outcome recording is in progress.',
+        FEEDBACK_QUEUED: 'feedback is queued for a knowledge steward to review.',
+        ESCALATED: 'move to AOM Decision to see why, and to resolve it.',
+        CLOSED: 'this case is closed; nothing further is needed.',
+      }[s.current_state] || 'check back as the case progresses.';
+
       // Header
-      let html = `<div class="flex justify-between align-center" style="margin-bottom:16px">
+      let html = `${nextHint(nextHintText)}<div class="flex justify-between align-center" style="margin-bottom:16px">
         <div>
           <h2 style="font-size:20px;font-weight:700">${esc(s.case_id)}</h2>
           <div class="flex gap-8 flex-wrap" style="margin-top:6px;font-size:15px;color:var(--text-dim)">
@@ -332,10 +378,12 @@ export function renderDiagnosis(el, state, h) {
           <div id="ev-body"></div>
         </div></div>
         <div class="card"><div class="card-header"><h3>Decision-Tree Diagnosis</h3></div><div class="card-body">
-          <span class="tier-label tier-ai">Tier 2 - Decision-Tree Diagnosis + Confidence</span>
+          <span class="tier-label tier-fact">Rule-based diagnosis (expert decision tree)</span>
           <div id="diag-body"></div>
         </div></div>
       </div>`;
+
+      html += `<div class="card"><div class="card-header"><h3>AI Second Opinion</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="ai-opinion-body"></div></div>`;
 
       html += `<div class="card"><div class="card-header"><h3>Expert Knowledge Reused</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="expert-knowledge-body"></div></div>`;
 
@@ -349,7 +397,7 @@ export function renderDiagnosis(el, state, h) {
       </div></div>`;
 
       // Guardrail grid
-      html += `<div class="card"><div class="card-header"><h3>Guardrail Engine (G1-G8)</h3></div><div class="card-body" id="gr-body"></div></div>`;
+      html += `<div class="card"><div class="card-header"><h3>Guardrail Engine (G1-G9)</h3></div><div class="card-body" id="gr-body"></div></div>`;
 
       el.innerHTML = html;
 
@@ -403,6 +451,30 @@ export function renderDiagnosis(el, state, h) {
         `;
       }
 
+      // Render AI second opinion (advisory, never affects routing)
+      const aiBody = document.getElementById('ai-opinion-body');
+      const hyp = s.ai_hypothesis;
+      if (!hyp) {
+        aiBody.innerHTML = `<div class="banner banner-info"><p>No AI second opinion yet. It runs alongside the decision tree when the agent is advanced.</p></div>`;
+      } else {
+        const modelLabel = hyp.status === 'unavailable' ? 'AI offline' : (sysInfo.llm_label || 'AI model');
+        const agrees = hyp.agrees_with_rules;
+        aiBody.innerHTML = `
+          <span class="tier-label tier-advisory">Advisory only — does not affect routing</span>
+          <div class="flex gap-8 align-center flex-wrap" style="margin:8px 0">
+            <span class="badge ${hyp.status === 'unavailable' ? 'badge-red' : 'badge-purple'}">${esc(modelLabel)}</span>
+            ${hyp.status === 'ok' ? `<span class="badge ${agrees ? 'badge-green' : 'badge-yellow'}">${agrees ? 'Agrees with rule-based diagnosis' : 'Disagrees with rule-based diagnosis (G9)'}</span>` : ''}
+          </div>
+          ${hyp.hypothesis ? `<div style="margin-bottom:8px"><span class="muted">AI hypothesis:</span> <strong>${esc(causeLabel(hyp.hypothesis))}</strong></div>` : ''}
+          <p class="muted" style="margin-bottom:8px">${esc(hyp.summary || '')}</p>
+          ${hyp.supporting_evidence && hyp.supporting_evidence.length ? `<div><strong>Supporting:</strong><ul class="expert-list">${hyp.supporting_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.conflicting_evidence && hyp.conflicting_evidence.length ? `<div><strong>Conflicting:</strong><ul class="expert-list">${hyp.conflicting_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.missing_evidence && hyp.missing_evidence.length ? `<div><strong>Would help:</strong><ul class="expert-list">${hyp.missing_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.recommended_next_check ? `<div class="muted" style="margin-top:8px"><strong>Suggested next check:</strong> ${esc(hyp.recommended_next_check)}</div>` : ''}
+          <div class="muted" style="margin-top:10px">The AOM decides. This card never approves, executes or changes the case.</div>
+        `;
+      }
+
       const expertBody = document.getElementById('expert-knowledge-body');
       if (!s.diagnosis) {
         expertBody.innerHTML = `<div class="banner banner-info"><p>Approved expert heuristics will appear here when they match the diagnosed cause and asset type.</p></div>`;
@@ -434,6 +506,12 @@ export function renderDiagnosis(el, state, h) {
 
       // Render confidence breakdown
       const confBody = document.getElementById('conf-body');
+      if (!s.diagnosis) {
+        // Confidence defaults to 0.0 before any diagnosis runs; showing a
+        // band for that reads as "Escalate" for a case nothing has judged
+        // yet, contradicting a status column that says "Not yet diagnosed".
+        confBody.innerHTML = `<div class="banner banner-info"><p>Not yet diagnosed. Confidence appears once the decision tree produces a diagnosis.</p></div>`;
+      } else {
       const confVal = s.confidence !== null && s.confidence !== undefined ? (s.confidence * 100).toFixed(1) + '%' : 'N/A';
       const confPct = (s.confidence * 100).toFixed(1);
       const confCls = s.confidence < 0.35 ? 'low' : (s.confidence < 0.55 ? 'medium' : 'high');
@@ -456,21 +534,46 @@ export function renderDiagnosis(el, state, h) {
           </div>
         </div>
         <div class="conf-breakdown">
-          ${WEIGHTS.map(w => `
+          ${WEIGHTS.map(w => {
+            const breakdown = s.confidence_breakdown || {};
+            const factor = breakdown[w.key];
+            const hasFactor = typeof factor === 'number';
+            return `
             <div class="conf-item">
-              <div class="conf-w">${w.id} = ${w.val.toFixed(2)}</div>
-              <div class="conf-v">${w.sign}</div>
+              <div class="conf-w">${w.id} ${w.sign} ${w.val.toFixed(2)}</div>
+              <div class="conf-v">${hasFactor ? factor.toFixed(2) : '—'}</div>
+              <div class="conf-bar-track"><div class="conf-bar-fill ${w.sign === '-' ? 'penalty' : ''}" style="width:${hasFactor ? (factor * 100).toFixed(0) : 0}%"></div></div>
               <div class="conf-l">${w.label}</div>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
         <div class="muted" style="margin-top:12px">confidence = W1*evidence_coverage + W2*peer_agreement + W3*kb_match - W4*staleness - W5*conflict</div>
+        <div class="muted" style="margin-top:4px">KB version used: <strong>${esc((s.confidence_breakdown && s.confidence_breakdown.kb_version_label) || 'not yet diagnosed')}</strong></div>
       `;
+      }
 
       // Render recommendation
       const recBody = document.getElementById('rec-body');
-      if (!s.recommendation) {
-        recBody.innerHTML = `<div class="banner banner-info"><p>No recommendation has been produced yet.</p>${s.current_state === 'ESCALATED' ? '<p><strong>Case escalated.</strong> Confidence is below the escalation threshold (0.35).</p>' : ''}</div>`;
+      // A G3-escalated case can carry a bookkeeping Recommendation (kb_refs
+      // + evidence_refs only, no actions -- see app.py's G3-after-G4 path)
+      // purely so the guardrail engine has something to evaluate. Treat it
+      // as "no recommendation" for display: an empty "Recommended Action"
+      // card on an escalated case reads as a contradiction otherwise.
+      const hasRecommendation = s.recommendation && (s.recommendation.actions || []).length > 0;
+      if (!hasRecommendation) {
+        // The escalation reason always comes from the guardrail result that
+        // actually fired (G1-G9) -- never a hardcoded rule or threshold,
+        // since any of several guardrails (not only low confidence) can
+        // be why a case has no recommendation.
+        const escReasons = (s.guardrail_result && s.guardrail_result.reasons) || [];
+        recBody.innerHTML = `<div class="banner banner-info"><p>No recommendation has been produced yet.</p>${
+          s.current_state === 'ESCALATED'
+            ? (escReasons.length
+                ? `<p><strong>Case escalated.</strong></p><ul style="margin:4px 0 0 18px">${escReasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+                : '<p><strong>Case escalated.</strong></p>')
+            : ''
+        }</div>`;
       } else {
         const rec = s.recommendation;
         const actions = (rec.actions || []).map(a => `
@@ -551,10 +654,19 @@ export function renderDecision(el, state, h) {
       const role = api.user();
       const canApprove = ['mgr1', 'admin1'].includes(role);
 
-      let html = `<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
+      const decisionHint = s.current_state === 'ESCALATED'
+        ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
+        : s.current_state === 'AWAITING_APPROVAL'
+        ? (canApprove ? 'approve, reject or modify sends the case to execution.' : 'an Asset Ops Manager needs to approve, reject or modify this.')
+        : 'this case has no pending decision right now.';
+      let html = `${nextHint(decisionHint)}<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
 
-      // Show recommendation (read-only)
-      if (s.recommendation && s.recommendation.actions) {
+      // Show recommendation (read-only). A G3-escalated case can carry a
+      // bookkeeping Recommendation with no actions (see app.py's
+      // G3-after-G4 path) -- treat that as "no recommendation" here too,
+      // so it falls through to the escalation panel below instead of a
+      // hollow "Recommendation Under Review" card.
+      if (s.recommendation && (s.recommendation.actions || []).length > 0) {
         html += `<div class="card"><div class="card-header"><h3>Recommendation Under Review</h3></div><div class="card-body">
           <span class="tier-label tier-action">Tier 3 - Recommended Action (Read-Only)</span>
           <span class="tier-label tier-human">Tier 4 - Human Decision (Below)</span>`;
@@ -565,17 +677,28 @@ export function renderDecision(el, state, h) {
           </div>
         `).join('');
         html += `</div></div>`;
-      } else {
-        // No recommendation — check if escalated due to low confidence
-        if (s.current_state === 'ESCALATED' || (s.confidence !== null && s.confidence < 0.35)) {
-          html += `<div class="banner banner-error">
-            <p><strong>Escalated - No Recommendation (G4)</strong></p>
-            <p>Confidence ${s.confidence !== null ? '(' + (s.confidence * 100).toFixed(0) + '%)' : ''} is below the escalation threshold (0.35).</p>
-            <p>This case has been automatically escalated. No approve/reject/modify controls are available.</p>
-          </div>`;
-        } else {
-          html += `<div class="banner banner-info"><p>No recommendation to review yet.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
+      } else if (s.current_state === 'ESCALATED') {
+        // Why it escalated always comes from the guardrail result that
+        // actually fired -- G1-G9, never a hardcoded rule or threshold
+        // (several different guardrails can escalate a case, not only G4).
+        const gr = s.guardrail_result;
+        const reasons = (gr && gr.reasons) || [];
+        const g3Reason = reasons.find(r => r.includes('[G3]'));
+        const whoToCallMatch = g3Reason && g3Reason.match(/maps to ([^;]+);/);
+        const whoToCall = whoToCallMatch ? whoToCallMatch[1].trim() : null;
+
+        html += `<div class="banner banner-error">
+          <p><strong>Case escalated.</strong> No recommendation; approve, reject or modify is not available.</p>
+          ${reasons.length
+            ? `<ul style="margin:8px 0 0 18px">${reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+            : '<p>No guardrail reason was recorded for this escalation.</p>'}
+        </div>`;
+        if (whoToCall) {
+          html += `<div class="banner banner-info"><p><strong>Who to call:</strong> ${esc(whoToCall)}</p></div>`;
         }
+        html += `<div class="card"><div class="card-header"><h3>Resolve Escalation</h3></div><div class="card-body" id="esc-actions"></div></div>`;
+      } else {
+        html += `<div class="banner banner-info"><p>No recommendation to review yet.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
       }
 
       // Show existing decision if any
@@ -617,11 +740,48 @@ export function renderDecision(el, state, h) {
             <div id="decision-form"></div>
           </div></div>`;
         }
-      } else {
+      } else if (s.current_state !== 'ESCALATED') {
+        // The ESCALATED case already got its own panel above (why it
+        // escalated, who to call, resolve controls) -- this generic banner
+        // would just repeat "Current state: ESCALATED" underneath it.
         html += `<div class="banner banner-info"><p>Decision controls are available when the case is in <strong>AWAITING_APPROVAL</strong> state.</p><p>Current state: <strong>${esc(s.current_state)}</strong></p></div>`;
       }
 
       el.innerHTML = html;
+
+      // Wire escalation resolution controls (role-gated: approve_reject_modify)
+      const escBody = document.getElementById('esc-actions');
+      if (escBody) {
+        if (!canApprove) {
+          escBody.innerHTML = `<p class="muted">Resolving an escalation requires the Asset Ops Manager role. Switch role in the top bar.</p>`;
+        } else {
+          escBody.innerHTML = `
+            <div class="form-group"><label for="esc-reason">Reason</label><input id="esc-reason" type="text" placeholder="e.g. BMS vendor confirmed a bus fault; closing with their reference number"></div>
+            <div class="flex gap-8 flex-wrap">
+              <button class="btn btn-secondary" id="btn-esc-evidence">Request more evidence (reason required)</button>
+              <button class="btn btn-red" id="btn-esc-close">Close escalation (resolution required)</button>
+            </div>
+          `;
+          document.getElementById('btn-esc-evidence').onclick = async () => {
+            const reason = document.getElementById('esc-reason').value.trim();
+            if (!reason) { showToast('Give a reason to request more evidence', 'error'); return; }
+            try {
+              await api.post(`/cases/${cid}/escalation/evidence`, { reason });
+              showToast('More evidence requested; case returned to gathering', 'success');
+              load();
+            } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          };
+          document.getElementById('btn-esc-close').onclick = async () => {
+            const reason = document.getElementById('esc-reason').value.trim();
+            if (!reason) { showToast('Give the resolution to close this escalation', 'error'); return; }
+            try {
+              await api.post(`/cases/${cid}/escalation/close`, { reason });
+              showToast('Escalation closed', 'success');
+              load();
+            } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          };
+        }
+      }
 
       // Wire buttons
       const btnApprove = document.getElementById('btn-approve');
@@ -688,7 +848,10 @@ export function renderOutcome(el, state, h) {
   async function load() {
     try {
       const s = await api.get(`/cases/${cid}`);
-      let html = `<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
+      const outcomeHint = s.outcome
+        ? 'submit feedback so a knowledge steward can validate it into the knowledge base.'
+        : 'raise the work order, then record the outcome once the work is done.';
+      let html = `${nextHint(outcomeHint)}<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
 
       // Work order
       html += `<div class="grid-2">
@@ -825,14 +988,77 @@ export function renderGovernance(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
 
   el.innerHTML = `
+    ${nextHint('approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.')}
     <div class="stats-row" id="gov-stats"></div>
+    <div class="card"><div class="card-header"><h3>Pill Registry</h3></div><div class="card-body" id="pill-registry-body"></div></div>
     <div class="grid-2">
       <div class="card"><div class="card-header"><h3>Cause Distribution</h3></div><div class="card-body" id="cause-dist"></div></div>
       <div class="card"><div class="card-header"><h3>Governance Pipeline</h3></div><div class="card-body" id="pipeline-body"></div></div>
     </div>
     <div class="card"><div class="card-header"><h3>Knowledge Approval Queue</h3></div><div class="card-body" id="queue-body"></div></div>
+    <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>
+    <div class="card"><div class="card-header"><h3>Rollback</h3></div><div class="card-body" id="rollback-body"></div></div>
     <div class="card"><div class="card-header"><h3>SHA-256 Audit Trace</h3></div><div class="card-body" id="trace-body"></div></div>
   `;
+
+  // Rollback -- admin only. Lets anyone see the addressable versions even
+  // if they can't act on them, so the mapping from "v1.4.0" on screen to
+  // the integer /kb/rollback/{N} takes is never a guess. A named function
+  // (not a fire-and-forget IIFE) so an approval/rejection elsewhere on this
+  // same screen can refresh it too -- otherwise it shows a stale "current".
+  async function loadRollback() {
+    const body = document.getElementById('rollback-body');
+    if (!body) return;
+    const role = api.user();
+    const canRollback = role === 'admin1';
+    try {
+      const { versions, current_version, current_label } = await api.get('/kb/versions');
+      const options = versions.map(v => `<option value="${v.version}" ${v.version === current_version ? 'selected' : ''}>v${esc(v.label)} (version ${v.version})${v.version === current_version ? ' — current' : ''}</option>`).join('');
+      body.innerHTML = `
+        <p class="muted" style="margin-bottom:10px">Current KB: <strong>v${esc(current_label)}</strong> (version ${current_version}). Rolling back removes every case added after the chosen version.</p>
+        ${canRollback ? `
+          <div class="flex gap-8 flex-wrap align-center">
+            <select id="rb-version">${options}</select>
+            <button class="btn btn-red btn-sm" id="rb-go">Roll back</button>
+          </div>
+        ` : `<p class="muted">Rolling back requires the Admin role. Switch role in the top bar to see the control.</p>`}
+      `;
+      if (canRollback) {
+        document.getElementById('rb-go').onclick = async () => {
+          const target = document.getElementById('rb-version').value;
+          try {
+            const r = await api.post(`/kb/rollback/${target}`);
+            showToast(`Rolled back to version ${r.rolled_back_to} (${r.removed_cases} case(s) removed)`, 'success');
+            loadStats(); loadQueue(); loadRollback(); window.__app__?.refreshKbVersion?.();
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+      }
+    } catch (e) {
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  }
+  loadRollback();
+
+  // Pill Registry — all four pills, who owns review, and how their KB is doing
+  (async () => {
+    const body = document.getElementById('pill-registry-body');
+    try {
+      const { pills } = await api.get('/pills');
+      body.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Pill</th><th>Owner Steward</th><th>KB Version</th><th>Knowledge Items</th><th>Approval Rate</th></tr></thead>
+        <tbody>${pills.map(p => `<tr>
+          <td><strong>${esc(p.asset_type)}</strong></td>
+          <td>${esc(p.owner_steward)}</td>
+          <td>v${esc(p.kb_version_label)}</td>
+          <td>${p.knowledge_count}</td>
+          <td>${p.approval_rate === null ? '<span class="muted">no decisions yet</span>' : `${(p.approval_rate * 100).toFixed(0)}% (${p.proposals_approved}/${p.proposals_submitted})`}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <p class="muted" style="margin-top:10px">All four pills currently share one knowledge base, so the KB version is the same for each -- there is no independent per-pill KB in this build.</p>`;
+    } catch (e) {
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  })();
 
   // Pipeline visual
   setHTML('pipeline-body', `
@@ -895,7 +1121,14 @@ export function renderGovernance(el, state, h) {
         const box = document.getElementById(`rj-${id}`);
         if (aBtn) aBtn.onclick = async () => {
           aBtn.disabled = true;
-          try { await api.post(`/kb/proposals/${id}/approve`); showToast(`${id} approved and live in the knowledge base`, 'success'); loadQueue(); loadStats(); window.__app__?.refreshKbVersion?.(); }
+          try {
+            await api.post(`/kb/proposals/${id}/approve`);
+            showToast(`${id} approved and live in the knowledge base`, 'success');
+            loadQueue(); loadStats(); loadRollback(); window.__app__?.refreshKbVersion?.();
+            if (p.kind !== 'expert_capture' && p.confirmed_cause) {
+              await loadRerunCandidates(p.confirmed_cause, p.asset_type);
+            }
+          }
           catch (e) { aBtn.disabled = false; showToast(`Error: ${e.message}`, 'error'); }
         };
         if (rBtn) rBtn.onclick = () => { box.hidden = false; document.getElementById(`rj-reason-${id}`).focus(); };
@@ -913,6 +1146,53 @@ export function renderGovernance(el, state, h) {
       qb.innerHTML = isForbidden(e)
         ? rbacNote('Reviewing knowledge proposals', 'knowledge stewards (steward1, steward2)')
         : `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  }
+
+  // Re-run diagnosis on similar still-open cases after a proposal approves
+  // (Phase 3: "confidence the KB can move" — show the before/after, live).
+  async function loadRerunCandidates(cause, assetType) {
+    const card = document.getElementById('rerun-card');
+    const body = document.getElementById('rerun-body');
+    if (!card || !body) return;
+    try {
+      const params = new URLSearchParams({ cause });
+      if (assetType) params.set('asset_type', assetType);
+      const { matches } = await api.get(`/cases/similar?${params}`);
+      card.hidden = false;
+      if (!matches.length) {
+        body.innerHTML = `<p class="muted">No other open case is currently diagnosed as <strong>${esc(causeLabel(cause))}</strong> to re-score.</p>`;
+        return;
+      }
+      body.innerHTML = `
+        <p class="muted" style="margin-bottom:10px">These open cases were diagnosed as <strong>${esc(causeLabel(cause))}</strong> before this approval. Re-run shows what the KB update just changed, without touching the case.</p>
+        ${matches.map(m => `
+          <div class="rerun-row" id="rerun-row-${esc(m.case_id)}">
+            <div><code>${esc(m.case_id)}</code> <span class="muted">${esc(m.asset_id)} · ${esc(m.current_state)}</span></div>
+            <button class="btn btn-secondary btn-sm" id="rerun-btn-${esc(m.case_id)}">Re-run diagnosis</button>
+            <span id="rerun-result-${esc(m.case_id)}"></span>
+          </div>
+        `).join('')}
+      `;
+      matches.forEach(m => {
+        const btn = document.getElementById(`rerun-btn-${m.case_id}`);
+        if (!btn) return;
+        btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            const preview = await api.get(`/cases/${m.case_id}/confidence-preview`);
+            const before = (preview.before * 100).toFixed(1);
+            const after = (preview.after * 100).toFixed(1);
+            const up = preview.after >= preview.before;
+            document.getElementById(`rerun-result-${m.case_id}`).innerHTML =
+              ` <span class="badge ${up ? 'badge-green' : 'badge-grey'}">${before}% &rarr; ${after}%</span>`;
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+          btn.disabled = false;
+        };
+      });
+    } catch (e) {
+      card.hidden = false;
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
     }
   }
 
@@ -992,26 +1272,33 @@ export function renderGovernance(el, state, h) {
 // Demo case seeder
 // ═══════════════════════════════════════════════════════════
 export async function seedDemoCases(h) {
-  const { showToast, navigate } = h;
+  const { api, showToast, navigate } = h;
+  const originalRole = api.user(); // restore this session once seeding is done
 
+  // Seeding plays several actors in turn (tech1, mgr1, ...). Identity is
+  // the signed session cookie now, so each actor switch is a real login —
+  // not a ?user= param, which would be ignored outside insecure mode.
   async function apiAs(user, method, path, params) {
+    await api.login(user);
     const url = new URL(path, window.location.origin);
-    url.searchParams.set('user', user);
     if (method === 'POST' && params) {
       for (const [k, v] of Object.entries(params)) {
         if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
       }
     }
-    const res = await fetch(url, { method });
+    const res = await fetch(url, { method, credentials: 'same-origin' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
     return body;
   }
 
   async function apiJsonAs(user, path, jsonBody) {
+    await api.login(user);
     const url = new URL(path, window.location.origin);
-    url.searchParams.set('user', user);
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody || {}) });
+    const res = await fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody || {}),
+    });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
     return body;
@@ -1040,9 +1327,11 @@ export async function seedDemoCases(h) {
     await apiAs('tech1', 'POST', `/cases/${c3}/advance`);
 
     showToast('Seeded 3 cases: 1 CLOSED, 1 ESCALATED, 1 AWAITING_APPROVAL', 'success');
-    navigate('dashboard');
   } catch (e) {
     showToast(`Seed error: ${e.message}`, 'error');
+  } finally {
+    await api.login(originalRole); // seeding plays several actors; restore the real one
+    navigate('dashboard');
   }
 }
 
@@ -1062,6 +1351,7 @@ export function renderCapture(el, state, h) {
   let submitted = null;  // proposal after submit
 
   el.innerHTML = `
+    ${nextHint('a different knowledge steward must approve this draft before it is reused in diagnoses.')}
     <ol class="cap-steps" id="cap-steps" aria-label="Capture progress">
       <li data-step="1">Interview</li>
       <li data-step="2">AI draft</li>
@@ -1188,6 +1478,18 @@ export function renderCapture(el, state, h) {
       document.querySelectorAll('.kh-item').forEach(card => card.classList.toggle('kh-excluded', !kept().includes(+card.dataset.i)));
     };
     document.querySelectorAll('.kh-keep').forEach(c => c.addEventListener('change', refresh));
+    // Correcting the cause changes which pill owns it -- update the "Files
+    // under" chip (and the cause badge) live, not only once the review is
+    // sent and the server's response comes back.
+    document.querySelectorAll('.kh-cause-sel').forEach(sel => sel.addEventListener('change', () => {
+      const info = causes.find(c => c.id === sel.value);
+      if (!info) return;
+      const card = sel.closest('.kh-item');
+      const filedBadge = card.querySelector('.kh-head .badge-grey');
+      if (filedBadge) filedBadge.textContent = `Files under: ${info.asset_type}`;
+      const causeBadge = card.querySelector('.kh-head .badge-blue, .kh-head .badge-yellow');
+      if (causeBadge) { causeBadge.textContent = info.label; causeBadge.className = 'badge badge-blue'; }
+    }));
     btn.onclick = submit;
   }
 
