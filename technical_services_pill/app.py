@@ -231,9 +231,11 @@ def me(user: str = Depends(resolve_user)) -> dict:
 
 @app.post("/logout")
 def logout(request: Request, response: Response) -> dict:
-    from .auth import SESSION_COOKIE, revoke
+    from .auth import SESSION_COOKIE, UNLOCK_COOKIE, revoke
 
-    revoke(request.cookies.get(SESSION_COOKIE))
+    # Both cookies: a copied "switch back without a PIN" cookie must not
+    # outlive the logout either.
+    revoke(request.cookies.get(SESSION_COOKIE), request.cookies.get(UNLOCK_COOKIE))
     clear_cookie(response)
     return {"status": "logged out"}
 
@@ -345,8 +347,7 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
 
 def _advance(state: AgentState) -> None:
     while state.current_state == AgentStateName.GATHERING_EVIDENCE:
-        from .confidence import derive_confidence_signals, score_confidence, evidence_coverage_score
-        from .decision_tree import evaluate_decision_tree, FAULT_BRANCH_COUNTS
+        from .decision_tree import evaluate_decision_tree
         from .models import CandidateCause, Diagnosis, Recommendation
 
         # G5: an asset outside the registry is out of this pill's scope.
@@ -397,35 +398,7 @@ def _advance(state: AgentState) -> None:
             reasoning_trace=f"decision tree -> {top.cause_id}",
             kb_refs=top.kb_refs,
         )
-        coverage = evidence_coverage_score(
-            state.evidence,
-            FAULT_BRANCH_COUNTS.get(state.observation.type, 6),
-        )
-        sig = _fault_signature(state, top.cause_id, top.kb_refs)
-        from .learning import STORE as _LSTORE
-
-        kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id),
-                                          evidence_terms=_evidence_terms(state))
-        signals = derive_confidence_signals(
-            state.evidence, asset_id=state.asset_id, sensor_id=state.observation.sensor_id,
-        )
-        conf = score_confidence(
-            evidence_coverage=coverage,
-            peer_agreement=signals["peer_agreement"],
-            kb_match=kb_match,
-            data_staleness=signals["data_staleness"],
-            conflict_penalty=signals["conflict_penalty"],
-        )
-        breakdown = {
-            "evidence_coverage": coverage,
-            "peer_agreement": signals["peer_agreement"],
-            "kb_match": kb_match,
-            "data_staleness": signals["data_staleness"],
-            "conflict_penalty": signals["conflict_penalty"],
-            "kb_version_label": _LSTORE.get_kb_version_label(),
-            "kb_version": _LSTORE.get_kb_version(),
-            "ledger_seq": len(_LSTORE.ledger),
-        }
+        conf, breakdown = _confidence_for(state, top.cause_id, top.kb_refs)
         hypothesis = generate_diagnostic_hypothesis(
             asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
             observations={
@@ -638,15 +611,19 @@ def preview_confidence(case_id: str, user: str = Depends(resolve_user)) -> dict:
 def _score_against_current_kb(state: AgentState) -> tuple[float, dict]:
     if not state.diagnosis or not state.diagnosis.top_cause_id or state.diagnosis.top_cause_id == "unresolvable":
         raise HTTPException(409, "case has no resolvable diagnosis to re-score")
+    return _confidence_for(state, state.diagnosis.top_cause_id, state.diagnosis.kb_refs)
+
+
+def _confidence_for(state: AgentState, cause_id: str, kb_refs: list[str]) -> tuple[float, dict]:
+    """Confidence in ``cause_id`` for this case against the current KB, with
+    its W1-W5 breakdown and the pill knowledge version it was scored with."""
     from .confidence import derive_confidence_signals, evidence_coverage_score, score_confidence
     from .decision_tree import FAULT_BRANCH_COUNTS
     from .learning import STORE as _LSTORE
 
-    coverage = evidence_coverage_score(
-        state.evidence, FAULT_BRANCH_COUNTS.get(state.observation.type, 6),
-    )
-    sig = _fault_signature(state, state.diagnosis.top_cause_id, state.diagnosis.kb_refs)
-    kb_match = _LSTORE.kb_match_score(sig, state.diagnosis.top_cause_id, _asset_type(state.asset_id),
+    pill = _asset_type(state.asset_id)
+    coverage = evidence_coverage_score(state.evidence, FAULT_BRANCH_COUNTS.get(state.observation.type, 6))
+    kb_match = _LSTORE.kb_match_score(_fault_signature(state, cause_id, kb_refs), cause_id, pill,
                                       evidence_terms=_evidence_terms(state))
     signals = derive_confidence_signals(
         state.evidence, asset_id=state.asset_id, sensor_id=state.observation.sensor_id,
@@ -664,8 +641,9 @@ def _score_against_current_kb(state: AgentState) -> tuple[float, dict]:
         "kb_match": kb_match,
         "data_staleness": signals["data_staleness"],
         "conflict_penalty": signals["conflict_penalty"],
-        "kb_version_label": _LSTORE.get_kb_version_label(),
-        "kb_version": _LSTORE.get_kb_version(),
+        "pill": pill,
+        "kb_version": _LSTORE.version_of(pill),
+        "kb_version_label": _LSTORE.label_of(pill),
         "ledger_seq": len(_LSTORE.ledger),
     }
 
@@ -674,7 +652,7 @@ def _knowledge_withdrawn(state: AgentState) -> str | None:
     from .learning import STORE as _LSTORE
 
     b = state.confidence_breakdown or {}
-    return _LSTORE.withdrawn_reason(b.get("kb_version"), b.get("ledger_seq"))
+    return _LSTORE.withdrawn_reason(b.get("pill"), b.get("kb_version"), b.get("ledger_seq"))
 
 
 @app.post("/cases/{case_id}/rescore")
@@ -686,7 +664,7 @@ def rescore_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     conf, breakdown = _score_against_current_kb(state)
     try:
         state.rescore(conf, breakdown, actor=user,
-                      reason=f"re-scored against KB v{breakdown['kb_version_label']}")
+                      reason=f"re-scored against {breakdown['kb_version_label']} knowledge")
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"case_id": case_id, "current_state": state.current_state.value, "confidence": conf}
@@ -888,6 +866,7 @@ def post_feedback(
         "outcome": state.outcome.result.value,
         "submitted_by": user,
     }
+    _require_intact_ledger()
     fb_id = _fb(case_id, clean, state=state)
     state.queue_feedback(fb_id, actor=user)
     from .learning import STORE as _LSTORE
@@ -969,15 +948,10 @@ def list_assets(user: str = Depends(resolve_user)) -> dict:
 
 @app.get("/pills")
 def list_pills(user: str = Depends(resolve_user)) -> dict:
-    """Registry of the four Intelligence Pills this deployment covers.
-
-    All four currently share one knowledge base (there is a single
-    LearningStore, not one per pill), so kb_version_label is the same
-    for every row -- that is the real, current architecture, not a
-    per-pill version this repo doesn't actually track.
-    """
+    """Registry of the four Intelligence Pills: owner steward, each pill's
+    own knowledge version, how much knowledge it holds, and its approvals."""
     _need(user, "view_case")
-    from .learning import STORE as _LSTORE
+    from .learning import STORE as _LSTORE, proposal_pills
 
     all_proposals = _LSTORE.list_all_proposals()
     pills = []
@@ -986,9 +960,7 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
         knowledge_count += sum(1 for h in _LSTORE.expert_heuristics if h.get("asset_type") == asset_type)
         # An interview touching several pills counts for each pill it files
         # knowledge under, not only for its main asset type.
-        relevant = [p for p in all_proposals
-                    if p.get("asset_type") == asset_type
-                    or any(h.get("asset_type") == asset_type for h in p.get("heuristics") or [])]
+        relevant = [p for p in all_proposals if asset_type in proposal_pills(p)]
         # A rolled-back or revoked proposal was still approved at the time.
         ever_approved = ("approved", "rolled_back", "revoked")
         decided = [p for p in relevant if p.get("status") in (*ever_approved, "rejected")]
@@ -996,7 +968,8 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
         pills.append({
             "asset_type": asset_type,
             "owner_steward": owner,
-            "kb_version_label": _LSTORE.get_kb_version_label(),
+            "kb_version": _LSTORE.version_of(asset_type),
+            "kb_version_label": _LSTORE.label_of(asset_type),
             "knowledge_count": knowledge_count,
             "proposals_submitted": len(relevant),
             "proposals_decided": len(decided),
@@ -1075,11 +1048,11 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
     except llm.LLMError as exc:
         raise HTTPException(502, f"knowledge extraction failed: {exc}") from exc
 
+    _require_intact_ledger()
     proposal = _LSTORE.record_expert_capture(
         draft=draft, submitted_by=user, expert_name=body.expert_name,
-        expert_role=body.expert_role, asset_type=body.asset_type,
+        expert_role=body.expert_role, asset_type=body.asset_type, expert_consent=True,
     )
-    proposal["expert_consent"] = True
     _log("capture_expert_knowledge",
          {"expert": body.expert_name, "asset_type": body.asset_type,
           "provider": draft["provider"], "submitted_by": user},
@@ -1138,14 +1111,27 @@ def _expert_matches(state: AgentState) -> dict:
     from .cause_registry import canonicalize_cause_id
     from .learning import STORE as _LSTORE, corroborating_terms, kb_version_label
 
+    from .safety import defeats_safety
+
     terms = _evidence_terms(state)
     diagnosis = state.diagnosis
     cause_id = canonicalize_cause_id(diagnosis.top_cause_id) if diagnosis else None
     asset_type = _asset_type(state.asset_id)
-    matches = []
+    matches, withheld = [], []
     if cause_id and cause_id != "unresolvable":
-        matches = [
-            {
+        for item in _LSTORE.expert_heuristics:
+            if canonicalize_cause_id(item["likely_cause"]) != cause_id or item["asset_type"] != asset_type:
+                continue
+            # Screened again at display time (G1 for knowledge): whatever is
+            # stored, an instruction to defeat a protection never reaches the AOM.
+            unsafe = [t for t in (item["evidence_quote"], item["symptom_pattern"],
+                                  *item.get("checks", []), *item.get("escalate_when", []))
+                      if defeats_safety(t)]
+            if unsafe:
+                withheld.append({"knowledge_id": item["id"], "expert_name": item["expert_name"],
+                                 "reason": "contains an instruction that would defeat a safety device (G1)"})
+                continue
+            matches.append({
                 "knowledge_id": item["id"],
                 "expert_name": item["expert_name"],
                 "expert_role": item["expert_role"],
@@ -1157,20 +1143,18 @@ def _expert_matches(state: AgentState) -> dict:
                 "escalate_when": item.get("escalate_when", []),
                 "evidence_quote": item["evidence_quote"],
                 "kb_version": item["kb_version"],
-                "kb_version_label": kb_version_label(item["kb_version"]),
+                "kb_version_label": f"{item['asset_type']} v{kb_version_label(item['kb_version'])}",
                 "approved_by": item["approved_by"],
                 "matched_terms": corroborating_terms(item["symptom_pattern"], terms),
-            }
-            for item in _LSTORE.expert_heuristics
-            if canonicalize_cause_id(item["likely_cause"]) == cause_id
-            and item["asset_type"] == asset_type
-        ]
+            })
     return {
         "matches": matches,
+        "withheld": withheld,
         "match_basis": "exact asset type and diagnosed cause",
         "asset_type": asset_type,
         "cause_id": cause_id,
-        "kb_version": _LSTORE.get_kb_version_label(),
+        "kb_version": (_LSTORE.label_of(asset_type)
+                       if asset_type in _LSTORE.labels() else None),
     }
 
 
@@ -1206,26 +1190,44 @@ def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(
     """
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE, SelfApprovalError
-    from .rbac import Role
 
-    p = next((x for x in _LSTORE.list_all_proposals() if x["proposal_id"] == proposal_id), None)
-    if p is not None and _user(user).role != Role.ADMIN:
-        owner = PILL_OWNERS.get(p.get("asset_type") or "")
-        # The pill's owning steward decides; if the owner proposed it, the
-        # second steward stands in (separation of duties still applies).
-        if owner and owner != user and owner != p.get("submitted_by"):
-            raise HTTPException(
-                403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they (or an admin) "
-                     "can approve it")
+    _require_intact_ledger()
+    _require_pill_owner(proposal_id, user, "approve")
     try:
         proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user, rationale=rationale)
     except SelfApprovalError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400 if "needs a" in str(exc) else 404, str(exc)) from exc
-    return {"proposal_id": proposal_id, "status": "approved",
-            "decided_by": user, "kb_version": _LSTORE.get_kb_version(),
+    return {"proposal_id": proposal_id, "status": "approved", "decided_by": user,
+            "kb_versions": proposal["kb_versions"],
             "validated_case_id": proposal.get("validated_case_id")}
+
+
+def _require_pill_owner(proposal_id: str, user: str, verb: str) -> None:
+    """The pill's owning steward decides on its knowledge; if the owner
+    proposed it, the other steward stands in. Admin may always decide."""
+    from .learning import STORE as _LSTORE
+    from .rbac import Role
+
+    p = _LSTORE.find_proposal(proposal_id)
+    if p is None or _user(user).role == Role.ADMIN:
+        return
+    owner = PILL_OWNERS.get(p.get("asset_type") or "")
+    if owner and owner != user and owner != p.get("submitted_by"):
+        raise HTTPException(
+            403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they (or an admin) "
+                 f"can {verb} it")
+
+
+def _require_intact_ledger() -> None:
+    """No knowledge changes while the governance ledger fails verification:
+    changing a KB whose history can't be trusted would bury the problem."""
+    from .learning import STORE as _LSTORE
+
+    if not _LSTORE.verify_ledger():
+        raise HTTPException(423, "the knowledge ledger failed verification; knowledge changes are "
+                                 "frozen until an auditor reviews it")
 
 
 @app.post("/kb/proposals/{proposal_id}/reject")
@@ -1236,9 +1238,14 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
     proposal is retained in the audit trail but never ingested into the KB.
     """
     _need(user, "approve_knowledge_version")
-    from .learning import STORE as _LSTORE
+    from .learning import STORE as _LSTORE, SelfApprovalError
+
+    _require_intact_ledger()
+    _require_pill_owner(proposal_id, user, "reject")
     try:
         _LSTORE.reject_proposal(proposal_id, decided_by=user, reason=reason)
+    except SelfApprovalError as exc:
+        raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400 if "needs a" in str(exc) else 404, str(exc)) from exc
     return {"proposal_id": proposal_id, "status": "rejected",
@@ -1250,6 +1257,8 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
     """Withdraw one approved proposal's knowledge, leaving everything else."""
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
+
+    _require_intact_ledger()
     try:
         return _LSTORE.revoke_proposal(proposal_id, actor=user, reason=reason)
     except ValueError as exc:
@@ -1266,43 +1275,54 @@ def list_proposals(user: str = Depends(resolve_user), status: str | None = None)
     if status:
         props = [p for p in props if p["status"] == status]
     return {"proposals": [
-        {**p, "kb_version_label": kb_version_label(p["kb_version"]) if p.get("kb_version") is not None else None}
+        {**p, "kb_version_labels": {pill: kb_version_label(v) for pill, v in (p.get("kb_versions") or {}).items()},
+         "owner_steward": PILL_OWNERS.get(p.get("asset_type") or "")}
         for p in props]}
 
 
+def _pill_param(pill: str) -> str:
+    from .learning import PILLS
+
+    if pill not in PILLS:
+        raise HTTPException(400, f"unknown pill {pill!r}; expected one of {list(PILLS)}")
+    return pill
+
+
 @app.get("/kb/versions")
-def list_kb_versions(user: str = Depends(resolve_user)) -> dict:
-    """Addressable KB versions, each with the raw int `/kb/rollback/{N}`
-    takes AND the semver label every screen displays (e.g. version 1 ->
-    "1.4.0") -- so a UI control can roll back to what's actually on
-    screen instead of making someone guess the mapping.
-    """
+def list_kb_versions(pill: str, user: str = Depends(resolve_user)) -> dict:
+    """One pill's knowledge versions: the number `/kb/rollback/{N}` takes,
+    the label every screen shows, and whether it is live or rolled back."""
     _need(user, "view_case")
     from .learning import STORE as _LSTORE
+
+    pill = _pill_param(pill)
     return {
-        "current_version": _LSTORE.get_kb_version(),
-        "current_label": _LSTORE.get_kb_version_label(),
+        "pill": pill,
+        "current_version": _LSTORE.version_of(pill),
+        "current_label": _LSTORE.label_of(pill),
         "versions": [
             {"version": v["version"], "label": v["label"], "status": v["status"],
              "proposal_id": v["proposal_id"], "created_by": v["created_by"]}
-            for v in _LSTORE.list_versions()
+            for v in _LSTORE.list_versions(pill)
         ],
     }
 
 
 @app.post("/kb/rollback/{target_version}")
-def rollback_kb(target_version: int, reason: str = "", user: str = Depends(resolve_user)) -> dict:
-    """Roll the KB back to an earlier live version (admin only, reason required).
-
-    Removes knowledge added after it and records the rollback, its actor
-    and reason in the keyed governance ledger.
-    """
+def rollback_kb(target_version: int, pill: str, reason: str = "",
+                user: str = Depends(resolve_user)) -> dict:
+    """Roll one pill's knowledge back to an earlier live version (admin only,
+    reason required). Other pills are untouched; the rollback, its actor
+    and reason go into the keyed governance ledger."""
     _need(user, "rollback_knowledge_version")
     from .learning import STORE as _LSTORE
+
+    pill = _pill_param(pill)
     if not reason.strip():
         raise HTTPException(400, "a rollback needs a reason")
+    _require_intact_ledger()
     try:
-        return _LSTORE.rollback(target_version, actor=user, reason=reason)
+        return _LSTORE.rollback(pill, target_version, actor=user, reason=reason)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -1310,12 +1330,23 @@ def rollback_kb(target_version: int, reason: str = "", user: str = Depends(resol
 @app.get("/kb/ledger")
 def get_kb_ledger(user: str = Depends(resolve_user)) -> dict:
     """The keyed, hash-chained governance ledger: every proposal submitted,
-    approved or rejected and every rollback, with actor and reason."""
+    approved, rejected or revoked and every rollback, across all pills,
+    with actor, reason and the pill versions it changed."""
     _need(user, "read_audit_trail")
-    from .learning import STORE as _LSTORE, kb_version_label
-    entries = [{**e, "label_before": kb_version_label(e["version_before"]),
-                "label_after": kb_version_label(e["version_after"])} for e in _LSTORE.ledger]
+    from .learning import STORE as _LSTORE
+
+    entries = []
+    for e in _LSTORE.ledger:
+        changed = {p: v for p, v in e["versions_after"].items() if e["versions_before"].get(p) != v}
+        entries.append({**e, "changes": ", ".join(
+            f"{p} v{_kb_label(e['versions_before'].get(p, 0))} → v{_kb_label(v)}" for p, v in changed.items())})
     return {"entries": entries, "chain_valid": _LSTORE.verify_ledger()}
+
+
+def _kb_label(version: int) -> str:
+    from .learning import kb_version_label
+
+    return kb_version_label(version)
 
 
 SEED_ACTOR = "demo-seed"
@@ -1431,6 +1462,7 @@ def close_escalation(
         from .tools import build_fault_signature
 
         diag = state.diagnosis
+        _require_intact_ledger()
         proposal = _LSTORE.record_escalation_resolution(
             case_id=case_id, asset_id=state.asset_id, asset_type=_asset_type(state.asset_id),
             confirmed_cause=confirmed,

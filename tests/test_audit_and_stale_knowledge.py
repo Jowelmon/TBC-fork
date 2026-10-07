@@ -1,4 +1,6 @@
-"""Fixes for docs/JUDGE_REPORT_2026-10-07_round4.md (62/100)."""
+"""Audit coverage (truncation, unhashed fields, JSON snapshots), stale
+knowledge after rollback or revocation, the independent AI second
+opinion, escalation reasons and pill ownership."""
 from __future__ import annotations
 
 import httpx
@@ -95,10 +97,10 @@ def test_snapshots_are_json_not_pickle(tmp_path, client):
 
 # 2. Stale knowledge -----------------------------------------------------------
 def test_rolled_back_knowledge_blocks_approval_until_rescored(client):
-    start = client.get("/kb/versions", params={"user": "tech1"}).json()["current_version"]
+    start = client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["current_version"]
     _approved_feedback(client)
     cid = _case(client)  # scored against the new version
-    client.post(f"/kb/rollback/{start}", params={"user": "admin1", "reason": "bad batch"})
+    client.post(f"/kb/rollback/{start}", params={"user": "admin1", "pill": "CRAH", "reason": "bad batch"})
     snap = client.get(f"/cases/{cid}", params={"user": "mgr1"}).json()
     assert snap["knowledge_withdrawn"]
     resp = client.post(f"/cases/{cid}/approval", params={"user": "mgr1", "decision": "approve", "rationale": "ok"})

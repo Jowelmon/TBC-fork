@@ -129,7 +129,7 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         "restored": True,
         "path": str(path),
         "cases": len(store.STORE._cases),
-        "kb_version": learning.STORE.get_kb_version_label(),
+        "kb_versions": learning.STORE.labels(),
         "pending_proposals": len(learning.STORE.list_pending_proposals()),
         "audit_chain_failures": broken,
         "ledger_valid": learning.STORE.verify_ledger(),

@@ -56,7 +56,17 @@ def _close_with_validated_feedback(client: TestClient, snap: dict) -> None:
     assert resp.status_code == 200, resp.text
 
 
+def _fresh_crah_knowledge() -> None:
+    """Earlier tests may already have taught the CRAH pill this signature,
+    leaving no headroom to measure an uplift. Start from the shipped CRAH
+    knowledge; other pills are untouched."""
+    from technical_services_pill.learning import STORE as LSTORE
+    if LSTORE.version_of("CRAH") != 0:
+        LSTORE.rollback("CRAH", 0, actor="admin1", reason="test baseline")
+
+
 def test_approving_validated_case_raises_next_identical_case_confidence(client: TestClient):
+    _fresh_crah_knowledge()
     first = _create_and_advance(client)
     assert first["diagnosis"]["top_cause_id"] == "sensor_hardware_failure"
     confidence_before = first["confidence"]
@@ -80,13 +90,13 @@ def test_rollback_restores_confidence_exactly(client: TestClient):
     # already ingested cases with the same fault signature).
     baseline = _create_and_advance(client)
     confidence_before = baseline["confidence"]
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
 
     _close_with_validated_feedback(client, baseline)
-    version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     assert version_after > version_before, "approval must move the KB to a new version"
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "reason": "test rollback"})
+    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
 
     restored = _create_and_advance(client)

@@ -1,4 +1,6 @@
-"""Fixes for docs/JUDGE_REPORT_2026-10-07_round7.md (69/100)."""
+"""What a steward approves is exactly what the expert said: grounded and
+safety-screened lines, reasons for every decision, server-held
+provenance, consent, and the knowledge kept with each AOM decision."""
 from __future__ import annotations
 
 import pytest

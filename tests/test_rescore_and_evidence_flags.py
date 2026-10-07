@@ -1,4 +1,6 @@
-"""Fixes for docs/JUDGE_REPORT_2026-10-07_round6.md (70/100)."""
+"""Re-scoring after withdrawn knowledge, abnormal-reading flags, AI "no
+opinion", derived cause priors, capture cause checks, the asset registry
+and per-pill proposal credit."""
 from __future__ import annotations
 
 import pytest

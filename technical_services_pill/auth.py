@@ -36,40 +36,56 @@ _SECRET = os.environ.get("TBC_SECRET") or secrets.token_hex(32)
 
 
 SESSION_SECONDS = 60 * 60 * 8
-_revoked_nonces: set[str] = set()
+# nonce -> when the cookie carrying it would have expired anyway. Pruned as
+# it goes, so the set never outgrows the sessions still alive.
+_revoked: dict[str, float] = {}
 
 
 def _mac(body: str) -> str:
     return hmac.new(_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
 
 
+def _signed(body: str) -> str:
+    """``body.issued_at.nonce.mac``: expires, and can be revoked on logout."""
+    full = f"{body}.{int(time.time())}.{secrets.token_hex(8)}"
+    return f"{full}.{_mac(full)}"
+
+
+def _open(token: str | None) -> str | None:
+    """The body of a genuine, unexpired, unrevoked signed token, else None."""
+    if not token or token.count(".") < 3:
+        return None
+    full, _, mac = token.rpartition(".")
+    if not hmac.compare_digest(mac.encode(), _mac(full).encode()):
+        return None
+    body, issued, nonce = full.rsplit(".", 2)
+    if not issued.isdigit() or time.time() - int(issued) > SESSION_SECONDS or nonce in _revoked:
+        return None
+    return body
+
+
 def _sign(user_id: str) -> str:
-    """``user.issued_at.nonce.mac``: sessions expire, and logging out revokes
-    that exact session, so a copied cookie stops working."""
-    body = f"{user_id}.{int(time.time())}.{secrets.token_hex(8)}"
-    return f"{body}.{_mac(body)}"
+    return _signed(user_id)
 
 
 def _verify(token: str | None) -> str | None:
-    """Return the user id iff the cookie is genuine, unexpired, not logged
-    out, and names a known user. Anything else -> None."""
-    if not token or token.count(".") != 3:
-        return None
-    body, _, mac = token.rpartition(".")
-    if not hmac.compare_digest(mac, _mac(body)):
-        return None
-    user_id, issued, nonce = body.split(".")
-    if not issued.isdigit() or time.time() - int(issued) > SESSION_SECONDS or nonce in _revoked_nonces:
-        return None
+    """Return the user id iff the session cookie is genuine, unexpired, not
+    logged out, and names a known user. Anything else -> None."""
+    user_id = _open(token)
     return user_id if user_id in DEMO_USERS else None
 
 
-def revoke(token: str | None) -> None:
-    if token and token.count(".") == 3:
-        _revoked_nonces.add(token.split(".")[2])
+def revoke(*tokens: str | None) -> None:
+    """Revoke signed tokens (session and unlock cookies) on logout."""
+    now = time.time()
+    for stale in [n for n, exp in _revoked.items() if exp < now]:
+        del _revoked[stale]
+    for token in tokens:
+        if token and token.count(".") >= 3:
+            _revoked[token.rsplit(".", 2)[1]] = now + SESSION_SECONDS
 
 
-# Per-user login PINs. Demo defaults are published in DEMO.md so judges can
+# Per-user login PINs. Demo defaults are published in DEMO.md so evaluators can
 # switch roles; set TBC_LOGIN_PINS="tech1:1234,mgr1:5678,..." to replace them.
 # A real deployment would put SSO here instead.
 _DEFAULT_PINS = {
@@ -88,7 +104,9 @@ def _pins() -> dict[str, str]:
 
 def check_pin(user_id: str, pin: str | None) -> bool:
     expected = _pins().get(user_id)
-    return bool(expected and pin) and hmac.compare_digest(expected, pin)
+    # Bytes, not str: compare_digest rejects non-ASCII str, which would turn
+    # a mistyped PIN into a server error instead of a counted failure.
+    return bool(expected and pin) and hmac.compare_digest(expected.encode(), pin.encode())
 
 
 def locked_for(key: str) -> int:
@@ -110,21 +128,17 @@ def record_pin_result(key: str, ok: bool) -> None:
 
 
 def unlocked_users(request: Request) -> set[str]:
-    token = request.cookies.get(UNLOCK_COOKIE)
-    if not token or "." not in token:
+    """Users this browser proved the PIN for. The cookie expires with the
+    session and is revoked on logout, like the session cookie."""
+    body = _open(request.cookies.get(UNLOCK_COOKIE)) or ""
+    if not body.startswith("unlock:"):
         return set()
-    body, _, mac = token.rpartition(".")
-    expected = hmac.new(_SECRET.encode(), f"unlock:{body}".encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(mac, expected):
-        return set()
-    return {u for u in body.split(",") if u in DEMO_USERS}
+    return {u for u in body[len("unlock:"):].split(",") if u in DEMO_USERS}
 
 
 def issue_unlock(response: Response, users: set[str]) -> None:
-    body = ",".join(sorted(users))
-    mac = hmac.new(_SECRET.encode(), f"unlock:{body}".encode(), hashlib.sha256).hexdigest()
-    response.set_cookie(UNLOCK_COOKIE, f"{body}.{mac}", httponly=True, samesite="lax",
-                        max_age=SESSION_SECONDS)
+    response.set_cookie(UNLOCK_COOKIE, _signed("unlock:" + ",".join(sorted(users))),
+                        httponly=True, samesite="lax", max_age=SESSION_SECONDS)
 
 
 def demo_insecure() -> bool:
@@ -171,13 +185,13 @@ def resolve_user(request: Request, user: str | None = None) -> str:
 __all__ = [
     "SESSION_COOKIE",
     "check_pin",
-    "issue_unlock",
-    "revoke",
-    "locked_for",
-    "record_pin_result",
-    "unlocked_users",
+    "clear_cookie",
     "demo_insecure",
     "issue_cookie",
-    "clear_cookie",
+    "issue_unlock",
+    "locked_for",
+    "record_pin_result",
     "resolve_user",
+    "revoke",
+    "unlocked_users",
 ]

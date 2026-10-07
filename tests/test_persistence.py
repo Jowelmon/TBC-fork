@@ -16,7 +16,7 @@ def test_state_survives_restart(tmp_path, monkeypatch):
     }).json()["case_id"]
     client.post(f"/cases/{cid}/advance", params={"user": "tech1"})
     before = client.get(f"/cases/{cid}", params={"user": "tech1"}).json()
-    version_before = learning.STORE.get_kb_version_label()
+    version_before = learning.STORE.label_of("CRAH")
 
     persistence.save_state(db)
 
@@ -34,7 +34,7 @@ def test_state_survives_restart(tmp_path, monkeypatch):
     assert after["current_state"] == before["current_state"]
     assert after["history"] == before["history"]
     assert after["audit_chain_valid"] is True
-    assert learning.STORE.get_kb_version_label() == version_before
+    assert learning.STORE.label_of("CRAH") == version_before
 
 
 def test_missing_database_starts_from_seed(tmp_path):

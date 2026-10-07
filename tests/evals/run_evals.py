@@ -171,10 +171,10 @@ def eval_07(client):
     client.post(f"/cases/{case_id}/outcome", params={
         "user": "tech1", "result": "resolved", "root_cause_confirmed": "sensor_hardware_failure",
     })
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     assert fb["proposal_status"] == "pending", "feedback must not enter the KB directly"
-    version_after_submit = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_after_submit = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     assert version_after_submit == version_before, "KB version must not move before approval"
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
@@ -206,7 +206,7 @@ def eval_08(client):
 def eval_09(client):
     baseline = _create_and_advance(client)
     confidence_before = baseline["confidence"]
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     case_id = baseline["case_id"]
     client.post(f"/cases/{case_id}/approval", params={"user": "mgr1", "decision": "approve", "rationale": "x"})
     client.post(f"/cases/{case_id}/work-order", params={"user": "mgr1"})
@@ -218,7 +218,7 @@ def eval_09(client):
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
     client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "reason": "test rollback"})
+    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
     restored = _create_and_advance(client)
     assert restored["confidence"] == confidence_before, (

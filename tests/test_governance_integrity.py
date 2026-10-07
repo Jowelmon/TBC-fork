@@ -1,4 +1,6 @@
-"""Fixes for docs/JUDGE_REPORT_2026-10-07_round3.md (60/100)."""
+"""Governance integrity: feedback cannot poison the KB, the knowledge ledger
+records every decision, labels are never reused, identity needs a PIN,
+seeding is never attributed to real users, and capture works offline."""
 from __future__ import annotations
 
 import hashlib
@@ -71,12 +73,12 @@ def test_ledger_records_approval_rejection_and_rollback_with_reasons(client):
     cid = _to_feedback_queued(client)
     fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
     pid = next(p["proposal_id"] for p in LSTORE.list_all_proposals() if p["feedback_id"] == fb["feedback_id"])
-    before = client.get("/kb/versions", params={"user": "tech1"}).json()
+    before = client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()
     client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert client.post(f"/kb/rollback/{before['current_version']}",
-                       params={"user": "admin1"}).status_code == 400  # reason required
+                       params={"user": "admin1", "pill": "CRAH"}).status_code == 400  # reason required
     assert client.post(f"/kb/rollback/{before['current_version']}",
-                       params={"user": "admin1", "reason": "bad batch"}).status_code == 200
+                       params={"user": "admin1", "pill": "CRAH", "reason": "bad batch"}).status_code == 200
 
     ledger = client.get("/kb/ledger", params={"user": "auditor1"}).json()
     assert ledger["chain_valid"] is True
@@ -92,14 +94,14 @@ def test_version_label_is_never_reused_after_rollback(client):
         fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
         pid = next(p["proposal_id"] for p in LSTORE.list_all_proposals() if p["feedback_id"] == fb["feedback_id"])
         client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
-        return client.get("/kb/versions", params={"user": "tech1"}).json()["current_label"]
+        return client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["current_label"]
 
-    start = client.get("/kb/versions", params={"user": "tech1"}).json()["current_version"]
+    start = client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["current_version"]
     first = approve_one()
-    client.post(f"/kb/rollback/{start}", params={"user": "admin1", "reason": "test"})
+    client.post(f"/kb/rollback/{start}", params={"user": "admin1", "pill": "CRAH", "reason": "test"})
     second = approve_one()
     assert second != first
-    labels = [v["label"] for v in client.get("/kb/versions", params={"user": "tech1"}).json()["versions"]]
+    labels = [v["label"] for v in client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["versions"]]
     assert len(labels) == len(set(labels))
 
 

@@ -23,9 +23,10 @@ import re
 from typing import Any
 
 from . import llm
-from .decision_tree import KNOWN_CAUSE_IDS
 from .cause_registry import canonicalize_cause_id, cause_asset_type, cause_label
+from .decision_tree import KNOWN_CAUSE_IDS
 from .guardrails import sanitize_metadata
+from .safety import defeats_safety, said_as_prohibition
 
 MAX_TRANSCRIPT_CHARS = 20_000
 _LIST_FIELDS = ("checks", "do_not", "escalate_when")
@@ -46,20 +47,23 @@ def _clean_list(value: Any) -> list[str]:
             if str(v).strip() and "[REDACTED" not in str(v)][:8]
 
 
-# An instruction to defeat a safety device. Allowed only as a prohibition
-# ("Never bypass the interlock"), never as something to do.
-_UNSAFE = re.compile(
-    r"\b(bypass|override|defeat|disable|jumper|short\s+out|ignore|silence|reset)\b"
-    r"[^.]{0,40}\b(interlock|safety|trip|alarm|pressure\s+switch|protection|cut-?out|relief|limit)",
-    re.IGNORECASE,
-)
-_PROHIBITION = re.compile(r"^\s*(never|don'?t|do\s+not)\b", re.IGNORECASE)
+_TURNS = re.compile(r"\n\s*\n|\n(?=\s*[A-Z][^:\n]{0,60}:)")
+_SENTENCES = re.compile(r"(?<=[.!?])\s+")
 
 
 def _paragraph_of(sanitized: str, quote: str) -> str:
-    """The expert answer (blank-line separated paragraph) the quote is from."""
+    """The expert answer the quote is from: its paragraph or speaker turn.
+    A transcript with neither (one long block) falls back to the quote's
+    sentence and the three after it, so a line cannot be borrowed from
+    elsewhere in the interview."""
     q = _norm(quote)
-    return next((p for p in re.split(r"\n\s*\n", sanitized) if q in _norm(p)), sanitized)
+    turns = [t for t in _TURNS.split(sanitized) if t.strip()]
+    answer = next((t for t in turns if q in _norm(t)), sanitized)
+    if len(turns) > 1:
+        return answer
+    sentences = [x for x in _SENTENCES.split(answer) if x.strip()]
+    start = next((i for i, x in enumerate(sentences) if q[:30] in _norm(x)), 0)
+    return " ".join(sentences[start:start + 4])
 
 
 def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
@@ -71,7 +75,15 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
     for line in lines:
         if _norm(line) not in _norm(answer):
             warnings.append(f"Item {idx}: dropped a {field} line the expert did not say in this answer.")
-        elif field != "never" and _UNSAFE.search(line) and not _PROHIBITION.match(line):
+        elif field == "never" and not said_as_prohibition(line, answer):
+            # Shown under "Never", but the expert did not say it as one:
+            # it could be read as an instruction, so screen it like one.
+            if defeats_safety(line):
+                warnings.append(f"Item {idx}: dropped a never line that reads as an instruction "
+                                "to defeat a safety device.")
+            else:
+                kept.append(line)
+        elif field != "never" and defeats_safety(line):
             warnings.append(f"Item {idx}: dropped a {field} line that would defeat a safety device.")
         else:
             kept.append(line)
@@ -81,14 +93,26 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
 _GENERIC = {"failure", "fault", "hardware", "drop", "risk", "or", "of", "after", "gateway"}
 
 
+def _cause_terms(cause: str) -> tuple[str, ...]:
+    """Words of the cause's label plus its tell-tale phrases."""
+    words = {w for w in re.findall(r"[a-z]+", cause_label(cause).lower()) if w not in _GENERIC}
+    keywords = next((k for c, k in llm._CAUSE_KEYWORDS if c == cause), ())
+    return (*words, *keywords)
+
+
 def _rules_out(quote: str, cause: str) -> bool:
     """True if the expert's own words deny the cause the item is filed
     under, e.g. "it's almost never the sensor" filed as a sensor failure."""
-    words = {w for w in re.findall(r"[a-z]+", cause_label(cause).lower()) if w not in _GENERIC}
-    keywords = next((k for c, k in llm._CAUSE_KEYWORDS if c == cause), ())
     low = quote.lower()
     return any(llm._denied(low, pos)
-               for term in (*words, *keywords) for pos in llm._keyword_spans(term, low))
+               for term in _cause_terms(cause) for pos in llm._keyword_spans(term, low))
+
+
+def _mentions_cause(text: str, cause: str) -> bool:
+    """Whether the expert's words name the cause (or its tell-tale signs)
+    the heuristic is filed under."""
+    low = text.lower()
+    return any(llm._keyword_spans(term, low) for term in _cause_terms(cause))
 
 
 def _validate_items(
@@ -118,6 +142,9 @@ def _validate_items(
                 "not in the transcript word for word."
             )
             continue
+        if defeats_safety(quote):
+            warnings.append(f"Item {idx} was dropped: the expert's words would defeat a safety device.")
+            continue
 
         cause_raw = str(item.get("likely_cause", "")).strip()
         canonical = canonicalize_cause_id(cause_raw.removeprefix("new:")) or cause_raw
@@ -142,14 +169,22 @@ def _validate_items(
                 "check the cause before sending."
             )
         answer = _paragraph_of(sanitized, quote)
-        symptom = str(item.get("symptom_pattern", "")).strip()[:300]
-        if not symptom or _norm(symptom) not in _norm(answer) or _UNSAFE.search(symptom):
+        symptom = str(item.get("symptom_pattern", "")).strip()
+        if (not symptom or len(symptom) > 600 or _norm(symptom) not in _norm(answer)
+                or defeats_safety(symptom)):
             symptom = quote  # the expert's own words, never a paraphrase
+        off_topic = not is_new and not _mentions_cause(f"{quote} {answer}", cause)
+        if off_topic:
+            warnings.append(
+                f"Item {idx}: nothing in the expert's answer names \"{cause_label(cause)}\" "
+                "or its usual signs; check it is filed under the right cause."
+            )
         names = {"checks": "check", "do_not": "never", "escalate_when": "escalate-when"}
         lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings)
                  for f in _LIST_FIELDS}
         kept.append({
             "check_cause": check_cause,
+            "off_topic": off_topic,
             "symptom_pattern": symptom,
             "likely_cause": cause,
             "cause_label": cause_label(cause),

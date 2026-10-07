@@ -291,7 +291,7 @@ def _run_learning_loop() -> tuple[str, float, float]:
     # F2: steward approves the proposal to ingest it into the live KB
     _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward2")
     print(f"feedback {fb_id} proposal approved -> promoted to KB")
-    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, KB v{_LSTORE.get_kb_version_label()}")
+    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, KB {_LSTORE.label_of('CRAH')}")
     # re-diagnose identical signature -> should reuse the new validated case
     _diagnose_asset("diagnose #2 (after  feedback)")
     st2, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
@@ -485,7 +485,7 @@ def _run_expert_harvest() -> bool:
     approval.raise_for_status()
     print(
         f"2. Different steward approved {draft['proposal_id']}; "
-        f"KB v{kb_version_label(approval.json()['kb_version'])}"
+        f"KB {', '.join(f'{p} v{kb_version_label(v)}' for p, v in approval.json()['kb_versions'].items())}"
     )
     pump_after = pump_case()
     print(
@@ -519,7 +519,7 @@ def _run_expert_harvest() -> bool:
     match = matches[0]
     print(
         f"3. New incident diagnosed as {cause_id}; reused {match['knowledge_id']} "
-        f"from {match['expert_name']} (KB v{match['kb_version_label']})"
+        f"from {match['expert_name']} ({match['kb_version_label']})"
     )
 
     _login(client, "mgr1")
@@ -563,7 +563,8 @@ def _run_expert_harvest() -> bool:
     learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve",
                           params={"rationale": "outcome confirmed by the work order"})
     learned.raise_for_status()
-    print(f"5. Steward validated outcome; KB is now v{kb_version_label(learned.json()['kb_version'])}")
+    print(f"5. Steward validated outcome; KB is now "
+          f"{', '.join(f'{p} v{kb_version_label(v)}' for p, v in learned.json()['kb_versions'].items())}")
     return True
 
 

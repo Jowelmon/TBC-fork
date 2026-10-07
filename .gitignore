@@ -27,3 +27,6 @@ data/
 # Runtime databases (never commit demo state)
 *.sqlite3
 data/
+
+# Local review material (judge reports, working notes): never part of the submission
+.review/

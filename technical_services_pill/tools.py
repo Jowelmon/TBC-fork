@@ -31,7 +31,6 @@ from .mock_registry import (
     SENSORS,
     TELEMETRY,
     KNOWLEDGE_BASE,
-    KNOWLEDGE_VERSION,
     _is_past_calibration,
 )
 from .models import (
@@ -272,13 +271,11 @@ def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceIt
 # ========================================================================== #
 # 2. Knowledge tools (RAG over validated heuristics + cases)
 # ========================================================================== #
-def _current_kb_version_label() -> str:
-    """Live KB version; falls back to the seed label if the store is unavailable."""
-    try:
-        from .learning import STORE as _LSTORE
-        return _LSTORE.get_kb_version_label()
-    except ImportError:  # pragma: no cover
-        return KNOWLEDGE_VERSION
+def _kb_versions() -> dict[str, str]:
+    """Each pill's live knowledge version label."""
+    from .learning import STORE as _LSTORE
+
+    return _LSTORE.labels()
 
 
 def query_knowledge_base(pill: str, query: str) -> dict:
@@ -300,7 +297,7 @@ def query_knowledge_base(pill: str, query: str) -> dict:
     ]
     out = {
         "pill": pill,
-        "version": _current_kb_version_label(),
+        "version": _kb_versions(),
         "heuristics": heuristics,
         "causal_models": causal,
         "kb_refs": [h["id"] for h in heuristics] + [c["id"] for c in causal],

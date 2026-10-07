@@ -1,4 +1,6 @@
-"""Fixes for docs/JUDGE_REPORT_2026-10-07_round5.md (63/100)."""
+"""Approved expert knowledge changes routing; audit coverage of state,
+version stamps, expert text, the case registry and the tool log; capture
+hygiene; AI disagreement leaves routing unchanged; session handling."""
 from __future__ import annotations
 
 import pytest
