@@ -108,6 +108,7 @@ class AgentState:
         self.work_order_id = None
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
+        self.chain_seal: str | None = None
 
         self._gathering_loops = 0
         self._retrieval_rounds = 0
@@ -163,6 +164,40 @@ class AgentState:
                 f"illegal transition {from_state.value} -> {to_state.value}: "
                 f"{reason} (allowed targets from {from_state.value}: {allowed_targets})"
             )
+        self.current_state = to_state
+        self._append(from_state, to_state, actor=actor, reason=reason)
+
+    def _state_digest(self) -> str:
+        """SHA-256 over every field a reviewer relies on. Recorded in each
+        audit entry, so changing a decision, diagnosis, outcome or evidence
+        afterwards no longer matches the chain."""
+        import hashlib
+
+        from .audit import canonical_json
+
+        def dump(v):
+            return v.model_dump(mode="json") if hasattr(v, "model_dump") else v
+
+        material = {
+            "asset_id": self.asset_id,
+            "observation": dump(self.observation),
+            "evidence": [dump(e) for e in self.evidence],
+            "diagnosis": dump(self.diagnosis),
+            "confidence": self.confidence,
+            "recommendation": dump(self.recommendation),
+            "guardrail_result": dump(self.guardrail_result),
+            "ai_hypothesis": self.ai_hypothesis,
+            "human_decision": dump(self.human_decision),
+            "outcome": dump(self.outcome),
+            "work_order_id": self.work_order_id,
+            "feedback_id": self.feedback_id,
+        }
+        return hashlib.sha256(canonical_json(material).encode()).hexdigest()
+
+    def _append(self, from_state: AgentStateName, to_state: AgentStateName,
+                *, actor: str, reason: str) -> None:
+        from .audit import compute_hash
+
         prev_hash = self.history[-1].hash if self.history else GENESIS_HASH
         entry = HistoryEntry(
             from_state=from_state,
@@ -170,10 +205,13 @@ class AgentState:
             at=datetime.now(),
             actor=actor,
             reason=reason,
+            state_digest=self._state_digest(),
             prev_hash=prev_hash,
         )
         self.history.append(entry)
-        self.current_state = to_state
+        # Keyed seal over the chain's length and head: dropping the newest
+        # entries leaves a valid-looking prefix, but not a matching seal.
+        self.chain_seal = compute_hash("seal", {"length": len(self.history), "head": entry.hash})
 
     def _record_note(self, *, actor: str, reason: str) -> None:
         """Append a hash-chained audit note that does NOT change state.
@@ -183,16 +221,7 @@ class AgentState:
         self-loop entry (``from_state == to_state``) so the chain still
         proves it happened, and when, without touching routing.
         """
-        prev_hash = self.history[-1].hash if self.history else GENESIS_HASH
-        entry = HistoryEntry(
-            from_state=self.current_state,
-            to_state=self.current_state,
-            at=datetime.now(),
-            actor=actor,
-            reason=reason,
-            prev_hash=prev_hash,
-        )
-        self.history.append(entry)
+        self._append(self.current_state, self.current_state, actor=actor, reason=reason)
 
     def record_ai_second_opinion(self, hypothesis: dict, *, actor: str = "agent") -> None:
         """Store the advisory AI second opinion and log it to the audit chain.
@@ -457,6 +486,29 @@ class AgentState:
             reason=f"feedback {feedback_id} accepted into governance queue",
         )
 
+    def rescore(self, confidence: float, breakdown: dict, *, actor: str, reason: str) -> AgentStateName:
+        """Re-score an AWAITING_APPROVAL case against the current KB.
+
+        Used when knowledge it was scored with has been withdrawn. If the new
+        confidence no longer clears the recommendation threshold, the case
+        leaves the approval queue and escalates to a human.
+        """
+        if self.current_state != AgentStateName.AWAITING_APPROVAL:
+            raise ValueError("re-scoring is only valid while awaiting approval")
+        self.confidence = confidence
+        self.confidence_breakdown = breakdown
+        if confidence < MIN_RECO_CONFIDENCE:
+            gr = self.guardrail_result or GuardrailResult()
+            gr.add("G4", f"re-scored at {confidence:.2f} after knowledge was withdrawn; "
+                         f"below the {MIN_RECO_CONFIDENCE:.2f} recommendation threshold",
+                   escalate=True)
+            self.guardrail_result = gr
+            self._transition(AgentStateName.ESCALATED, actor=actor,
+                             reason=f"{reason}; confidence {confidence:.2f} now below threshold")
+        else:
+            self._record_note(actor=actor, reason=f"{reason}; confidence {confidence:.2f} still clears the threshold")
+        return self.current_state
+
     def close_escalation(self, *, actor: str, reason: str) -> None:
         """ESCALATED -> CLOSED by an expert."""
         if self.current_state != AgentStateName.ESCALATED:
@@ -486,14 +538,18 @@ class AgentState:
         from .audit import compute_hash
 
         prev = GENESIS_HASH
-        for i, entry in enumerate(self.history):
+        for entry in self.history:
             if entry.prev_hash != prev:
                 return False
             expected = compute_hash(prev, entry._payload_for_hash())
             if entry.hash != expected:
                 return False
             prev = entry.hash
-        return True
+        if not self.history:
+            return False
+        if self.history[-1].state_digest != self._state_digest():
+            return False
+        return self.chain_seal == compute_hash("seal", {"length": len(self.history), "head": prev})
 
     def snapshot(self) -> dict:
         """Serialise the state for the HITL UI / API (brief: "Transparent")."""
@@ -526,5 +582,6 @@ class AgentState:
             "outcome": self.outcome.model_dump(mode="json") if self.outcome else None,
             "feedback_id": self.feedback_id,
             "history": [h.model_dump(mode="json") for h in self.history],
+            "chain_seal": self.chain_seal,
             "audit_chain_valid": self.verify_audit_chain(),
         }

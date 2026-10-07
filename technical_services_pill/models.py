@@ -218,18 +218,22 @@ class HistoryEntry(BaseModel):
     at: datetime
     actor: str  # agent | user_id | system
     reason: str
+    # Digest of the case's material state (diagnosis, decision, outcome...)
+    # right after this entry, so editing those fields breaks the chain too.
+    state_digest: str | None = None
     prev_hash: str = GENESIS_HASH
     hash: str | None = None
 
     model_config = ConfigDict(validate_assignment=True)
 
-    def _payload_for_hash(self) -> dict[str, str]:
+    def _payload_for_hash(self) -> dict[str, str | None]:
         return {
             "from_state": self.from_state.value,
             "to_state": self.to_state.value,
             "at": self.at.isoformat(),
             "actor": self.actor,
             "reason": self.reason,
+            "state_digest": self.state_digest,
         }
 
     @model_validator(mode="after")

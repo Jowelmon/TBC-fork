@@ -1,41 +1,43 @@
 """SQLite persistence for cases, knowledge proposals and KB versions.
 
 The engine keeps its working state in two in-process singletons:
-``store.STORE`` (cases, each with its hash-chained audit trail) and
-``learning.STORE`` (validated knowledge, pending/approved proposals, KB
-version). This module snapshots both into a local SQLite file after every
-state-changing request and restores them on startup, so a server restart
-loses nothing: not cases, not pending proposals, not version history.
+``store.STORE`` (cases, each with its keyed audit chain) and
+``learning.STORE`` (validated knowledge, proposals, versions and the
+governance ledger). This module snapshots both into a local SQLite file as
+JSON after every state-changing request and restores them on startup, so a
+server restart loses nothing.
 
-Integrity on restore: every case's SHA-256 audit chain is re-verified after
-loading. A case whose chain no longer validates is reported in
-``load_state()``'s result rather than silently trusted.
-
-Scope note: snapshots use ``pickle`` and must only ever be loaded from a
-file this service wrote itself (the default ``data/`` path is gitignored).
-A production deployment would move to a relational schema in Postgres; the
-store interfaces (``CaseStore``, ``LearningStore``) are the seam for that.
+Snapshots are plain JSON, never pickle: loading a snapshot can only ever
+produce data, not run code. Integrity on restore: every case's audit chain
+and the governance ledger are re-verified after loading, and failures are
+reported rather than silently trusted.
 """
 from __future__ import annotations
 
+import json
 import os
-import pickle
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import learning, store, tools
+from .models import ValidatedCase
 
 DEFAULT_DB_PATH = Path("data") / "tbc.sqlite"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
     key       TEXT PRIMARY KEY,
-    blob      BLOB NOT NULL,
+    blob      TEXT NOT NULL,
     saved_at  TEXT NOT NULL
 )
 """
+
+_LEARNING_FIELDS = (
+    "_cause_stats", "_proposals", "_kb_version", "_version_seq", "_versions",
+    "ledger", "ledger_seal", "_revocations", "expert_heuristics",
+)
 
 
 def db_path() -> Path:
@@ -50,10 +52,22 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _case_record(state) -> dict[str, Any]:
+    snap = state.snapshot()
+    snap.pop("audit_chain_valid", None)
+    snap["_gathering_loops"] = state._gathering_loops
+    snap["_retrieval_rounds"] = state._retrieval_rounds
+    return snap
+
+
 def _state() -> dict[str, Any]:
+    ls = learning.STORE
     return {
-        "cases": store.STORE._cases,
-        "learning": learning.STORE.__dict__,
+        "cases": {cid: _case_record(st) for cid, st in store.STORE._cases.items()},
+        "learning": {
+            "validated": [vc.model_dump(mode="json") for vc in ls.validated],
+            **{f: getattr(ls, f) for f in _LEARNING_FIELDS},
+        },
         "tool_audit_log": tools.TOOL_AUDIT_LOG,
     }
 
@@ -66,16 +80,16 @@ def save_state(path: Path | None = None) -> None:
         for key, value in _state().items():
             conn.execute(
                 "INSERT OR REPLACE INTO snapshots (key, blob, saved_at) VALUES (?, ?, ?)",
-                (key, pickle.dumps(value), now),
+                (key, json.dumps(value, default=str), now),
             )
 
 
 def load_state(path: Path | None = None) -> dict[str, Any]:
     """Restore engine state from SQLite into the live singletons.
 
-    Returns a summary including any cases whose audit chain failed
-    re-verification. A missing database is not an error: the engine simply
-    starts from seed data.
+    A missing or empty database is not an error: the engine starts from
+    seed data. A snapshot in an older, non-JSON format is ignored (run
+    ``make reset``) rather than deserialised.
     """
     path = path or db_path()
     if not path.exists():
@@ -85,24 +99,26 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         rows = dict(conn.execute("SELECT key, blob FROM snapshots").fetchall())
     if not rows:
         return {"restored": False, "reason": "database empty", "path": str(path)}
+    try:
+        data = {k: json.loads(v) for k, v in rows.items()}
+    except (TypeError, ValueError):
+        return {"restored": False, "reason": "snapshot is not JSON (older format); run make reset",
+                "path": str(path)}
 
-    if "cases" in rows:
+    if "cases" in data:
         store.STORE._cases.clear()
-        store.STORE._cases.update(pickle.loads(rows["cases"]))
-    if "learning" in rows:
-        restored = pickle.loads(rows["learning"])
-        # Snapshots written before a field existed restore without it; take
-        # that field's fresh default rather than failing on first access.
-        for key, value in learning.LearningStore().__dict__.items():
-            restored.setdefault(key, value)
-        learning.STORE.__dict__.clear()
-        learning.STORE.__dict__.update(restored)
-    if "tool_audit_log" in rows:
-        tools.TOOL_AUDIT_LOG[:] = pickle.loads(rows["tool_audit_log"])
+        for cid, rec in data["cases"].items():
+            store.STORE._cases[cid] = store.STORE._restore_from_snapshot(rec)
+    if "learning" in data:
+        ls = learning.STORE
+        rec = data["learning"]
+        ls.validated = [ValidatedCase.model_validate(v) for v in rec["validated"]]
+        for f in _LEARNING_FIELDS:
+            setattr(ls, f, rec[f])
+    if "tool_audit_log" in data:
+        tools.TOOL_AUDIT_LOG[:] = data["tool_audit_log"]
 
-    broken = [
-        cid for cid, st in store.STORE._cases.items() if not st.verify_audit_chain()
-    ]
+    broken = [cid for cid, st in store.STORE._cases.items() if not st.verify_audit_chain()]
     return {
         "restored": True,
         "path": str(path),
@@ -110,4 +126,5 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         "kb_version": learning.STORE.get_kb_version_label(),
         "pending_proposals": len(learning.STORE.list_pending_proposals()),
         "audit_chain_failures": broken,
+        "ledger_valid": learning.STORE.verify_ledger(),
     }

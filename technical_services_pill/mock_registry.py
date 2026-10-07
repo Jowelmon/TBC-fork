@@ -102,6 +102,20 @@ ASSETS: dict[str, dict] = {
             "cell_count": 120,
         },
     },
+    "UPS-DC1-02": {
+        "id": "UPS-DC1-02",
+        "type": "UPS",
+        "site_id": "DC-SINGAPORE-1",
+        "location": "Electrical Room 2",
+        "criticality": "high",
+        "parent_system_id": "POWER-BUS-B",
+        "commissioned_at": "2023-02-01",
+        "specs": {
+            "rating_kva": 250,
+            "battery_type": "VRLA",
+            "cell_count": 120,
+        },
+    },
     # --- Pump (spec §4.2 multi-asset) -------------------------------------
     "PUMP-DC1-01": {
         "id": "PUMP-DC1-01",
@@ -365,6 +379,26 @@ TELEMETRY: dict[str, list[tuple]] = {
         }, []),
         ("ups", "thermal", {
             "battery_temp_c": 28.0, "temp_rising": False,
+        }, []),
+    ],
+    # UPS-DC1-02: borderline. State of health just under the end-of-life
+    # floor, and cell temperature rising at 41 C, below the tree's 45 C
+    # thermal trigger. The tree says battery_eol; the AI second opinion's
+    # evidence weighting flags thermal_runaway_risk (G9, advisory).
+    "UPS-DC1-02": [
+        ("ups", "battery", {
+            "soh_pct": 58, "age_months": 40, "float_voltage": 436.0,
+            "balance_ok": True,
+        }, ["KB-UPS1"]),
+        ("ups", "status", {
+            "battery_voltage": 418.0, "load_pct": 52, "on_battery": False,
+            "alarms": ["battery_temp_high"],
+        }, []),
+        ("ups", "charger", {
+            "charge_current": 6.0, "charger_ok": True,
+        }, []),
+        ("ups", "thermal", {
+            "battery_temp_c": 41.0, "temp_rising": True,
         }, []),
     ],
     # Pump: 2x dominant + high axial -> shaft_misalignment

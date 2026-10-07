@@ -46,8 +46,33 @@ def kb_version_label(version: int) -> str:
 
 LEDGER_FIELDS = (
     "seq", "at", "actor", "action", "proposal_id", "reason",
-    "version_before", "version_after",
+    "version_before", "version_after", "kb_digest",
 )
+
+
+_STOP = {
+    "with", "when", "what", "that", "this", "then", "than", "there", "their", "they", "from",
+    "have", "will", "your", "into", "before", "after", "anything", "else", "fine", "every",
+    "week", "usually", "story", "especially", "almost", "never", "always", "just", "only",
+    "first", "thing", "look", "check", "sure", "make", "it's", "that's", "sensor", "sensors",
+    "pump", "chiller", "unit", "ups", "crah", "if", "the", "and", "for", "you", "it",
+}
+
+
+def _terms(text: str) -> set[str]:
+    import re
+
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    return {w for w in words if w not in _STOP and (len(w) >= 4 or any(c.isdigit() for c in w))}
+
+
+def corroborating_terms(heuristic_text: str, evidence_terms: set[str] | None) -> list[str]:
+    """Distinctive words of an expert's described condition that also
+    appear in a case's evidence. Empty means the case does not show what
+    the expert said to look for."""
+    if not evidence_terms:
+        return []
+    return sorted(_terms(heuristic_text) & evidence_terms)
 
 
 def _now() -> datetime:
@@ -83,7 +108,6 @@ class LearningStore:
         self.validated: list[ValidatedCase] = []
         self._cause_stats: dict[str, dict[str, int]] = {}  # cause -> {confirmed, total}
         self._proposals: list[dict[str, Any]] = []
-        self._expert_knowledge: list[dict[str, Any]] = []
         self._kb_version: int = 0  # 0 = seeded registry only
         # Highest version number ever issued. Never decremented, so labels
         # are never reused after a rollback.
@@ -92,11 +116,19 @@ class LearningStore:
             "version": 0, "status": "live", "proposal_id": None,
             "created_by": "seed", "created_at": _now(),
         }]
-        # Keyed, hash-chained record of every governance action.
+        # Keyed, hash-chained record of every governance action. Each entry
+        # also carries a digest of the KB's contents and proposals, and the
+        # chain is sealed, so editing knowledge or truncating the ledger is
+        # caught, not only editing an entry.
         self.ledger: list[dict[str, Any]] = []
+        self.ledger_seal: str | None = None
+        # (version of the withdrawn knowledge, ledger seq of the withdrawal)
+        self._revocations: list[dict[str, int]] = []
         # Expert heuristics captured from interviews, live once approved.
         self.expert_heuristics: list[dict[str, Any]] = []
         self._seed_from_registry()
+        self._log(actor="system", action="seeded",
+                  reason=f"seed knowledge base: {len(self.validated)} validated cases")
 
     # ------------------------------------------------------------------ #
     # Governance ledger
@@ -117,16 +149,95 @@ class LearningStore:
             "reason": reason,
             "version_before": before,
             "version_after": after,
+            "kb_digest": self._kb_digest(),
             "prev_hash": self.ledger[-1]["hash"] if self.ledger else GENESIS_HASH,
         }
         entry["hash"] = compute_hash(entry["prev_hash"], {f: entry[f] for f in LEDGER_FIELDS})
         self.ledger.append(entry)
+        self.ledger_seal = compute_hash("seal", {"length": len(self.ledger), "head": entry["hash"]})
         return entry
 
-    def verify_ledger(self) -> bool:
-        from .audit import verify_chain
+    def _kb_digest(self) -> str:
+        """SHA-256 over the knowledge the engine actually uses and every
+        proposal's status, so edits outside the governance flow show up."""
+        import hashlib
 
-        return verify_chain(self.ledger, LEDGER_FIELDS)
+        from .audit import canonical_json
+
+        material = {
+            "kb_version": self._kb_version,
+            "version_seq": self._version_seq,
+            "versions": [(v["version"], v["status"]) for v in self._versions],
+            "validated": sorted(
+                (vc.id, vc.case_id, vc.asset_type, vc.confirmed_cause, vc.outcome,
+                 vc.kb_version, vc.weight, vc.fault_signature, vc.validated_by)
+                for vc in self.validated
+            ),
+            "heuristics": sorted(
+                (h["id"], h["likely_cause"], h["asset_type"], h["evidence_quote"],
+                 h["kb_version"], h["approved_by"])
+                for h in self.expert_heuristics
+            ),
+            "proposals": [
+                (p["proposal_id"], p["status"], p.get("submitted_by"), p.get("decided_by"),
+                 p.get("confirmed_cause"), p.get("asset_type"), p.get("kb_version"), p.get("reason"))
+                for p in self._proposals
+            ],
+        }
+        return hashlib.sha256(canonical_json(material).encode()).hexdigest()
+
+    def verify_ledger(self) -> bool:
+        from .audit import compute_hash, verify_chain
+
+        if not self.ledger or not verify_chain(self.ledger, LEDGER_FIELDS):
+            return False
+        if self.ledger[-1]["kb_digest"] != self._kb_digest():
+            return False
+        return self.ledger_seal == compute_hash(
+            "seal", {"length": len(self.ledger), "head": self.ledger[-1]["hash"]})
+
+    def withdrawn_reason(self, kb_version_used: int | None, ledger_seq_at_use: int | None) -> str | None:
+        """Why knowledge a case was scored against is no longer in force, or None."""
+        if kb_version_used is None:
+            return None
+        live = {v["version"] for v in self._versions if v["status"] == "live"}
+        if kb_version_used not in live:
+            return f"KB v{kb_version_label(kb_version_used)} was rolled back after this case was diagnosed"
+        for r in self._revocations:
+            if r["proposal_version"] <= kb_version_used and r["ledger_seq"] > (ledger_seq_at_use or 0):
+                return (f"knowledge approved in v{kb_version_label(r['proposal_version'])} "
+                        "was revoked after this case was diagnosed")
+        return None
+
+    def revoke_proposal(self, proposal_id: str, *, actor: str, reason: str) -> dict[str, Any]:
+        """Withdraw one approved proposal's knowledge without rolling back
+        anything else. The KB moves to a new version; the revocation is
+        permanent (a later rollback does not bring it back)."""
+        if not reason.strip():
+            raise ValueError("a revocation needs a reason")
+        p = self._find_proposal(proposal_id)
+        if p is None:
+            raise ValueError(f"proposal {proposal_id} not found")
+        if p["status"] != "approved":
+            raise ValueError(f"proposal {proposal_id} is {p['status']}, not approved")
+        ids = set(p.get("expert_heuristic_ids") or [])
+        if p.get("validated_case_id"):
+            ids.add(p["validated_case_id"])
+        for vc in [vc for vc in self.validated if vc.id in ids]:
+            self._remove(vc)
+        self.expert_heuristics = [h for h in self.expert_heuristics if h.get("proposal_id") != proposal_id]
+        p["status"] = "revoked"
+        version_before = self._kb_version
+        self._version_seq += 1
+        self._kb_version = self._version_seq
+        self._versions.append({
+            "version": self._kb_version, "status": "live", "proposal_id": None,
+            "created_by": actor, "created_at": _now(),
+        })
+        self._revocations.append({"proposal_version": p["kb_version"], "ledger_seq": len(self.ledger) + 1})
+        self._log(actor=actor, action="proposal_revoked", proposal_id=proposal_id,
+                  reason=reason.strip(), version_before=version_before, version_after=self._kb_version)
+        return {"revoked": proposal_id, "removed_items": len(ids), "kb_version": self._kb_version}
 
     def list_versions(self) -> list[dict[str, Any]]:
         return [{**v, "label": kb_version_label(v["version"])} for v in self._versions]
@@ -166,6 +277,10 @@ class LearningStore:
         vc.proposed_cause = canonicalize_cause_id(vc.proposed_cause) or vc.proposed_cause
         vc.confirmed_cause = canonicalize_cause_id(vc.confirmed_cause) or vc.confirmed_cause
         self.validated.append(vc)
+        if vc.case_id == "EXPERT":
+            # An interview is a claim, not an observed outcome: it never
+            # moves the cause's confirmation rate.
+            return
         st = self._cause_stats.setdefault(vc.confirmed_cause, {"confirmed": 0, "total": 0})
         st["total"] += 1
         if vc.outcome == "resolved":
@@ -176,6 +291,8 @@ class LearningStore:
         try:
             self.validated.remove(vc)
         except ValueError:
+            return
+        if vc.case_id == "EXPERT":
             return
         st = self._cause_stats.get(vc.confirmed_cause)
         if st:
@@ -310,35 +427,6 @@ class LearningStore:
                          f"{len(draft['heuristics'])} heuristic(s)")
         return proposal
 
-    def record_expert_knowledge(self, knowledge: dict[str, Any], *, source: str = "expert_interview") -> dict[str, Any]:
-        """Create a pending expert knowledge proposal for stewardship review."""
-        proposal_id = f"PROP-{uuid.uuid4().hex[:8].upper()}"
-        proposal: dict[str, Any] = {
-            "proposal_id": proposal_id,
-            "proposal_type": "EXPERT_CAPTURE",
-            "knowledge_id": f"KB-EXP-{uuid.uuid4().hex[:8].upper()}",
-            "source": source,
-            "asset_id": knowledge.get("asset_id"),
-            "asset_type": knowledge.get("asset_type") or "UNKNOWN",
-            "symptoms": knowledge.get("symptoms") or [],
-            "evidence_pattern": knowledge.get("evidence_pattern") or [],
-            "likely_cause": knowledge.get("likely_cause"),
-            "recommended_check": knowledge.get("recommended_check"),
-            "recommended_action": knowledge.get("recommended_action"),
-            "expert_reasoning": knowledge.get("expert_reasoning"),
-            "confidence": float(knowledge.get("confidence", 0.0) or 0.0),
-            "submitted_by": knowledge.get("submitted_by", "expert"),
-            "status": "pending",
-            "created_at": _now(),
-            "decided_by": None,
-            "decided_at": None,
-            "reason": None,
-            "kb_version": None,
-        }
-        self._expert_knowledge.append(knowledge)
-        self._proposals.append(proposal)
-        return proposal
-
     def list_pending_proposals(self) -> list[dict[str, Any]]:
         """All proposals with status 'pending'."""
         return [p for p in self._proposals if p["status"] == "pending"]
@@ -382,54 +470,31 @@ class LearningStore:
             "created_by": decided_by, "created_at": p["decided_at"],
         })
         p["kb_version"] = self._kb_version
-        self._log(actor=decided_by, action="proposal_approved", proposal_id=proposal_id,
-                  reason=f"approved proposal from {p.get('submitted_by')}",
-                  version_before=version_before, version_after=self._kb_version)
         if p.get("kind") == "expert_capture":
             self._ingest_expert_capture(p)
-            return p
-
-        if p.get("proposal_type") == "EXPERT_CAPTURE":
+        else:
             vc = ValidatedCase(
-                id=p["knowledge_id"],
-                case_id=p["knowledge_id"],
-                asset_id=p.get("asset_id") or "UNKNOWN",
-                asset_type=p.get("asset_type") or "UNKNOWN",
-                fault_signature=" ".join(p.get("symptoms") or []),
-                proposed_cause=p.get("likely_cause") or "unknown",
-                confirmed_cause=p.get("likely_cause") or "unknown",
-                action_taken=p.get("recommended_action") or "",
-                outcome="resolved",
-                confidence=p.get("confidence", 0.0),
+                id=f"KB-FB-{p['feedback_id']}",
+                case_id=p["case_id"],
+                asset_id=p["asset_id"],
+                asset_type=p["asset_type"],
+                fault_signature=p["fault_signature"],
+                proposed_cause=p["proposed_cause"] or p["confirmed_cause"],
+                confirmed_cause=p["confirmed_cause"],
+                action_taken=p["action_taken"],
+                outcome=p["outcome"],
+                confidence=p["confidence"],
                 validated_by=decided_by,
-                corrected=False,
+                corrected=p["corrected"],
                 weight=1.0,
                 created_at=_now(),
                 kb_version=self._kb_version,
             )
             self._ingest(vc)
             p["validated_case_id"] = vc.id
-            return p
-
-        vc = ValidatedCase(
-            id=f"KB-FB-{p['feedback_id']}",
-            case_id=p["case_id"],
-            asset_id=p["asset_id"],
-            asset_type=p["asset_type"],
-            fault_signature=p["fault_signature"],
-            proposed_cause=p["proposed_cause"] or p["confirmed_cause"],
-            confirmed_cause=p["confirmed_cause"],
-            action_taken=p["action_taken"],
-            outcome=p["outcome"],
-            confidence=p["confidence"],
-            validated_by=p["submitted_by"],
-            corrected=p["corrected"],
-            weight=1.0,
-            created_at=_now(),
-            kb_version=self._kb_version,
-        )
-        self._ingest(vc)
-        p["validated_case_id"] = vc.id
+        self._log(actor=decided_by, action="proposal_approved", proposal_id=proposal_id,
+                  reason=f"approved proposal from {p.get('submitted_by')}",
+                  version_before=version_before, version_after=self._kb_version)
         return p
 
     def _ingest_expert_capture(self, p: dict[str, Any]) -> None:
@@ -558,10 +623,17 @@ class LearningStore:
         return kb_version_label(self._kb_version)
 
     # ------------------------------------------------------------------ #
-    def get_similar(self, fault_signature: str, asset_type: str | None = None, k: int = 3) -> list[ValidatedCase]:
-        """Top-k validated cases by Jaccard token overlap + asset-type bonus."""
+    def get_similar(self, fault_signature: str, asset_type: str | None = None, k: int = 3,
+                    evidence_terms: set[str] | None = None) -> list[ValidatedCase]:
+        """Top-k validated cases by Jaccard token overlap + asset-type bonus.
+
+        Expert-interview entries only count when the condition the expert
+        described is visible in this case's evidence (``evidence_terms``).
+        """
         scored: list[tuple[float, ValidatedCase]] = []
         for vc in self.validated:
+            if vc.case_id == "EXPERT" and not corroborating_terms(vc.fault_signature, evidence_terms):
+                continue
             sim = jaccard(fault_signature, vc.fault_signature)
             if asset_type and vc.asset_type == asset_type:
                 sim += 0.1  # 【ASSUMPTION】 asset-type prior bonus
@@ -581,13 +653,14 @@ class LearningStore:
             return 0.6
         return st["confirmed"] / st["total"]
 
-    def kb_match_score(self, fault_signature: str, confirmed_cause: str, asset_type: str | None = None) -> float:
+    def kb_match_score(self, fault_signature: str, confirmed_cause: str, asset_type: str | None = None,
+                       evidence_terms: set[str] | None = None) -> float:
         """0-1 score: how well the KB supports (signature, cause) for this case.
 
         Combines best-similarity of matching cases with the cause's empirical
         confirmation rate. Used as ``kb_match`` input to ``score_confidence``.
         """
-        similar = self.get_similar(fault_signature, asset_type, k=3)
+        similar = self.get_similar(fault_signature, asset_type, k=3, evidence_terms=evidence_terms)
         if not similar:
             return 0.2  # 【ASSUMPTION】 low-but-nonzero baseline
         matching = [vc for vc in similar if vc.confirmed_cause == confirmed_cause]
@@ -612,7 +685,6 @@ class LearningStore:
             "pending_proposals": len(self.list_pending_proposals()),
             "kb_version": self._kb_version,
             "kb_version_label": self.get_kb_version_label(),
-            "expert_knowledge_entries": len(self._expert_knowledge),
             "cause_priors": {
                 cause: {"confirmed": st["confirmed"], "total": st["total"], "rate": round(st["confirmed"] / st["total"], 3)}
                 for cause, st in self._cause_stats.items()

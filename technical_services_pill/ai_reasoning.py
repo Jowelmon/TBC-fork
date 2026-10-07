@@ -42,6 +42,37 @@ def _fallback(reason: str) -> dict[str, Any]:
     return out
 
 
+def _value(v: Any) -> str:
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, list):
+        return ", ".join(str(x) for x in v) or "none"
+    return str(v)
+
+
+FIELD_LABELS = {
+    "soh_pct": "State of health (%)", "age_months": "Age (months)", "battery_temp_c": "Battery temp (°C)",
+    "temp_c": "Temp (°C)", "charge_pct": "Refrigerant charge (%)", "approach_temp": "Approach temp (°C)",
+    "axial_mm_s": "Axial vibration (mm/s)", "npsh_margin": "NPSH margin", "load_pct": "Load (%)",
+    "flow_pct": "Flow (%)", "float_voltage": "Float voltage (V)", "battery_voltage": "Battery voltage (V)",
+}
+
+
+def field_label(key: str) -> str:
+    return FIELD_LABELS.get(key) or key.replace("_", " ").capitalize()
+
+
+def evidence_line(source: str, finding: str, payload: Any) -> str:
+    """One readable line per evidence item, e.g.
+    "UPS thermal: Battery temp c: 41.0; Temp rising: yes"."""
+    head = f"{source.upper() if len(source) <= 4 else source.capitalize()} {finding.replace('_', ' ')}"
+    if not isinstance(payload, dict):
+        return f"{head}: {_value(payload)}"
+    parts = [f"{field_label(k)}: {_value(v)}"
+             for k, v in payload.items() if not isinstance(v, (dict,)) and k != "records"]
+    return f"{head}: " + "; ".join(parts)
+
+
 def _norm(text: str) -> str:
     return " ".join(text.lower().split())
 
@@ -105,11 +136,10 @@ def generate_diagnostic_hypothesis(
 
     evidence_text = [sanitize_metadata(obs_text)]
     for item in evidence:
-        finding = sanitize_metadata(str(item.get("finding") or ""))
-        summary = sanitize_metadata(str(item.get("summary") or ""))
-        source = sanitize_metadata(str(item.get("source") or ""))
+        line = evidence_line(str(item.get("source") or ""), str(item.get("finding") or ""),
+                             item.get("payload"))
         conflict = " [conflict]" if item.get("conflict") is True else ""
-        evidence_text.append(f"{source} {finding}: {summary}{conflict}")
+        evidence_text.append(sanitize_metadata(line) + conflict)
 
     knowledge_text = [
         sanitize_metadata(f"{k.get('cause', '')} -> {k.get('kb_ref', '')}")
@@ -123,6 +153,8 @@ def generate_diagnostic_hypothesis(
             candidate_causes=list(candidate_causes),
             evidence=evidence_text,
             knowledge=knowledge_text,
+            evidence_items=[{"source": e.get("source"), "finding": e.get("finding"),
+                             "payload": e.get("payload")} for e in evidence],
         )
         return _validate(
             raw,

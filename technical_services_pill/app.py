@@ -122,6 +122,40 @@ def _get_case_for_write(case_id: str) -> AgentState:
     return state
 
 
+def _evidence_terms(state: AgentState) -> set[str]:
+    """Vocabulary of what this case's evidence actually shows: field names
+    and string values, plus the names of flags that are set (true)."""
+    from .learning import _terms
+
+    words: list[str] = [state.observation.type, state.observation.reading_status.value]
+    for ev in state.evidence:
+        words += [ev.source, ev.type]
+        payload = ev.payload if isinstance(ev.payload, dict) else {}
+        for k, v in payload.items():
+            if v is False or v is None:
+                continue
+            words.append(k)
+            if isinstance(v, str):
+                words.append(v)
+            elif isinstance(v, list):
+                words += [str(x) for x in v if not isinstance(x, dict)]
+    return _terms(" ".join(w.replace("_", " ") for w in words))
+
+
+FAULTS_BY_ASSET_TYPE: dict[str, set[str]] = {
+    "CRAH": {"temperature_measurement_missing"},
+    "Chiller": {"chiller_compressor_trip"},
+    "UPS": {"ups_battery_fault"},
+    "Pump": {"pump_vibration_high"},
+}
+
+
+def _pill_causes(asset_type: str) -> list[str]:
+    from .cause_registry import CAUSE_INFO
+
+    return [cid for cid, (_, at) in CAUSE_INFO.items() if at == asset_type]
+
+
 def _asset_type(asset_id: str) -> str:
     """Asset type from the registry (e.g. "UPS"); "UNKNOWN" if unregistered."""
     from .mock_registry import ASSETS
@@ -197,6 +231,12 @@ def create_case(
         rs = ReadingStatus(reading_status)
     except ValueError:
         raise HTTPException(400, f"invalid reading_status {reading_status!r}")
+    asset_type = _asset_type(asset_id)
+    allowed = FAULTS_BY_ASSET_TYPE.get(asset_type)
+    if allowed is not None and observation_type not in allowed:
+        raise HTTPException(
+            400, f"{observation_type!r} is not a fault the {asset_type} pill diagnoses; "
+                 f"expected one of {sorted(allowed)}")
     state = _new_case(asset_id, sensor_id, observation_type, rs, raw_value, actor=user)
     return {"case_id": state.case_id, "current_state": state.current_state.value,
             "evidence_count": len(state.evidence)}
@@ -223,6 +263,7 @@ def _new_case(asset_id: str, sensor_id: str, observation_type: str,
     if registered:
         for ev in gather_evidence_for_fault(asset_id, observation_type):
             state.add_evidence(ev, actor="agent")
+        state._record_note(actor="agent", reason=f"gathered {len(state.evidence)} evidence items")
     else:
         # G5: nothing is known about this asset, so nothing is gathered or
         # diagnosed; it escalates the moment it is raised.
@@ -324,7 +365,8 @@ def _advance(state: AgentState) -> None:
         sig = _fault_signature(state, top.cause_id, top.kb_refs)
         from .learning import STORE as _LSTORE
 
-        kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id))
+        kb_match = _LSTORE.kb_match_score(sig, top.cause_id, _asset_type(state.asset_id),
+                                          evidence_terms=_evidence_terms(state))
         signals = derive_confidence_signals(
             state.evidence, asset_id=state.asset_id, sensor_id=state.observation.sensor_id,
         )
@@ -342,6 +384,8 @@ def _advance(state: AgentState) -> None:
             "data_staleness": signals["data_staleness"],
             "conflict_penalty": signals["conflict_penalty"],
             "kb_version_label": _LSTORE.get_kb_version_label(),
+            "kb_version": _LSTORE.get_kb_version(),
+            "ledger_seq": len(_LSTORE.ledger),
         }
         hypothesis = generate_diagnostic_hypothesis(
             asset={"asset_id": state.asset_id, "asset_type": _asset_type(state.asset_id)},
@@ -352,12 +396,14 @@ def _advance(state: AgentState) -> None:
             },
             evidence=[
                 {
-                    "source": ev.source, "finding": ev.type, "summary": str(ev.payload),
+                    "source": ev.source, "finding": ev.type, "payload": ev.payload,
                     "conflict": isinstance(ev.payload, dict) and ev.payload.get("conflict") is True,
                 }
                 for ev in state.evidence
             ],
-            candidate_causes=[r.cause_id for r in results],
+            # Any cause this pill knows, not only the tree's pick, so the
+            # second opinion can genuinely disagree.
+            candidate_causes=_pill_causes(_asset_type(state.asset_id)) or [r.cause_id for r in results],
             rule_top_cause=top.cause_id,
             knowledge=[{"cause": top.cause_id, "kb_ref": ref} for ref in top.kb_refs],
         )
@@ -389,6 +435,7 @@ def _advance(state: AgentState) -> None:
                 break
             for ev in fresh:
                 state.add_evidence(ev, actor="agent")
+            state._record_note(actor="agent", reason=f"re-gathered {len(fresh)} new evidence items")
 
     # If the case escalated via G4 (low confidence / max gathering loops)
     # but a diagnosis with a resolvable top cause exists, evaluate
@@ -428,16 +475,35 @@ def _advance(state: AgentState) -> None:
                 reason="guardrail review of the escalated case: " + "; ".join(gr.reasons),
             )
 
+    # Every escalation names its reason for the AOM. When no G1-G8 rule
+    # fired, the cause was low confidence or no new evidence: record that
+    # as G4 rather than leaving the Decision screen with no reason at all.
+    if state.current_state == AgentStateName.ESCALATED and (
+        state.guardrail_result is None or not state.guardrail_result.must_escalate
+    ):
+        from .models import GuardrailResult
+
+        why = next((h.reason for h in reversed(state.history)
+                    if h.to_state == AgentStateName.ESCALATED and h.from_state != h.to_state),
+                   "low confidence")
+        gr = state.guardrail_result or GuardrailResult()
+        gr.add("G4", f"escalated for a human: {why}", escalate=True)
+        state.guardrail_result = gr
+        state._record_note(actor="agent", reason=f"[G4] escalated for a human: {why}")
+
     # G9: surface an AI/rules disagreement, if any, on whatever guardrail
     # result exists by now. Advisory only — never changes current_state.
     if state.guardrail_result is not None:
         from .guardrails import flag_ai_disagreement
 
+        before = list(state.guardrail_result.rule_ids)
         flag_ai_disagreement(
             state.guardrail_result,
             ai_hypothesis=state.ai_hypothesis,
             rule_cause=state.diagnosis.top_cause_id if state.diagnosis else None,
         )
+        if state.guardrail_result.rule_ids != before:
+            state._record_note(actor="agent", reason=state.guardrail_result.reasons[-1])
 
 
 @app.get("/cases/similar")
@@ -476,6 +542,9 @@ def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     if snap is None:
         raise HTTPException(404, "case not found")
     snap["asset_type"] = _asset_type(snap["asset_id"])
+    state = STORE.get(case_id)
+    snap["knowledge_withdrawn"] = (
+        _knowledge_withdrawn(state) if state.current_state == AgentStateName.AWAITING_APPROVAL else None)
     return snap
 
 
@@ -518,9 +587,14 @@ def preview_confidence(case_id: str, user: str = Depends(resolve_user)) -> dict:
     """
     _need(user, "view_case")
     state = _get_case(case_id)
+    after, breakdown = _score_against_current_kb(state)
+    return {"case_id": case_id, "before": state.confidence, "after": after,
+            "delta": after - state.confidence, "breakdown": breakdown}
+
+
+def _score_against_current_kb(state: AgentState) -> tuple[float, dict]:
     if not state.diagnosis or not state.diagnosis.top_cause_id or state.diagnosis.top_cause_id == "unresolvable":
         raise HTTPException(409, "case has no resolvable diagnosis to re-score")
-
     from .confidence import derive_confidence_signals, evidence_coverage_score, score_confidence
     from .decision_tree import FAULT_BRANCH_COUNTS
     from .learning import STORE as _LSTORE
@@ -529,31 +603,50 @@ def preview_confidence(case_id: str, user: str = Depends(resolve_user)) -> dict:
         state.evidence, FAULT_BRANCH_COUNTS.get(state.observation.type, 6),
     )
     sig = _fault_signature(state, state.diagnosis.top_cause_id, state.diagnosis.kb_refs)
-    kb_match = _LSTORE.kb_match_score(sig, state.diagnosis.top_cause_id, _asset_type(state.asset_id))
+    kb_match = _LSTORE.kb_match_score(sig, state.diagnosis.top_cause_id, _asset_type(state.asset_id),
+                                      evidence_terms=_evidence_terms(state))
     signals = derive_confidence_signals(
         state.evidence, asset_id=state.asset_id, sensor_id=state.observation.sensor_id,
     )
-    after = score_confidence(
+    conf = score_confidence(
         evidence_coverage=coverage,
         peer_agreement=signals["peer_agreement"],
         kb_match=kb_match,
         data_staleness=signals["data_staleness"],
         conflict_penalty=signals["conflict_penalty"],
     )
-    return {
-        "case_id": case_id,
-        "before": state.confidence,
-        "after": after,
-        "delta": after - state.confidence,
-        "breakdown": {
-            "evidence_coverage": coverage,
-            "peer_agreement": signals["peer_agreement"],
-            "kb_match": kb_match,
-            "data_staleness": signals["data_staleness"],
-            "conflict_penalty": signals["conflict_penalty"],
-            "kb_version_label": _LSTORE.get_kb_version_label(),
-        },
+    return conf, {
+        "evidence_coverage": coverage,
+        "peer_agreement": signals["peer_agreement"],
+        "kb_match": kb_match,
+        "data_staleness": signals["data_staleness"],
+        "conflict_penalty": signals["conflict_penalty"],
+        "kb_version_label": _LSTORE.get_kb_version_label(),
+        "kb_version": _LSTORE.get_kb_version(),
+        "ledger_seq": len(_LSTORE.ledger),
     }
+
+
+def _knowledge_withdrawn(state: AgentState) -> str | None:
+    from .learning import STORE as _LSTORE
+
+    b = state.confidence_breakdown or {}
+    return _LSTORE.withdrawn_reason(b.get("kb_version"), b.get("ledger_seq"))
+
+
+@app.post("/cases/{case_id}/rescore")
+def rescore_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
+    """Re-score a case awaiting approval against the current KB, e.g. after
+    knowledge it relied on was rolled back or revoked."""
+    _need(user, "approve_reject_modify")
+    state = _get_case_for_write(case_id)
+    conf, breakdown = _score_against_current_kb(state)
+    try:
+        state.rescore(conf, breakdown, actor=user,
+                      reason=f"re-scored against KB v{breakdown['kb_version_label']}")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return {"case_id": case_id, "current_state": state.current_state.value, "confidence": conf}
 
 
 @app.post("/cases/{case_id}/approval")
@@ -575,6 +668,9 @@ def post_approval(
         raise HTTPException(400, f"invalid decision {decision!r}")
     if not (rationale or "").strip():
         raise HTTPException(400, f"a rationale is required to {dec.value}")
+    withdrawn = _knowledge_withdrawn(state)
+    if withdrawn and dec != HumanDecision.REJECT:
+        raise HTTPException(409, f"{withdrawn}; re-score the case before approving or modifying")
     hazard = state.guardrail_result is not None and any(
         r.startswith(("[G2]", "[G2b]")) for r in state.guardrail_result.reasons)
     if hazard and dec != HumanDecision.REJECT and not hazard_acknowledged:
@@ -631,6 +727,7 @@ def post_approval(
             kb_refs=list(orig.kb_refs) if orig and orig.kb_refs else [],
             evidence_refs=list(orig.evidence_refs) if orig and orig.evidence_refs else [],
         )
+        state._record_note(actor=user, reason="modified action set applied to the recommendation")
     return {"case_id": case_id, "current_state": state.current_state.value}
 
 
@@ -841,10 +938,20 @@ def get_system_info(user: str = Depends(resolve_user)) -> dict:
     _need(user, "view_case")
     from . import llm
     provider = llm.provider_name()
+    if provider == "adp":
+        ok = llm.LAST_CALL["ok"]
+        ai_status = ("offline" if not llm.adp_configured() or ok is False
+                     else "online" if ok else "ready")
+    else:
+        ai_status = "offline-model"
     return {
         "llm_provider": provider,
-        "llm_label": "Tencent Cloud ADP" if provider == "adp" else "Offline mock model",
+        "llm_label": "Tencent Cloud ADP" if provider == "adp" else "Offline models (no LLM)",
         "adp_configured": llm.adp_configured(),
+        "ai_status": ai_status,
+        "ai_status_message": (llm.LAST_CALL["message"] if provider == "adp"
+                              else "Offline keyword extractor and evidence-weighting second opinion; "
+                                   "set TBC_LLM_PROVIDER=adp and ADP_APP_KEY for Tencent Cloud ADP"),
         "diagnosis": "deterministic decision tree",
         "demo_insecure": demo_insecure(),
     }
@@ -930,8 +1037,9 @@ def get_case_expert_knowledge(case_id: str, user: str = Depends(resolve_user)) -
     _need(user, "view_case")
     state = _get_case(case_id)
     from .cause_registry import canonicalize_cause_id
-    from .learning import STORE as _LSTORE, kb_version_label
+    from .learning import STORE as _LSTORE, corroborating_terms, kb_version_label
 
+    terms = _evidence_terms(state)
     diagnosis = state.diagnosis
     cause_id = canonicalize_cause_id(diagnosis.top_cause_id) if diagnosis else None
     asset_type = _asset_type(state.asset_id)
@@ -952,6 +1060,7 @@ def get_case_expert_knowledge(case_id: str, user: str = Depends(resolve_user)) -
                 "kb_version": item["kb_version"],
                 "kb_version_label": kb_version_label(item["kb_version"]),
                 "approved_by": item["approved_by"],
+                "matched_terms": corroborating_terms(item["symptom_pattern"], terms),
             }
             for item in _LSTORE.expert_heuristics
             if canonicalize_cause_id(item["likely_cause"]) == cause_id
@@ -1025,6 +1134,27 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
             "decided_by": user, "reason": reason}
 
 
+@app.post("/kb/proposals/{proposal_id}/revoke")
+def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(resolve_user)) -> dict:
+    """Withdraw one approved proposal's knowledge, leaving everything else."""
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    try:
+        return _LSTORE.revoke_proposal(proposal_id, actor=user, reason=reason)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.get("/kb/proposals")
+def list_proposals(user: str = Depends(resolve_user), status: str | None = None) -> dict:
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    props = _LSTORE.list_all_proposals()
+    if status:
+        props = [p for p in props if p["status"] == status]
+    return {"proposals": props}
+
+
 @app.get("/kb/versions")
 def list_kb_versions(user: str = Depends(resolve_user)) -> dict:
     """Addressable KB versions, each with the raw int `/kb/rollback/{N}`
@@ -1077,8 +1207,9 @@ SEED_ACTOR = "demo-seed"
 
 
 def seed_demo_cases() -> list[str]:
-    """Create the three demo scenarios: one CLOSED, one ESCALATED, one
-    AWAITING_APPROVAL. Every step is attributed to ``demo-seed``, never to
+    """Create the demo scenarios: one CLOSED, one ESCALATED, one
+    AWAITING_APPROVAL, and a borderline UPS where the AI second opinion
+    disagrees with the rules (G9). Every step is attributed to ``demo-seed``, never to
     a real user, so the audit trail does not claim a manager approved it.
     """
     from .tools import create_work_order_for_state, submit_feedback
@@ -1108,12 +1239,16 @@ def seed_demo_cases() -> list[str]:
     awaiting = _new_case("CHILLER-DC1-01", "CH-COMP-PRESSURE", "chiller_compressor_trip",
                          ReadingStatus.ABSENT, actor=SEED_ACTOR)
     _advance(awaiting)
-    return [closed.case_id, escalated.case_id, awaiting.case_id]
+
+    disagreement = _new_case("UPS-DC1-02", "UPS-DC1-02-BATT", "ups_battery_fault",
+                             ReadingStatus.INVALID, actor=SEED_ACTOR)
+    _advance(disagreement)
+    return [closed.case_id, escalated.case_id, awaiting.case_id, disagreement.case_id]
 
 
 @app.post("/demo/seed")
 def post_demo_seed(user: str = Depends(resolve_user)) -> dict:
-    """Admin only: add the three demo scenarios, attributed to demo-seed."""
+    """Admin only: add the demo scenarios, attributed to demo-seed."""
     from .rbac import Role
 
     if _user(user).role != Role.ADMIN:

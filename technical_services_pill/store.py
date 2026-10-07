@@ -52,6 +52,7 @@ class CaseStore:
         state.work_order_id = data.get("work_order_id")
         state.feedback_id = data.get("feedback_id")
         state.history = [HistoryEntry.model_validate(item) for item in data.get("history", [])]
+        state.chain_seal = data.get("chain_seal")
         state.current_state = AgentStateName(data.get("current_state", state.current_state.value))
         state._gathering_loops = int(data.get("_gathering_loops", 0))
         state._retrieval_rounds = int(data.get("_retrieval_rounds", 0))

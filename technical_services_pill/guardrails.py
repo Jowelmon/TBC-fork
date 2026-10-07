@@ -217,11 +217,14 @@ def flag_ai_disagreement(
         return result
     if ai_hypothesis.get("agrees_with_rules"):
         return result
-    hyp_label = ai_hypothesis.get("hypothesis") or "no cause identified"
+    from .cause_registry import cause_label
+
+    hyp = ai_hypothesis.get("hypothesis")
+    hyp_label = cause_label(hyp) if hyp else "no cause identified"
     result.add(
         "G9",
         f"AI second opinion disagrees with the rule-based diagnosis "
-        f"(AI: {hyp_label}; rules: {rule_cause or 'unresolved'}) — advisory only, "
-        "does not change routing or require action",
+        f"(AI: {hyp_label}; rules: {cause_label(rule_cause) if rule_cause else 'unresolved'}) "
+        "— advisory only, does not change routing or require action",
     )
     return result
