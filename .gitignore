@@ -23,3 +23,7 @@ data/
 
 # Secrets
 .env
+
+# Runtime databases (never commit demo state)
+*.sqlite3
+data/

@@ -1,8 +1,8 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=3';
-import { initGuide } from './guide.js?v=3';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=3';
+import { api } from './api.js?v=4';
+import { initGuide } from './guide.js?v=7';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=14';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -30,15 +30,8 @@ const navItems = document.querySelectorAll('.nav-item');
 
 // ── Helpers ────────────────────────────────────────────────
 async function updateKbFooter() {
-  const footer = document.getElementById('kb-footer');
-  if (!footer) return;
-  try {
-    const stats = await api.get('/kb/stats');
-    const version = stats && stats.kb_version !== undefined ? stats.kb_version : 0;
-    footer.innerHTML = `v${version}<br><span class="nav-footer-sub">Keppel AI Harvest</span>`;
-  } catch (err) {
-    footer.innerHTML = `v0<br><span class="nav-footer-sub">KB unavailable</span>`;
-  }
+  // Single footer, single source: the live KB version label from /kb/stats.
+  return refreshKbVersion();
 }
 
 function showToast(msg, type = 'info') {
@@ -116,8 +109,8 @@ async function refreshKbVersion() {
   if (!el) return;
   try {
     const stats = await api.get('/kb/stats');
-    if (stats.kb_version_label) el.textContent = `KB v${stats.kb_version_label}`;
-  } catch (_) { /* leave last known value */ }
+    el.textContent = stats.kb_version_label ? `KB v${stats.kb_version_label}` : 'KB version unavailable';
+  } catch (_) { if (el.textContent.includes('loading')) el.textContent = 'KB version unavailable'; }
 }
 
 function navigate(screen, caseId = null) {
@@ -182,22 +175,50 @@ function renderScreen() {
   }
 }
 
+// ── Theme toggle (light by default; dark is explicit opt-in) ──────────
+const themeToggle = document.getElementById('theme-toggle');
+function applyThemeButtonLabel() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  themeToggle.textContent = isDark ? 'Light theme' : 'Dark theme';
+  themeToggle.setAttribute('aria-pressed', String(isDark));
+}
+applyThemeButtonLabel();
+themeToggle.addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  if (next === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  localStorage.setItem('tbc_theme', next);
+  applyThemeButtonLabel();
+});
+
 // ── Role switcher ──────────────────────────────────────────
+// Switching role means logging in as that demo user (sets the signed
+// session cookie) — awaitable so callers (the guide tour included) can
+// rely on the new identity being live before they act on it.
 roleSelect.value = state.role;
 roleBadge.textContent = roleDisplayName(state.role);
-function setRole(role) {
-  if (roleSelect.value === role) return;
-  roleSelect.value = role;
-  roleSelect.dispatchEvent(new Event('change'));
-}
 
-roleSelect.addEventListener('change', () => {
-  state.role = roleSelect.value;
-  localStorage.setItem('tbc_user', state.role);
+async function setRole(role) {
+  if (roleSelect.value === role && state.role === role) return true;
+  try {
+    await api.login(role);
+  } catch (e) {
+    showToast(`Could not switch role: ${e.message}`, 'error');
+    roleSelect.value = state.role; // revert the dropdown
+    return false;
+  }
+  roleSelect.value = role;
+  state.role = role;
   roleBadge.textContent = roleDisplayName(state.role);
   updateKbFooter();
   renderScreen();
-});
+  return true;
+}
+
+roleSelect.addEventListener('change', () => setRole(roleSelect.value));
 
 // ── Nav click handlers ─────────────────────────────────────
 navItems.forEach(item => {
@@ -207,9 +228,10 @@ navItems.forEach(item => {
   });
 });
 
-// ── Model chip (which model drafts expert knowledge) ───────
-(async () => {
+// ── Model chip (which model drafts expert knowledge) + insecure banner ──
+async function refreshSystemInfo() {
   const chip = document.getElementById('model-chip');
+  const banner = document.getElementById('insecure-banner');
   try {
     const info = await api.get('/system/info');
     chip.textContent = `Capture model: ${info.llm_label}`;
@@ -217,13 +239,25 @@ navItems.forEach(item => {
       chip.textContent += ' (key missing)';
       chip.className = 'badge badge-red';
     }
+    if (banner) banner.hidden = !info.demo_insecure;
   } catch (_) { chip.hidden = true; }
-})();
+}
 
 // ── Init ───────────────────────────────────────────────────
-initGuide({ api, navigate, setRole, showToast });
-navigate('dashboard');
-updateKbFooter();
+// Identity lives in a signed session cookie (auth.py): log in as the
+// last-used role before any other request, so the cookie — not a client
+// -controlled ?user= — is what the server sees from here on.
+(async () => {
+  try {
+    await api.login(state.role);
+  } catch (e) {
+    showToast(`Login failed: ${e.message}`, 'error');
+  }
+  initGuide({ api, navigate, setRole, showToast });
+  navigate('dashboard');
+  updateKbFooter();
+  refreshSystemInfo();
+})();
 
 // Expose for debugging
 window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion };

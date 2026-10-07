@@ -12,13 +12,13 @@ const STEPS = [
     title: 'Harvest tacit knowledge',
     role: 'steward1', screen: 'capture',
     say: 'A knowledge steward interviews an experienced technician. The AI model drafts structured heuristics from the transcript: symptom, likely cause, what to check, what never to do, when to escalate.',
-    notice: 'Click "Load sample interview" then "Draft knowledge with AI". Every heuristic sits beside the expert\'s own words. Anything they did not actually say is dropped.',
+    notice: 'Click "Load sample interview" then "Draft knowledge with AI". Every heuristic sits beside the expert\'s own words; anything they did not say is dropped. Untick one heuristic, then "Send for steward approval". Chiller knowledge from a CRAH interview is filed under the Chiller pill.',
   },
   {
     title: 'Nobody approves their own change',
     role: 'steward1', screen: 'governance',
     say: 'The draft is a proposal, not knowledge. As the steward who captured it, I will try to approve it myself.',
-    notice: 'Click Approve on the expert-interview proposal. The server refuses: proposer and approver must be different people.',
+    notice: 'Look at your own expert-interview proposal: Approve is locked with "You sent this". The server enforces the same rule if anyone calls it directly.',
   },
   {
     title: 'Second steward approves, version bumps',
@@ -93,7 +93,7 @@ export function initGuide({ api, navigate, setRole, showToast }) {
 
   async function go() {
     const s = STEPS[idx];
-    setRole(s.role);
+    await setRole(s.role);
     let caseId = null;
     if (s.asset) {
       try { caseId = await findCaseId(api, s.asset); } catch (_) { /* fall through */ }

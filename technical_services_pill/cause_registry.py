@@ -77,6 +77,60 @@ def canonicalize_cause_id(cause_id: str | None) -> str | None:
     return _CANONICAL.get(cause_id, cause_id)
 
 
+# Human-readable labels and the asset type whose decision tree can emit each
+# cause. The UI shows labels, never raw IDs; capture uses the asset type to
+# file a heuristic under the right pill even when one interview covers
+# several kinds of equipment.
+CAUSE_INFO: dict[str, tuple[str, str]] = {
+    CAUSE_SENSOR_HARDWARE_FAILURE: ("Sensor hardware failure", "CRAH"),
+    CAUSE_SENSOR_FAULT_NOISE: ("Noisy sensor signal", "CRAH"),
+    CAUSE_SENSOR_DRIFT: ("Sensor calibration drift", "CRAH"),
+    CAUSE_COMMUNICATION_BUS_CONTROLLER_FAILURE: ("Communication bus or controller failure", "CRAH"),
+    CAUSE_CONFIG_DRIFT: ("BMS configuration drift", "CRAH"),
+    CAUSE_LOOSE_WIRING_AFTER_SERVICE: ("Loose wiring after servicing", "CRAH"),
+    CAUSE_DATA_PATH_DROP: ("Data path drop (gateway or SCADA)", "CRAH"),
+    CAUSE_INTERMITTENT_FAULT: ("Intermittent fault", "CRAH"),
+    CAUSE_REFRIGERANT_LEAK: ("Refrigerant leak", "Chiller"),
+    CAUSE_LOW_REFRIGERANT_CHARGE: ("Low refrigerant charge", "Chiller"),
+    CAUSE_CONDENSER_FOULING: ("Condenser fouling", "Chiller"),
+    CAUSE_COMPRESSOR_MOTOR_FAULT: ("Compressor motor fault", "Chiller"),
+    CAUSE_CHILLER_ELECTRICAL_FAULT: ("Chiller electrical fault", "Chiller"),
+    CAUSE_THERMAL_RUNAWAY_RISK: ("Battery thermal runaway risk", "UPS"),
+    CAUSE_BATTERY_EOL: ("Battery end of life", "UPS"),
+    CAUSE_CHARGER_FAILURE: ("Charger failure", "UPS"),
+    CAUSE_GROUND_FAULT: ("Ground fault", "UPS"),
+    CAUSE_INVERTER_FAULT: ("Inverter fault", "UPS"),
+    CAUSE_CAVITATION: ("Pump cavitation", "Pump"),
+    CAUSE_SHAFT_MISALIGNMENT: ("Shaft misalignment", "Pump"),
+    CAUSE_FOUNDATION_LOOSENESS: ("Loose foundation or mounting", "Pump"),
+    CAUSE_BEARING_WEAR: ("Bearing wear", "Pump"),
+    CAUSE_IMPELLER_IMBALANCE: ("Impeller imbalance", "Pump"),
+}
+
+
+def cause_label(cause_id: str | None) -> str:
+    """Plain-English label for a cause ID; new causes are shown as proposed."""
+    if not cause_id:
+        return "Unknown cause"
+    if cause_id.startswith("new:"):
+        return "Proposed new cause: " + cause_id[4:].replace("_", " ")
+    canon = canonicalize_cause_id(cause_id)
+    if canon in CAUSE_INFO:
+        return CAUSE_INFO[canon][0]
+    return cause_id.replace("_", " ").capitalize()
+
+
+def cause_asset_type(cause_id: str | None) -> str | None:
+    """Asset type whose decision tree emits this cause, or None if unknown."""
+    canon = canonicalize_cause_id(cause_id) if cause_id else None
+    return CAUSE_INFO[canon][1] if canon in CAUSE_INFO else None
+
+
+def list_causes() -> list[dict[str, str]]:
+    return [{"id": cid, "label": lbl, "asset_type": at}
+            for cid, (lbl, at) in CAUSE_INFO.items()]
+
+
 __all__ = [
     "CAUSE_SENSOR_FAULT",
     "CAUSE_SENSOR_HARDWARE_FAILURE",
@@ -106,4 +160,8 @@ __all__ = [
     "CAUSE_IMPELLER_IMBALANCE",
     "CANONICAL_CAUSE_IDS",
     "canonicalize_cause_id",
+    "CAUSE_INFO",
+    "cause_label",
+    "cause_asset_type",
+    "list_causes",
 ]

@@ -73,6 +73,7 @@ class AgentState:
     current_state: AgentStateName
     guardrail_result: GuardrailResult | None
     ai_hypothesis: dict | None
+    confidence_breakdown: dict | None
     work_order_id: str | None
     feedback_id: str | None
     history: list[HistoryEntry]
@@ -102,6 +103,7 @@ class AgentState:
         self.current_state = AgentStateName.TRIGGERED
         self.guardrail_result: GuardrailResult | None = None
         self.ai_hypothesis: dict | None = None
+        self.confidence_breakdown: dict | None = None
         self.work_order_id = None
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
@@ -170,6 +172,42 @@ class AgentState:
         self.history.append(entry)
         self.current_state = to_state
 
+    def _record_note(self, *, actor: str, reason: str) -> None:
+        """Append a hash-chained audit note that does NOT change state.
+
+        For events worth logging but that are not themselves a transition
+        (e.g. an advisory AI second opinion arriving or failing) — a
+        self-loop entry (``from_state == to_state``) so the chain still
+        proves it happened, and when, without touching routing.
+        """
+        prev_hash = self.history[-1].hash if self.history else GENESIS_HASH
+        entry = HistoryEntry(
+            from_state=self.current_state,
+            to_state=self.current_state,
+            at=datetime.now(),
+            actor=actor,
+            reason=reason,
+            prev_hash=prev_hash,
+        )
+        self.history.append(entry)
+
+    def record_ai_second_opinion(self, hypothesis: dict, *, actor: str = "agent") -> None:
+        """Store the advisory AI second opinion and log it to the audit chain.
+
+        Advisory only: this never transitions state, and ``ai_hypothesis`` is
+        never read by any routing decision. See ``ai_reasoning.py`` for the
+        boundary that produces ``hypothesis``.
+        """
+        self.ai_hypothesis = hypothesis
+        status = hypothesis.get("status", "unknown")
+        self._record_note(
+            actor=actor,
+            reason=(
+                f"AI second opinion ({status}): hypothesis={hypothesis.get('hypothesis')!r} "
+                f"agrees_with_rules={hypothesis.get('agrees_with_rules')!r} — advisory only"
+            ),
+        )
+
     # ------------------------------------------------------------------ #
     # Lifecycle helpers (tools/state-machine facade)
     # ------------------------------------------------------------------ #
@@ -231,6 +269,7 @@ class AgentState:
         *,
         actor: str = "agent",
         guardrail_ctx: GuardrailContext | None = None,
+        confidence_breakdown: dict | None = None,
     ) -> AgentStateName:
         """DIAGNOSING -> RECOMMENDING | GATHERING_EVIDENCE | ESCALATED.
 
@@ -238,12 +277,18 @@ class AgentState:
           - confidence < ESCALATE_CONFIDENCE       -> ESCALATED (G4)
           - confidence < MIN_RECO_CONFIDENCE       -> GATHERING_EVIDENCE (max 2 loops)
           - confidence >= MIN_RECO_CONFIDENCE      -> RECOMMENDING
+
+        ``confidence_breakdown`` (W1-W5 + the KB version used) is stored
+        alongside ``confidence`` purely for display (Diagnosis screen,
+        Governance's before/after re-run) — nothing routes on it.
         """
         if self.current_state != AgentStateName.DIAGNOSING:
             raise ValueError("complete_diagnosis only valid in DIAGNOSING")
 
         self.diagnosis = diagnosis
         self.confidence = confidence
+        if confidence_breakdown is not None:
+            self.confidence_breakdown = confidence_breakdown
 
         if confidence < ESCALATE_CONFIDENCE:
             self._transition(
@@ -466,6 +511,7 @@ class AgentState:
                 else None
             ),
             "ai_hypothesis": self.ai_hypothesis,
+            "confidence_breakdown": self.confidence_breakdown,
             "human_decision": (
                 self.human_decision.model_dump(mode="json")
                 if self.human_decision
