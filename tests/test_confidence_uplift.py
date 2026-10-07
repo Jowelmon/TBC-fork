@@ -103,3 +103,19 @@ def test_rollback_restores_confidence_exactly(client: TestClient):
     assert restored["confidence"] == pytest.approx(confidence_before, abs=1e-9), (
         "rollback must restore confidence exactly, not just approximately"
     )
+
+
+def test_staleness_uses_real_evidence_age_in_any_timezone():
+    """Evidence times are UTC-aware, so W4 measures real age: fresh evidence
+    is never penalised and 20-minute-old sensor data (30-minute SLA) is."""
+    from datetime import datetime, timedelta, timezone
+
+    from technical_services_pill.confidence import _staleness_from_age
+    from technical_services_pill.tools import gather_evidence_for_case
+
+    fresh = gather_evidence_for_case("CRAH-DC1-01", "SA-TEMP-01")
+    assert all(ev.retrieved_at.tzinfo is not None for ev in fresh)
+    assert _staleness_from_age(fresh) == 0.0
+    later = datetime.now(timezone.utc) + timedelta(minutes=20)
+    sensors = [ev for ev in fresh if ev.source == "sensor"]
+    assert _staleness_from_age(sensors, now=later) == pytest.approx(20 / 30, abs=0.01)

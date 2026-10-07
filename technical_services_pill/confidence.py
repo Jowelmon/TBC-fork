@@ -41,6 +41,9 @@ _FRESHNESS_SLA_MINUTES: dict[str, float] = {
     "case_memory": 24 * 60.0,
 }
 _DEFAULT_SLA_MINUTES = 60.0
+# Evidence gathered within the same request is fresh: without this grace the
+# milliseconds between gathering and scoring would make scores irreproducible.
+_FRESH_GRACE_MINUTES = 1.0
 
 
 def peer_agreement_from_registry(asset_id: str, sensor_id: str | None) -> float:
@@ -102,7 +105,9 @@ def _staleness_from_age(evidence: list[EvidenceItem], *, now: datetime | None = 
         retrieved = ev.retrieved_at
         if retrieved.tzinfo is None:
             retrieved = retrieved.replace(tzinfo=timezone.utc)
-        age_minutes = max(0.0, (now - retrieved).total_seconds() / 60.0)
+        age_minutes = (now - retrieved).total_seconds() / 60.0
+        if age_minutes < _FRESH_GRACE_MINUTES:
+            continue
         worst = max(worst, min(1.0, age_minutes / sla))
     return worst
 
@@ -196,12 +201,12 @@ def evidence_coverage_score(
 # Re-exported for convenience so callers can compute the coverage approximation
 # based on the spec's minimum evidence count without importing models separately.
 __all__ = [
+    "MIN_EVIDENCE_COUNT",
     "W1",
     "W2",
     "W3",
     "W4",
     "W5",
-    "MIN_EVIDENCE_COUNT",
-    "score_confidence",
     "evidence_coverage_score",
+    "score_confidence",
 ]

@@ -14,7 +14,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from technical_services_pill import ai_reasoning, app as app_module, llm
+from technical_services_pill import ai_reasoning, llm
+from technical_services_pill import app as app_module
 from technical_services_pill.app import app
 
 

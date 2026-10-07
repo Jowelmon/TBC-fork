@@ -21,26 +21,26 @@ import sys
 from datetime import datetime, timezone
 
 from technical_services_pill import (
+    LEARNING_STORE,
     AgentState,
     AgentStateName,
     CandidateCause,
     Diagnosis,
     EvidenceItem,
+    FeedbackRecord,
     GuardrailContext,
     HumanDecision,
     HumanDecisionRecord,
+    LearningStore,
     Observation,
     Outcome,
     OutcomeResult,
     ReadingStatus,
     Recommendation,
     RecommendationAction,
-    sanitize_metadata,
-    FeedbackRecord,
-    LearningStore,
-    LEARNING_STORE,
-    score_confidence,
     evaluate_decision_tree,
+    sanitize_metadata,
+    score_confidence,
 )
 from technical_services_pill.tools import gather_evidence_for_fault
 
@@ -529,10 +529,10 @@ def test_multi_asset_branch_isolation():
     """Each tree resolves the correct branch from distinct evidence sets, and
     unknown fault types yield [] (escalate)."""
     print("\n[test] multi-asset branch isolation")
-    obs = lambda ft, aid="X": Observation(  # noqa: E731
+    obs = lambda ft, aid="X": Observation(
         type=ft, sensor_id="s", detected_at=datetime.now(timezone.utc),
         reading_status=ReadingStatus.ABSENT, asset_id=aid)
-    evi = lambda s, t, p: EvidenceItem(  # noqa: E731
+    evi = lambda s, t, p: EvidenceItem(
         source=s, type=t, payload=p, retrieved_at=datetime.now(timezone.utc),
         tool="t", kb_refs=[])
     # UPS thermal-runaway must fire BEFORE SoH-based EoL (safety-first).

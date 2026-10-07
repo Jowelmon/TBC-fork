@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from technical_services_pill.app import app, PILL_OWNERS
+from technical_services_pill.app import PILL_OWNERS, app
 
 
 @pytest.fixture()

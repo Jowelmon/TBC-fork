@@ -53,11 +53,8 @@ def abnormal_fields(payload: Any) -> list[str]:
         return []
     out = []
     for key, value in payload.items():
-        if value is True and key in BAD_WHEN_TRUE:
-            out.append(key)
-        elif value is False and key in BAD_WHEN_FALSE:
-            out.append(key)
-        elif key == "alarms" and isinstance(value, list) and value:
+        bad_flag = (value is True and key in BAD_WHEN_TRUE) or (value is False and key in BAD_WHEN_FALSE)
+        if bad_flag or (key == "alarms" and isinstance(value, list) and value):
             out.append(key)
         elif key in THRESHOLDS and isinstance(value, (int, float, str)) and not isinstance(value, bool):
             try:

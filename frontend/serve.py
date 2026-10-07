@@ -1,8 +1,8 @@
 """Frontend server for the Technical Services Intelligence Pill.
 
-Imports the existing FastAPI app from technical_services_pill.app and
-mounts StaticFiles + Jinja2Templates on it. Does NOT modify any
-backend files (except the app.py bug fix already applied).
+Loads ``.env`` (existing environment variables win), imports the backend
+FastAPI app and adds the UI to it: static assets under ``/static`` and the
+single-page shell at ``/ui``. Persistence is the backend app's own.
 
 Run with:
     PYTHONPATH=. uvicorn frontend.serve:app --port 8000
@@ -11,6 +11,7 @@ Then open http://localhost:8000/ui
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import Request
@@ -18,14 +19,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-import os
-
 
 def _load_dotenv(path: str = ".env") -> None:
     """Minimal .env loader: KEY=VALUE lines, existing env vars win."""
     if not os.path.exists(path):
         return
-    for raw in open(path, encoding="utf-8"):
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    for raw in lines:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

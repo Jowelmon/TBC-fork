@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from technical_services_pill.rbac import PERMISSIONS, _ALL_CAPABILITIES  # noqa: E402
+from technical_services_pill.rbac import _ALL_CAPABILITIES, PERMISSIONS
 
 # Matches _need(user, "capability_id") in app.py.
 _NEED_RE = re.compile(r'_need\(\s*\w+\s*,\s*"([a-z_]+)"\s*\)')

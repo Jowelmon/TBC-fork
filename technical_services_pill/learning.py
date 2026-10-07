@@ -246,12 +246,10 @@ class LearningStore:
 
     # ------------------------------------------------------------------ #
     def _seed_from_registry(self) -> None:
-        try:
-            from .mock_registry import get_registry
+        # A broken registry must fail loudly, not start an empty KB.
+        from .mock_registry import get_registry
 
-            kb = get_registry()["KNOWLEDGE_BASE"]["cases"]
-        except Exception:
-            kb = []
+        kb = get_registry()["KNOWLEDGE_BASE"]["cases"]
         for i, c in enumerate(kb):
             cause = c.get("root_cause", "")
             self._ingest(ValidatedCase(

@@ -298,7 +298,7 @@ def _run_learning_loop() -> tuple[str, float, float]:
     print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, KB {_LSTORE.label_of('CRAH')}")
     # re-diagnose identical signature -> should reuse the new validated case
     _diagnose_asset("diagnose #2 (after  feedback)")
-    st2, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
+    _, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
     delta = conf2 - conf1
     print(f"confidence {conf1:.3f} -> {conf2:.3f} (delta {delta:+.3f}) | kb_match {kbm1:.3f} -> {kbm2:.3f}")
     learned = delta > 0

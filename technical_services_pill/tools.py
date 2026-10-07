@@ -1,12 +1,13 @@
 """Agent function-calling tools for the Technical Services Fault Diagnosis pill.
 
-Implements spec §3. Tools fall into four groups:
+Implements spec §3. Tools fall into three groups:
 
 1. Evidence-gathering   — read mock BMS / sensor / history / config
-2. Knowledge             — RAG over validated cases + heuristics
-3. Reasoning             — causal hypothesis scoring
-4. Output / action       — recommendation, work order, outcome, feedback,
-                            escalate, cross-pill coordination
+2. Knowledge             — similar validated cases (retrieval for kb_match)
+3. Output / action       — work order, fault signature, feedback
+
+Cause scoring is not a tool: the decision trees in ``decision_tree.py`` are
+the single source of truth for it.
 
 Every tool call appends a record to ``TOOL_AUDIT_LOG`` so the trace is
 reconstructable. Output/action tools integrate with ``AgentState``; in
@@ -19,7 +20,7 @@ Deterministic, in-memory only — no network, no LLM.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from .mock_registry import (
@@ -35,11 +36,7 @@ from .mock_registry import (
 )
 from .models import (
     EvidenceItem,
-    GuardrailContext,
-    GuardrailResult,
     HumanDecision,
-    Outcome,
-    Recommendation,
     RecommendationAction,
 )
 
@@ -81,7 +78,7 @@ def _log(tool: str, inputs: dict, output: Any) -> None:
         # Stored as it will be after a JSON round trip, so the hash survives a restart.
         "inputs": json.loads(json.dumps(inputs, default=str)),
         "output_type": type(output).__name__,
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "actor": "agent",
         "prev_hash": TOOL_AUDIT_LOG[-1]["hash"] if TOOL_AUDIT_LOG else GENESIS_HASH,
     }
@@ -91,7 +88,7 @@ def _log(tool: str, inputs: dict, output: Any) -> None:
 
 
 def _now() -> datetime:
-    return datetime.now()
+    return datetime.now(timezone.utc)
 
 
 # ========================================================================== #
@@ -271,41 +268,6 @@ def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceIt
 # ========================================================================== #
 # 2. Knowledge tools (RAG over validated heuristics + cases)
 # ========================================================================== #
-def _kb_versions() -> dict[str, str]:
-    """Each pill's live knowledge version label."""
-    from .learning import STORE as _LSTORE
-
-    return _LSTORE.labels()
-
-
-def query_knowledge_base(pill: str, query: str) -> dict:
-    """Return matching heuristics + causal models for ``query``.
-
-    ``pill`` is the pill identifier (e.g. "technical_services"). Matching is
-    a simple keyword scan — deterministic stand-in for an embedding RAG.
-    """
-    q = (query or "").lower()
-    heuristics = [
-        h for h in KNOWLEDGE_BASE["heuristics"]
-        if any(tok in q for tok in (h["rule"], h["description"].lower()))
-        or not q
-    ]
-    causal = [
-        c for c in KNOWLEDGE_BASE["causal_models"]
-        if any(tok in q for tok in (c["cause"].lower(), c["description"].lower()))
-        or not q
-    ]
-    out = {
-        "pill": pill,
-        "version": _kb_versions(),
-        "heuristics": heuristics,
-        "causal_models": causal,
-        "kb_refs": [h["id"] for h in heuristics] + [c["id"] for c in causal],
-    }
-    _log("query_knowledge_base", {"pill": pill, "query": query}, out)
-    return out
-
-
 def get_similar_cases(fault_signature: str, asset_type: str = "CRAH", k: int = 3) -> list:
     """Return up to ``k`` validated past cases similar to ``fault_signature``.
 
@@ -351,32 +313,8 @@ def get_similar_cases(fault_signature: str, asset_type: str = "CRAH", k: int = 3
 
 
 # ========================================================================== #
-# 3. Reasoning tools
+# 3. Output / action tools (integrate with AgentState)
 # ========================================================================== #
-# The causal-hypothesis scoring tool (``evaluate_causal_hypothesis``) was
-# removed during code review — the deterministic decision tree in
-# ``decision_tree.py`` is the single source of truth for cause scoring, and
-# the standalone heuristic scorer was never called by the agent loop, demo,
-# or tests. Keeping one scoring path avoids divergence between two
-# independent scoring heuristics.
-
-
-# ========================================================================== #
-# 4. Output / action tools (integrate with AgentState)
-# ========================================================================== #
-def request_human_approval(
-    state: "AgentState",
-    recommendation: Recommendation,
-    *,
-    guardrail_ctx: GuardrailContext | None = None,
-) -> GuardrailResult:
-    """Propose a recommendation; the state machine routes to APPROVAL/ESCALATED."""
-    result = state.propose_recommendation(
-        recommendation, guardrail_ctx=guardrail_ctx, actor="agent"
-    )
-    return result
-
-
 def _create_work_order(action: RecommendationAction, asset_id: str, case_id: str) -> str:
     """Raise a CMMS work order id (internal helper, no guardrail check).
 
@@ -386,14 +324,14 @@ def _create_work_order(action: RecommendationAction, asset_id: str, case_id: str
     go through the state-aware ``create_work_order_for_state`` (the only
     sanctioned public entry point) which enforces the precondition explicitly.
     """
-    wo_id = f"WO-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    wo_id = f"WO-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     _log("_create_work_order",
          {"action_type": action.type, "asset_id": asset_id, "case_id": case_id}, wo_id)
     return wo_id
 
 
 def create_work_order_for_state(
-    state: "AgentState", action: RecommendationAction
+    state: AgentState, action: RecommendationAction
 ) -> str:
     """State-aware WO creator: refuses if no approve/modify decision exists.
 
@@ -409,11 +347,6 @@ def create_work_order_for_state(
     wo_id = _create_work_order(action, state.asset_id, getattr(state, "case_id", "") or "")
     state.acknowledge_work_order(wo_id, actor="cmms")
     return wo_id
-
-
-def record_outcome_for_state(state: "AgentState", outcome: Outcome) -> None:
-    """Record a maintenance outcome against the state machine."""
-    state.record_outcome(outcome)
 
 
 def build_fault_signature(observation_type: str, top_cause_id: str | None, kb_refs: list[str] | None) -> str:
@@ -501,7 +434,7 @@ def submit_feedback(case_id: str, corrections: dict,
         confirmed_cause=confirmed_cause,
         corrections=corrections,
         submitted_by=corrections.get("submitted_by", "steward1"),
-        submitted_at=datetime.now(),
+        submitted_at=datetime.now(timezone.utc),
     )
     proposal = _LSTORE.record_feedback(fb, confidence=confidence, action_taken=action_taken)
     _log("submit_feedback",

@@ -1,9 +1,8 @@
-"""Case store with a SQLite-backed persistence layer and a memory cache.
+"""In-memory store of cases (``AgentState`` by case id).
 
-The repository originally used a process-local in-memory store. This version
-adds persisted storage without breaking the existing public API: the app still
-works with ``CaseStore().create(...)``, ``get()``, ``list()``, and
-``snapshot()`` semantics, but state survives a restart.
+Persistence lives in one place, ``persistence.py``, which snapshots this
+store and the knowledge base together after every state-changing request
+and restores them on startup.
 """
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ import uuid
 from typing import Any
 
 from .agent_state import AgentState
-from .database import SQLiteStore
 from .models import (
     AgentStateName,
     Diagnosis,
@@ -26,15 +24,10 @@ from .models import (
 
 
 class CaseStore:
-    """Persistent store of ``AgentState`` by case id."""
+    """Store of ``AgentState`` by case id."""
 
-    def __init__(self, db_path: str | None = None) -> None:
-        self._db = SQLiteStore(db_path)
+    def __init__(self) -> None:
         self._cases: dict[str, AgentState] = {}
-        for case_id in self._db.list_case_ids():
-            data = self._db.get_case_state(case_id)
-            if data is not None:
-                self._cases[case_id] = self._restore_from_snapshot(data)
         self.registry_seal: str | None = None
         self.reseal()
 
@@ -76,36 +69,17 @@ class CaseStore:
         state.case_id = case_id
         self._cases[case_id] = state
         self.reseal()
-        self._db.save_case_state(case_id, state.snapshot())
         return case_id
 
     def get(self, case_id: str) -> AgentState | None:
-        state = self._cases.get(case_id)
-        if state is None:
-            data = self._db.get_case_state(case_id)
-            if data is None:
-                return None
-            state = self._restore_from_snapshot(data)
-            self._cases[case_id] = state
-        return state
+        return self._cases.get(case_id)
 
     def list(self) -> list[str]:
         return list(self._cases.keys())
 
     def snapshot(self, case_id: str) -> dict | None:
         state = self.get(case_id)
-        if state is None:
-            return None
-        snap = state.snapshot()
-        self._db.save_case_state(case_id, snap)
-        return snap
-
-    def audit_trace(self, case_id: str) -> list[dict]:
-        state = self.get(case_id)
-        if state is None:
-            return []
-        chain_valid = state.verify_audit_chain()
-        return [{**entry.model_dump(mode="json"), "chain_valid": chain_valid} for entry in state.history]
+        return state.snapshot() if state is not None else None
 
     def all_audit_traces(self, *, actor: str | None = None, case_id: str | None = None) -> list[dict]:
         out: list[dict] = []
@@ -126,4 +100,4 @@ class CaseStore:
 
 STORE = CaseStore()
 
-__all__ = ["CaseStore", "STORE"]
+__all__ = ["STORE", "CaseStore"]

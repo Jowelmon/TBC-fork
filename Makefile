@@ -1,4 +1,4 @@
-.PHONY: help install test eval demo serve reset docker-up docker-down lint clean
+.PHONY: help install test eval demo serve reset docker-up docker-down docker-demo lint clean
 
 # Use the project venv when it exists, so `make test` works without activating it.
 PY := $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)

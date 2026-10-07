@@ -25,12 +25,13 @@ Field-name mapping to spec §2 ``AgentState``:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .audit import GENESIS_HASH
 from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
 from .models import (
     ESCALATE_CONFIDENCE,
+    MAX_RETRIEVAL_ROUNDS,
     MIN_EVIDENCE_COUNT,
     MIN_RECO_CONFIDENCE,
     AgentStateName,
@@ -201,7 +202,7 @@ class AgentState:
         entry = HistoryEntry(
             from_state=from_state,
             to_state=to_state,
-            at=datetime.now(),
+            at=datetime.now(timezone.utc),
             actor=actor,
             reason=reason,
             state_digest=self._state_digest(),
@@ -264,7 +265,7 @@ class AgentState:
         """
         ready = (
             len(self.evidence) >= MIN_EVIDENCE_COUNT
-            or self._retrieval_rounds >= 3
+            or self._retrieval_rounds >= MAX_RETRIEVAL_ROUNDS
         )
         if ready or force:
             self._transition(
@@ -278,7 +279,7 @@ class AgentState:
             actor=actor,
             reason=(
                 f"insufficient evidence: {len(self.evidence)} items, "
-                f"{self._retrieval_rounds} rounds (need {MIN_EVIDENCE_COUNT} items or 3 rounds)"
+                f"{self._retrieval_rounds} rounds (need {MIN_EVIDENCE_COUNT} items or {MAX_RETRIEVAL_ROUNDS} rounds)"
             ),
         )
 

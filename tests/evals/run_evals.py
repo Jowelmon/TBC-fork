@@ -16,15 +16,14 @@ import traceback
 # Isolate from any real demo/test database before importing the app.
 _TMP = tempfile.mkdtemp(prefix="tbc-evals-")
 os.environ["TBC_DB_PATH"] = os.path.join(_TMP, "tbc.sqlite")
-os.environ["TBC_CASE_DB_PATH"] = os.path.join(_TMP, "cases.sqlite3")
 os.environ["TBC_PERSIST"] = "1"
 os.environ.setdefault("TBC_DEMO_INSECURE", "1")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from technical_services_pill.app import app  # noqa: E402
+from technical_services_pill.app import app
 
 RESULTS: list[tuple[str, str, bool, str]] = []  # (id, title, passed, detail)
 
@@ -150,12 +149,14 @@ def eval_05(client):
 
 @eval_("EVAL-06", "Persistence: case state survives a process restart")
 def eval_06(client):
-    from technical_services_pill.store import CaseStore
+    from technical_services_pill import persistence, store
     snap = _create_and_advance(client)
     case_id = snap["case_id"]
-    # Simulate a restart: a brand new CaseStore reading the same DB file.
-    reloaded = CaseStore(os.environ["TBC_CASE_DB_PATH"])
-    restored = reloaded.snapshot(case_id)
+    # Simulate a restart: save, wipe the in-memory cases, restore from disk.
+    persistence.save_state()
+    store.STORE._cases.clear()
+    persistence.load_state()
+    restored = store.STORE.snapshot(case_id)
     assert restored is not None, "case not found after simulated restart"
     assert restored["current_state"] == snap["current_state"]
     assert restored["confidence"] == snap["confidence"]

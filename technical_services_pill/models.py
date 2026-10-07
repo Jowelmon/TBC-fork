@@ -11,7 +11,7 @@ surfaced as module constants so they are configurable, not hard-coded.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -111,7 +111,7 @@ class Diagnosis(BaseModel):
     top_cause_id: str | None = None
     reasoning_trace: str
     kb_refs: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class RecommendationAction(BaseModel):
@@ -130,7 +130,7 @@ class Recommendation(BaseModel):
     actions: list[RecommendationAction] = Field(default_factory=list)
     kb_refs: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class HumanDecisionRecord(BaseModel):
@@ -145,7 +145,7 @@ class HumanDecisionRecord(BaseModel):
     rationale: str | None = None  # required for reject/modify (validated below)
     modified_actions: list[RecommendationAction] | None = None
     original_actions: list[RecommendationAction] | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     signature: str | None = None
     # The approved expert knowledge on screen when the decision was made,
     # kept with the decision so later rollbacks don't rewrite history.
@@ -154,7 +154,7 @@ class HumanDecisionRecord(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     @model_validator(mode="after")
-    def _require_rationale_and_modifications(self) -> "HumanDecisionRecord":
+    def _require_rationale_and_modifications(self) -> HumanDecisionRecord:
         if self.decision in (HumanDecision.REJECT, HumanDecision.MODIFY):
             if not (self.rationale and self.rationale.strip()):
                 raise ValueError("rationale is required for reject/modify decisions")
@@ -170,7 +170,7 @@ class Outcome(BaseModel):
     root_cause_confirmed: str | None = None
     actual_actions_taken: list[str] = Field(default_factory=list)
     verified_by: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     notes: str | None = None
 
 
@@ -240,7 +240,7 @@ class HistoryEntry(BaseModel):
         }
 
     @model_validator(mode="after")
-    def _set_hash(self) -> "HistoryEntry":
+    def _set_hash(self) -> HistoryEntry:
         if self.hash is None:
             self.hash = compute_hash(self.prev_hash, self._payload_for_hash())
         return self

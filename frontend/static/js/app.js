@@ -66,7 +66,7 @@ function roleDisplayName(id) {
 }
 
 function statePill(stateVal) {
-  // Miora spec status pill mapping
+  // Status pill mapping
   const map = {
     TRIGGERED:          { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
     GATHERING_EVIDENCE: { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
@@ -85,7 +85,7 @@ function statePill(stateVal) {
 }
 
 function confBand(conf, state) {
-  // Miora spec confidence bands. An escalated case is with a human whatever
+  // Confidence bands. An escalated case is with a human whatever
   // its score, so it never reads as "Medium" or "Recommendable".
   if (conf === null || conf === undefined) return { cls: 'badge-grey', label: 'N/A' };
   if (state === 'ESCALATED') return { cls: 'badge-red', label: (conf * 100).toFixed(0) + '% · escalated' };

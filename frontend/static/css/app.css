@@ -7,7 +7,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  /* Miora Design System palette, darkened for AA contrast on a light page.
+  /* Palette, darkened for AA contrast on a light page.
      Still used for solid buttons/borders/dots as well as text, so each
      shade has to work as white-on-color AND color-on-page. */
   --red:        #B91C1C;  /* critical / rejected / HIGH severity */
@@ -53,7 +53,7 @@
 
 /* Dark mode: explicit opt-in only (top-bar toggle), never the default --
    a presenter's OS dark-mode setting should not silently change what's on
-   the projector. Restores the original saturated Miora dark palette. */
+   the projector. Restores the original saturated dark palette. */
 :root[data-theme="dark"] {
   --red:        #DC2626;
   --green:      #16A34A;
@@ -80,11 +80,11 @@
   --nav-bg:      #0b1120;
 }
 
-/* ── Typography scale (Miora: H1 24px, H2 20px, H3 16px, Body 14px, Caption 12px) ── */
+/* ── Typography scale (H1 24px, H2 20px, H3 16px, body 15px, nothing below 13px) ── */
 html, body {
   height: 100%;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 15px;     /* Miora body base */
+  font-size: 15px;     /* body base */
   color: var(--text);
   background: var(--bg);
   line-height: 1.6;
@@ -400,8 +400,6 @@ textarea { resize: vertical; min-height: 70px; }
 }
 .timeline-trans { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
 .timeline-meta { display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: var(--text-dim); }
-.timeline-hash { margin-top: 4px; }
-.timeline-hash code { font-size: 13px; color: var(--text-dim); }
 
 /* ── Cause bars ─────────────────────────────────────────────────────────────── */
 .cause-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -435,21 +433,18 @@ textarea { resize: vertical; min-height: 70px; }
 
 /* ── Misc ───────────────────────────────────────────────────────────────────── */
 .text-dim { color: var(--text-dim); }
-.text-bright { color: var(--text-bright); }
 .muted { color: var(--text-dim); font-size: 15px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
-.mb-0 { margin-bottom: 0; }
 .mt-16 { margin-top: 16px; }
 .gap-8 { gap: 8px; }
 .flex { display: flex; }
 .flex-wrap { flex-wrap: wrap; }
 .align-center { align-items: center; }
 .justify-between { justify-content: space-between; }
-.pending-badge { font-size: 13px; color: var(--yellow-text); font-weight: 700; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Miora Design System — Additional Components
+   Additional components
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Confidence Meter (progress bar with color band) ─────────────────────────── */
@@ -529,8 +524,6 @@ textarea { resize: vertical; min-height: 70px; }
 }
 .tier-fact    { background: var(--neutral-bg); color: var(--neutral-text); }
 .tier-fact::before    { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--neutral); }
-.tier-ai      { background: var(--yellow-bg); color: var(--yellow-text); }
-.tier-ai::before      { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); }
 .tier-action  { background: var(--blue-bg); color: var(--blue-text); }
 .tier-action::before  { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
 .tier-human   { background: var(--green-bg); color: var(--green-text); }

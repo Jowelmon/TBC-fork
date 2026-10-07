@@ -2,7 +2,7 @@
 
 Tests used to write cases and knowledge proposals into the same SQLite files
 the demo server loads, so the UI opened with stale cases and duplicate
-pending proposals. Point both stores at a throwaway directory before any
+pending proposals. Point persistence at a throwaway directory before any
 application module is imported.
 """
 import os
@@ -10,7 +10,6 @@ import tempfile
 
 _TMP = tempfile.mkdtemp(prefix="tbc-tests-")
 os.environ.setdefault("TBC_DB_PATH", os.path.join(_TMP, "tbc.sqlite"))
-os.environ.setdefault("TBC_CASE_DB_PATH", os.path.join(_TMP, "cases.sqlite3"))
 os.environ.setdefault("TBC_AUDIT_KEY_FILE", os.path.join(_TMP, "audit.key"))
 
 # Most of this suite predates the signed-session login flow (auth.py) and

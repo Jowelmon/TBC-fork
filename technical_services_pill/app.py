@@ -952,7 +952,7 @@ def list_assets(user: str = Depends(resolve_user)) -> dict:
         sensor = next((sid for sid, s in SENSORS.items() if s.get("asset_id") == asset_id),
                       f"{asset_id}-SENSOR")
         out.append({"asset_id": asset_id, "type": a.get("type"),
-                    "fault_type": sorted(FAULTS_BY_ASSET_TYPE.get(a.get("type"), []))[0],
+                    "fault_type": min(FAULTS_BY_ASSET_TYPE.get(a.get("type"), [])),
                     "default_sensor": sensor})
     return {"assets": out}
 
