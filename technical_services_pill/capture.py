@@ -81,7 +81,7 @@ def _closest_sentence(symptom: str, quote: str) -> str:
 
 
 def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
-                  warnings: list[str]) -> list[str]:
+                  warnings: list[str], rejected: list[dict[str, Any]]) -> list[str]:
     """Keep a check / never / escalate-when line only if the expert said it,
     word for word, in the same answer as the quote, and it does not tell
     anyone to defeat a safety device."""
@@ -90,17 +90,23 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
         if _norm(line) not in _norm(answer):
             article = "an" if field[0] in "aeiou" else "a"
             warnings.append(f"Item {idx}: dropped {article} {field} line the expert did not say in this answer.")
+            rejected.append({"item": idx, "field": field, "text": line,
+                             "reason": "not in the expert's answer: no source found in the transcript"})
         elif field == "never" and not said_as_prohibition(line, answer):
             # Shown under "Never", but the expert did not say it as one:
             # it could be read as an instruction, so screen it like one.
             if defeats_safety(line):
                 warnings.append(f"Item {idx}: dropped a never line that reads as an instruction "
                                 "to defeat a safety device.")
+                rejected.append({"item": idx, "field": field, "text": line,
+                                 "reason": "reads as an instruction to defeat a safety device"})
             else:
                 kept.append(line)
         elif field != "never" and defeats_safety(line):
             article = "an" if field[0] in "aeiou" else "a"
             warnings.append(f"Item {idx}: dropped {article} {field} line that would defeat a safety device.")
+            rejected.append({"item": idx, "field": field, "text": line,
+                             "reason": "would defeat a safety device"})
         else:
             kept.append(line)
     return kept
@@ -133,6 +139,7 @@ def _mentions_cause(text: str, cause: str) -> bool:
 
 def _validate_items(
     sanitized: str, items: list[Any], asset_type: str,
+    rejected: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Grounding + cause checks shared by the AI draft and the reviewed submit.
 
@@ -144,23 +151,35 @@ def _validate_items(
     haystack = _norm(sanitized)
     kept: list[dict[str, Any]] = []
     warnings: list[str] = []
+    # What the draft said that did not survive, and why: shown to the
+    # capturer so an AI's invention is visible, not silently discarded.
+    rejected = rejected if rejected is not None else []
     for idx, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             warnings.append(f"Item {idx} was not a heuristic object and was dropped.")
+            rejected.append({"item": idx, "field": "heuristic", "text": str(item)[:200],
+                             "reason": "not a heuristic"})
             continue
         notes_from = len(warnings)
         quote = str(item.get("evidence_quote", "")).strip()
         if "[REDACTED" in quote or "[REDACTED" in str(item.get("symptom_pattern", "")):
             warnings.append(f"Item {idx} was dropped: it contains text redacted as an injection attempt.")
+            rejected.append({"item": idx, "field": "heuristic", "text": quote[:200],
+                             "reason": "contains text redacted as an injection attempt (G7)"})
             continue
         if not quote or _norm(quote) not in haystack:
             warnings.append(
                 f"Item {idx} was dropped as ungrounded: its supporting quote is "
                 "not in the transcript word for word."
             )
+            rejected.append({"item": idx, "field": "heuristic",
+                             "text": quote or str(item.get("symptom_pattern", ""))[:200],
+                             "reason": "the quoted words are not in the transcript: no source found"})
             continue
         if defeats_safety(quote):
             warnings.append(f"Item {idx} was dropped: the expert's words would defeat a safety device.")
+            rejected.append({"item": idx, "field": "heuristic", "text": quote,
+                             "reason": "would defeat a safety device"})
             continue
 
         cause_raw = str(item.get("likely_cause", "")).strip()
@@ -203,7 +222,7 @@ def _validate_items(
                 "or its usual signs; check it is filed under the right cause."
             )
         names = {"checks": "check", "do_not": "never", "escalate_when": "escalate-when"}
-        lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings)
+        lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings, rejected)
                  for f in _LIST_FIELDS}
         # Deny by default: any line naming a protective device or its
         # monitoring is held for the approving steward's safety review.
@@ -260,7 +279,8 @@ def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
     if not isinstance(items, list):
         raise CaptureError("model output has no 'heuristics' list")
 
-    kept, item_warnings = _validate_items(sanitized, items, asset_type)
+    rejected: list[dict[str, Any]] = []
+    kept, item_warnings = _validate_items(sanitized, items, asset_type, rejected)
     warnings += item_warnings
     if not kept:
         raise CaptureError(
@@ -272,7 +292,17 @@ def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
         "heuristics": kept,
         "warnings": warnings,
         "dropped": len(items) - len(kept),
+        "rejected": rejected,
     }
+
+
+def check_draft(transcript: str, asset_type: str, heuristics: list[Any]) -> dict[str, Any]:
+    """Run the grounding and safety checks on a draft without queuing it:
+    what would be kept, and every line that would be rejected with why."""
+    sanitized, warnings = _sanitize(transcript)
+    rejected: list[dict[str, Any]] = []
+    kept, item_warnings = _validate_items(sanitized, heuristics, asset_type, rejected)
+    return {"heuristics": kept, "rejected": rejected, "warnings": warnings + item_warnings}
 
 
 def reviewed_draft(

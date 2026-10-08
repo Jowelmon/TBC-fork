@@ -17,7 +17,10 @@ overstates where the build actually is.
   (`capture.py`, `learning.py`). Nobody decides on their own proposal;
   each pill versions its own knowledge, and rolling one pill back restores
   its prior confidence exactly (`tests/test_confidence_uplift.py`).
-- Safety screen on expert know-how at capture and display (`safety.py`).
+- Safety screen on expert know-how at capture and display (`safety.py`),
+  with every check safety-reviewed by the approving steward.
+- An independent sentinel that re-checks each case after every write and
+  stops any whose record breaks a rule (`sentinel.py`).
 - Signed-cookie session identity (`auth.py`) and RBAC for five roles
   (`rbac.py`).
 - Tamper-evident, keyed hash chains on every case transition, the

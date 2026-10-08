@@ -3,7 +3,7 @@
 import { api } from './api.js?v=9';
 import { initGuide } from './guide.js?v=11';
 import { initCloud, setCloudStatus, setCloudMood, cloudThinking } from './cloud.js?v=5';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=31';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=34';
 
 // ── State ──────────────────────────────────────────────────
 const state = {

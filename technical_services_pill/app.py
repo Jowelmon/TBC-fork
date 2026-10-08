@@ -96,7 +96,7 @@ class _DecisionTextFromBody:
 
     _PATHS = re.compile(
         r"^/(?:cases/[^/]+/(?:approval|outcome|escalation/close|escalation/evidence)|"
-        r"kb/proposals/[^/]+/(?:approve|reject|revoke)|kb/rollback/\d+|audit/review)$")
+        r"kb/proposals/[^/]+/(?:approve|reject|revoke)|kb/rollback/\d+|audit/review|sentinel/review)$")
 
     def __init__(self, inner):
         self.inner = inner
@@ -144,6 +144,15 @@ async def _ledger_broken(request: Request, exc: LedgerBrokenError):
 @app.middleware("http")
 async def _snapshot_after_write(request, call_next):
     response = await call_next(request)
+    if request.method == "POST" and response.status_code < 400:
+        # The sentinel re-checks a case from the outside after every write to
+        # it, whichever endpoint made the write (sentinel.py).
+        m = re.match(r"^/cases/([^/]+)/", request.url.path)
+        state = STORE.get(m.group(1)) if m else None
+        if state is not None:
+            from . import sentinel
+
+            sentinel.watch(state)
     if (
         os.environ.get("TBC_PERSIST", "1") != "0"
         and request.method in {"POST", "PUT", "PATCH", "DELETE"}
@@ -180,9 +189,15 @@ def _get_case(case_id: str) -> AgentState:
 
 
 def _get_case_for_write(case_id: str) -> AgentState:
-    """A case whose audit chain fails verification is frozen: it can be
-    read and investigated, never advanced, approved or closed."""
+    """A case whose audit chain fails verification, or that the sentinel
+    has stopped, is frozen: it can be read and investigated, never advanced,
+    approved or closed, until an auditor reviews it."""
     state = _get_case(case_id)
+    hold = state.sentinel_hold or {}
+    if hold.get("active"):
+        raise HTTPException(
+            423, f"case {case_id} was stopped by the sentinel ({'; '.join(hold.get('findings', []))}); "
+                 "an auditor must review it on Governance")
     if not state.verify_audit_chain():
         raise HTTPException(
             423, f"case {case_id} audit chain failed verification; frozen pending audit review")
@@ -1169,6 +1184,27 @@ def post_capture_draft(body: CaptureDraftRequest, user: str = Depends(resolve_us
     return {"status": "draft", "draft_id": draft_id, **draft}
 
 
+class CaptureCheckRequest(_BaseModel):
+    asset_type: str = _Field(min_length=1, max_length=40)
+    transcript: str = _Field(min_length=1)
+    heuristics: list[dict]
+
+
+@app.post("/capture/check")
+def post_capture_check(body: CaptureCheckRequest, user: str = Depends(resolve_user)) -> dict:
+    """The grounding and safety check on its own, queuing nothing: what would
+    be kept and every line that would be rejected, with why. The same check
+    runs again server-side when a review is submitted, so the screen cannot
+    be talked out of it."""
+    _need(user, "capture_expert_knowledge")
+    from . import capture
+
+    try:
+        return capture.check_draft(body.transcript, body.asset_type, body.heuristics)
+    except capture.CaptureError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 # Drafts this server produced, so a submitted review's provenance is the
 # server's record of which model drafted it, not the browser's claim.
 _DRAFTS: dict[str, dict] = {}
@@ -1515,6 +1551,68 @@ def post_demo_seed(user: str = Depends(resolve_user)) -> dict:
     if _user(user).role != Role.ADMIN:
         raise HTTPException(403, "seeding demo cases is limited to the admin role")
     return {"seeded": seed_demo_cases(), "actor": SEED_ACTOR}
+
+
+@app.get("/sentinel")
+def get_sentinel(user: str = Depends(resolve_user)) -> dict:
+    """What the sentinel watches, which checks it runs, and what it stopped."""
+    _need(user, "view_case")
+    from . import sentinel
+
+    return sentinel.status([STORE.get(cid) for cid in STORE.list()])
+
+
+@app.post("/sentinel/review")
+def post_sentinel_review(case_id: str, decision: str, reason: str = "",
+                         user: str = Depends(resolve_user)) -> dict:
+    """An auditor's decision on a case the sentinel stopped: ``release`` (its
+    findings are acknowledged and will not stop it again) or ``quarantine``
+    (closed; redo the work as a new case). Recorded on the case's chain and
+    in the governance ledger."""
+    _need(user, "review_audit_integrity")
+    from . import sentinel
+    from .learning import STORE as _LSTORE
+
+    if not reason.strip():
+        raise HTTPException(400, "a sentinel review needs a reason")
+    if decision not in ("release", "quarantine"):
+        raise HTTPException(400, "decision must be 'release' or 'quarantine'")
+    if not _LSTORE.verify_ledger():
+        raise HTTPException(409, "review the knowledge ledger first (Integrity Review)")
+    state = _get_case(case_id)
+    try:
+        sentinel.release(state, actor=user, reason=reason.strip(), quarantine=decision == "quarantine")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    _LSTORE.record_integrity_review(
+        actor=user, reason=f"sentinel hold on {case_id} {decision}d: {reason.strip()}")
+    return {"case_id": case_id, "decision": decision, "current_state": state.current_state.value}
+
+
+@app.post("/sentinel/drill")
+def post_sentinel_drill(user: str = Depends(resolve_user)) -> dict:
+    """Admin only: show the sentinel working. Creates a CRAH case, drives it
+    to approval, then plays a defective tool that rewrites the recommendation
+    to cite evidence the case never gathered (something G8 and the agent
+    would never produce). The sentinel stops it. Clearly labelled a drill on
+    the case's own audit trail."""
+    from . import sentinel
+    from .rbac import Role
+
+    if _user(user).role != Role.ADMIN:
+        raise HTTPException(403, "only an admin can run a sentinel drill")
+    state = _new_case("CRAH-DC1-01", "SA-TEMP-01", "temperature_measurement_missing",
+                      ReadingStatus.ABSENT, actor=user)
+    _advance(state)
+    if not (state.recommendation and state.recommendation.actions):
+        raise HTTPException(409, f"drill case reached {state.current_state.value}, not approval")
+    state.recommendation = state.recommendation.model_copy(
+        update={"evidence_refs": ["vendor_portal_reading"]})
+    state._record_note(actor="system", reason="DRILL: a simulated defective tool rewrote the "
+                                              "recommendation to cite evidence this case never gathered")
+    findings = sentinel.watch(state)
+    return {"case_id": state.case_id, "findings": findings,
+            "held": bool((state.sentinel_hold or {}).get("active"))}
 
 
 @app.get("/health")

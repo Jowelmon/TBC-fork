@@ -107,6 +107,8 @@ class AgentState:
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
         self.chain_seal: str | None = None
+        # Set by the sentinel (sentinel.py) when it stops the case.
+        self.sentinel_hold: dict | None = None
 
         self._gathering_loops = 0
         self._retrieval_rounds = 0
@@ -192,6 +194,8 @@ class AgentState:
             "work_order_id": self.work_order_id,
             "feedback_id": self.feedback_id,
         }
+        if self.sentinel_hold:  # only once set, so earlier records keep their digests
+            material["sentinel_hold"] = self.sentinel_hold
         return hashlib.sha256(canonical_json(material).encode()).hexdigest()
 
     def _append(self, from_state: AgentStateName, to_state: AgentStateName,
@@ -615,5 +619,6 @@ class AgentState:
             "feedback_id": self.feedback_id,
             "history": [h.model_dump(mode="json") for h in self.history],
             "chain_seal": self.chain_seal,
+            "sentinel_hold": self.sentinel_hold,
             "audit_chain_valid": self.verify_audit_chain(),
         }

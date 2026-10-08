@@ -33,10 +33,12 @@ Every beat below is something you click, not something you claim.
 is tribal knowledge. When they're unavailable, that knowledge doesn't
 exist for anyone else."
 
-**Do:** On the Dashboard, open the **Why this exists** panel. Point at
-the *problem* and *users* lines — and at the explicitly labelled
-*assumption* in the value line: nothing here is presented as Keppel data
-that isn't.
+**Do:** On the Dashboard, point at the strip across the top: Tencent
+Cloud ADP supplies the AI, TBC governs what that AI may do (grounding,
+safety screen, guardrails, RBAC, sentinel), the decision tree diagnoses,
+and a person approves. Open **Illustrative value** and change the numbers.
+It is labelled "Illustrative scenario — not Keppel actuals": every figure
+is an input, and the formula is shown.
 
 ## 2. Capture an expert interview (45s)
 
@@ -45,6 +47,14 @@ that isn't.
 **Do:** Go to **Capture**. Click **Load sample interview**, then
 **Draft knowledge with AI**. Point at the step tracker — this is an AI
 draft, clearly labelled, nothing live yet.
+
+**Say:** "And when the AI makes something up?"
+
+**Do:** Point at the **Grounding check** card. With Tencent Cloud ADP it
+usually shows real lines the model reworded or added, marked ✗ "no source
+found in the transcript". Then use **Try to slip in a line the expert never
+said**: "Tighten the terminal to 12 Nm." is rejected. The same check runs
+again on the server when the draft is sent, so it cannot become knowledge.
 
 ## 3. Review before it's sent (45s)
 
@@ -174,9 +184,18 @@ everyone. Switch to **auditor1**: Governance shows **Integrity Review**,
 where the auditor accepts a record as genuine or quarantines a case, with a
 reason that is written to the chain and the ledger.
 
+**Say:** "Who watches the system that's making these decisions?"
+
+**Do:** As **admin1**, on Governance click **Run a sentinel drill** in the
+**Sentinel** card. It creates a case and plays a defective tool that cites
+evidence the case never gathered. The sentinel stops the case, writes why
+on its audit trail, keeps what it saw, and raises the Dashboard alert. The
+case's controls are gone. Switch to **auditor1** to release or quarantine
+it with a reason.
+
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 314
+**If asked "is any of this real?"** — `make test` (pytest, currently 323
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires
