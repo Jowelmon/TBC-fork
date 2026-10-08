@@ -820,3 +820,34 @@ code { font-size: max(0.9em, 14px); }
    and shrink the cloud on narrower screens. */
 #content { padding-bottom: 120px; }
 @media (max-width: 768px) { #ai-cloud { transform-origin: bottom right; scale: .8; right: 12px; bottom: 12px; } }
+
+/* ── Dashboard: where AI is used and what governs it ─────────────────── */
+.ai-flow .card-body { padding: 14px 16px; }
+.ai-flow-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.ai-flow-step { flex: 1 1 180px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-input); }
+.ai-flow-ai { border-color: var(--purple, #7C3AED); }
+.ai-flow-human { border-color: var(--green); }
+.ai-flow-k { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+.ai-flow-v { font-size: 16px; font-weight: 600; color: var(--text-bright); margin: 2px 0 4px; }
+.ai-flow-d { font-size: 14px; color: var(--text-dim); line-height: 1.4; }
+.ai-flow-arrow { align-self: center; font-size: 20px; color: var(--text-dim); }
+@media (max-width: 900px) { .ai-flow-arrow { display: none; } }
+
+/* ── Dashboard: illustrative value calculator ────────────────────────── */
+.roi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 16px; margin-bottom: 12px; }
+.roi-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--text-dim); }
+.roi-grid input { font-size: 16px; }
+.roi-out { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+.roi-out .stat { flex: 1 1 160px; }
+.roi-formula { flex-basis: 100%; margin-top: 6px; }
+
+/* ── Capture: the grounding check, made visible ──────────────────────── */
+.grounding-card { border-left: 3px solid var(--blue); }
+.ground-list { list-style: none; padding: 0; margin: 0; }
+.ground-list li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 15px; }
+.ground-ok { color: var(--green-text); }
+.ground-bad { color: var(--red-text); }
+.ground-why { display: block; font-size: 14px; color: var(--text-dim); margin-top: 2px; }
+.ground-try { margin-top: 12px; }
+.ground-try label { display: block; font-size: 14px; color: var(--text-dim); margin-bottom: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

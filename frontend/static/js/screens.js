@@ -13,6 +13,11 @@ function setHTML(id, html) {
 // A case whose audit chain fails verification is frozen server-side (423).
 // Show that up front and hide every control that would only be refused.
 function frozenWrap(s, html, esc) {
+  const hold = s.sentinel_hold || {};
+  if (hold.active) {
+    return `<div class="banner banner-error" role="alert"><p><strong>Stopped by the sentinel:</strong> ${(hold.findings || []).map(esc).join('; ')}. What it saw has been kept, the reason is on the case's audit trail, and an auditor decides on Governance whether to release or quarantine it.</p></div>
+    <div class="case-frozen">${html}</div>`;
+  }
   if (s.audit_chain_valid !== false) return html;
   return `<div class="banner banner-error"><p><strong>Case frozen:</strong> the audit chain for ${esc(s.case_id)} failed verification, so it can be read but not advanced, decided or closed until an auditor reviews it.</p></div>
     <div class="case-frozen">${html}</div>`;
@@ -204,12 +209,38 @@ export function renderDashboard(el, state, h) {
   el.innerHTML = `
     ${nextHint('click a case to see its diagnosis, or create a new one to get started.')}
     <div id="integrity-banner"></div>
+    <section class="card ai-flow" aria-label="Where AI is used and what governs it">
+      <div class="card-body">
+        <div class="ai-flow-row">
+          <div class="ai-flow-step ai-flow-ai"><div class="ai-flow-k">AI capability</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts expert knowledge from interviews; gives an advisory second opinion</div></div>
+          <div class="ai-flow-arrow" aria-hidden="true">→</div>
+          <div class="ai-flow-step"><div class="ai-flow-k">TBC governance</div><div class="ai-flow-v">Grounding · safety screen · guardrails G1-G9 · RBAC · sentinel</div><div class="ai-flow-d">AI output that is not in the expert's words, or would defeat a protection, never becomes knowledge</div></div>
+          <div class="ai-flow-arrow" aria-hidden="true">→</div>
+          <div class="ai-flow-step"><div class="ai-flow-k">Diagnosis</div><div class="ai-flow-v">Deterministic decision tree</div><div class="ai-flow-d">Same evidence, same answer, every time</div></div>
+          <div class="ai-flow-arrow" aria-hidden="true">→</div>
+          <div class="ai-flow-step ai-flow-human"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing executes without an Asset Ops Manager</div></div>
+        </div>
+      </div>
+    </section>
     <details class="card why-panel">
       <summary><h3 style="display:inline">Why this exists</h3></summary>
       <div class="card-body">
         <p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
         <p><strong>Users:</strong> technicians trigger and work cases; Asset Ops Managers approve every recommendation before anything happens; Knowledge Stewards review and govern what the pill learns from interviews and closed cases.</p>
-        <p><strong>Value:</strong> <em>assumption: manual triage without captured expert knowledge takes roughly 90 minutes per fault; replace with a measured Keppel baseline.</em> This pill's claim is narrower and checkable: a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). Nothing above the <em>assumption</em> line is Keppel data — it isn't.</p>
+        <p><strong>Value:</strong> a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). For what that could be worth, use the illustrative calculator below with your own figures.</p>
+      </div>
+    </details>
+    <details class="card why-panel" id="roi-panel">
+      <summary><h3 style="display:inline">Illustrative value</h3> <span class="badge badge-yellow">Illustrative scenario — not Keppel actuals</span></summary>
+      <div class="card-body">
+        <p class="muted" style="margin-bottom:10px">Every number here is an input you set. None is Keppel data; replace each with a measured baseline.</p>
+        <div class="roi-grid">
+          <label>Fault cases a year<input id="roi-cases" type="number" min="0" step="10" value="500"></label>
+          <label>Diagnosis time today (minutes)<input id="roi-now" type="number" min="0" step="5" value="60"></label>
+          <label>Diagnosis time with the pill (minutes)<input id="roi-with" type="number" min="0" step="5" value="30"></label>
+          <label>Loaded technician cost (per hour)<input id="roi-rate" type="number" min="0" step="5" value="60"></label>
+        </div>
+        <div class="roi-out" id="roi-out" aria-live="polite"></div>
       </div>
     </details>
     <details class="card why-panel">
@@ -270,6 +301,29 @@ export function renderDashboard(el, state, h) {
     </div>
   `;
 
+  // Illustrative value: simple arithmetic on the viewer's own inputs.
+  const roiIds = ['roi-cases', 'roi-now', 'roi-with', 'roi-rate'];
+  try {
+    const saved = JSON.parse(localStorage.getItem('tbc_roi') || 'null');
+    if (Array.isArray(saved)) roiIds.forEach((id, i) => { if (Number.isFinite(saved[i])) document.getElementById(id).value = saved[i]; });
+  } catch (_) { /* defaults */ }
+  const roi = () => {
+    const [cases, now, withPill, rate] = roiIds.map(id => Math.max(0, Number(document.getElementById(id).value) || 0));
+    const saved = Math.max(0, now - withPill);
+    const hours = cases * saved / 60;
+    try { localStorage.setItem('tbc_roi', JSON.stringify([cases, now, withPill, rate])); } catch (_) { /* not remembered */ }
+    setHTML('roi-out', `
+      <div class="stat"><div class="stat-val">${saved} min</div><div class="stat-lbl">Saved per case</div></div>
+      <div class="stat stat-green"><div class="stat-val">${Math.round(hours).toLocaleString()} h</div><div class="stat-lbl">Technician hours a year</div></div>
+      <div class="stat stat-blue"><div class="stat-val">${Math.round(hours * rate).toLocaleString()}</div><div class="stat-lbl">Cost a year (same currency as the rate)</div></div>
+      <p class="muted roi-formula">${cases} cases × ${saved} min ÷ 60 = ${Math.round(hours).toLocaleString()} h; × ${rate} per hour. Excludes harder-to-measure value: fewer repeat visits, knowledge kept when experts leave.</p>`);
+  };
+  roiIds.forEach(id => document.getElementById(id).addEventListener('input', roi));
+  roi();
+  api.get('/system/info').then(info => {
+    setHTML('ai-flow-provider', esc(info.llm_provider === 'adp' ? 'Tencent Cloud ADP' : 'Offline models (Tencent Cloud ADP when configured)'));
+  }).catch(() => {});
+
   document.getElementById('btn-seed').onclick = async () => {
     try {
       const r = await api.post('/demo/seed');
@@ -282,14 +336,15 @@ export function renderDashboard(el, state, h) {
   // to every role here, not only on the auditor's Governance table.
   (async () => {
     try {
-      const st = await api.get('/audit/status');
-      if (st.ok) return;
+      const [st, sen] = await Promise.all([api.get('/audit/status'), api.get('/sentinel')]);
+      if (st.ok && !sen.held.length) return;
       const parts = [];
+      if (sen.held.length) parts.push(`the sentinel stopped ${sen.held.map(x => esc(x.case_id)).join(', ')} (held for an auditor's decision)`);
       if (st.broken_cases.length) parts.push(`case audit chain failed for ${st.broken_cases.map(esc).join(', ')} (frozen: no further actions allowed)`);
       if (!st.ledger_valid) parts.push('the knowledge governance ledger failed verification');
       if (!st.registry_valid) parts.push('the set of cases does not match its seal (a case was added or removed outside the app)');
       if (!st.tool_log_valid) parts.push('the tool audit log failed verification');
-      setHTML('integrity-banner', `<div class="banner banner-error" role="alert"><p><strong>Audit integrity alert:</strong> ${parts.join('; ')}. An auditor reviews it on Governance (Integrity Review) before anyone relies on it.</p></div>`);
+      setHTML('integrity-banner', `<div class="banner banner-error" role="alert"><p><strong>Audit integrity alert:</strong> ${parts.join('; ')}. An auditor reviews it on Governance before anyone relies on it.</p></div>`);
     } catch (_) { /* banner is best-effort */ }
   })();
   document.getElementById('btn-new').onclick = () => {
@@ -396,7 +451,7 @@ export function renderDashboard(el, state, h) {
         <td>${esc((obs.type || '-').replace(/_/g, ' '))}</td>
         <td>${esc(obs.sensor_id || '-')}</td>
         <td>${esc(obs.reading_status || '-')}</td>
-        <td>${statePill(c.current_state)}</td>
+        <td>${statePill(c.current_state)}${(c.sentinel_hold || {}).active ? ' <span class="badge badge-red">Stopped by sentinel</span>' : ''}</td>
         <td>${confCell}</td>
         <td onclick="event.stopPropagation()">
           ${canAdv ? `<button class="btn btn-sm btn-primary" onclick="advCase('${c.case_id}', this)">Advance</button>` : '<span class="muted">-</span>'}
@@ -438,8 +493,8 @@ export function renderDiagnosis(el, state, h) {
       const obs = s.observation || {};
       const cb = s.diagnosis ? confBand(s.confidence, s.current_state) : { cls: 'badge-grey', label: 'Not yet diagnosed' };
 
-      const nextHintText = s.audit_chain_valid === false
-        ? 'this case is frozen: an auditor must review its audit chain on Governance.'
+      const nextHintText = (s.audit_chain_valid === false || (s.sentinel_hold || {}).active)
+        ? 'this case is frozen: an auditor must review it on Governance.'
         : {
         GATHERING_EVIDENCE: 'click Advance Agent to run the decision tree.',
         DIAGNOSING: 'the agent is diagnosing; refresh in a moment.',
@@ -828,8 +883,8 @@ export function renderDecision(el, state, h) {
         .find(r => r.startsWith('[G2b]') || r.startsWith('[G2]'));
       if (s.ai_hypothesis && s.ai_hypothesis.status === 'ok' && s.ai_hypothesis.hypothesis && !s.ai_hypothesis.agrees_with_rules) cloudMood('alert');
 
-      const decisionHint = s.audit_chain_valid === false
-        ? 'this case is frozen: an auditor must review its audit chain on Governance.'
+      const decisionHint = (s.audit_chain_valid === false || (s.sentinel_hold || {}).active)
+        ? 'this case is frozen: an auditor must review it on Governance.'
         : s.current_state === 'ESCALATED'
         ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
         : s.current_state === 'AWAITING_APPROVAL'
@@ -934,7 +989,7 @@ export function renderDecision(el, state, h) {
             </div>
           </div>` : ''}
         </div></div>`;
-      } else if (s.current_state === 'AWAITING_APPROVAL' && s.audit_chain_valid !== false) {
+      } else if (s.current_state === 'AWAITING_APPROVAL' && s.audit_chain_valid !== false && !(s.sentinel_hold || {}).active) {
         // Show decision controls (never on a frozen case: the server refuses them)
         if (!canApprove) {
           html += `<div class="banner banner-error"><p><strong>Approval Blocked</strong></p><p>You are signed in as ${esc(role)} (${esc(h.roleDisplayName(role))}); that role cannot approve, reject or modify.</p><p>Switch to Asset Operations Manager (mgr1) to approve, reject, or modify.</p></div>`;
@@ -1079,8 +1134,8 @@ export function renderOutcome(el, state, h) {
       // pending for a steward separately) -- so "submit feedback" must stop
       // showing the moment current_state is CLOSED, not stay pinned on
       // whether an outcome was ever recorded.
-      const outcomeHint = s.audit_chain_valid === false
-        ? 'this case is frozen: an auditor must review its audit chain on Governance.'
+      const outcomeHint = (s.audit_chain_valid === false || (s.sentinel_hold || {}).active)
+        ? 'this case is frozen: an auditor must review it on Governance.'
         : s.current_state === 'CLOSED'
         ? 'this case is closed. Feedback (if submitted) is with a knowledge steward on Governance.'
         : s.outcome
@@ -1233,7 +1288,12 @@ export function renderGovernance(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
 
   el.innerHTML = `
-    ${nextHint('approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.')}
+    ${nextHint(api.role() === 'knowledge_steward'
+      ? 'approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.'
+      : api.can('review_audit_integrity')
+      ? 'check the sentinel and the ledger; anything stopped or failing waits for your review here.'
+      : 'knowledge stewards approve proposals here; everything they decide is in the ledger below.')}
+    <div class="card" id="sentinel-card"><div class="card-header"><h3>Sentinel</h3><span class="muted">independent supervisor, not an AI</span></div><div class="card-body" id="sentinel-body"></div></div>
     <div class="card" id="integrity-card" hidden><div class="card-header"><h3>Integrity Review</h3><span class="badge badge-red">Action needed</span></div><div class="card-body" id="integrity-body"></div></div>
     <div class="stats-row" id="gov-stats"></div>
     <div class="card"><div class="card-header"><h3>Pill Registry</h3></div><div class="card-body" id="pill-registry-body"></div></div>
@@ -1382,7 +1442,7 @@ export function renderGovernance(el, state, h) {
   loadApproved();
 
   function refreshAll() {
-    loadQueue(); loadStats(); loadRollback(); loadPills(); loadLedger(); loadApproved(); loadIntegrity();
+    loadQueue(); loadStats(); loadRollback(); loadPills(); loadLedger(); loadApproved(); loadIntegrity(); loadSentinel();
     window.__app__?.refreshKbVersion?.();
   }
 
@@ -1432,6 +1492,54 @@ export function renderGovernance(el, state, h) {
     } catch (e) { card.hidden = true; }
   }
   loadIntegrity();
+
+  // Sentinel: re-checks every case after every write and stops any whose
+  // record breaks a rule (sentinel.py). Auditors decide on held cases;
+  // an admin can run a drill to see it work.
+  async function loadSentinel() {
+    const body = document.getElementById('sentinel-body');
+    if (!body) return;
+    try {
+      const sen = await api.get('/sentinel');
+      const canReview = api.can('review_audit_integrity');
+      body.innerHTML = `
+        <p style="margin-bottom:8px">Watching <strong>${sen.watching}</strong> case(s). After every write it re-checks: ${sen.checks.map(esc).join(' · ')}. On a violation it stops the case, records why on the case's audit trail, keeps what it saw, and alerts everyone.</p>
+        ${sen.held.length ? sen.held.map((x, n) => `<div class="rerun-row">
+            <div><span class="badge badge-red">Stopped</span> <code>${esc(x.case_id)}</code> ${esc(x.asset_id)}: ${(x.findings || []).map(esc).join('; ')}</div>
+            ${canReview ? `<div class="flex gap-8 flex-wrap"><input id="sn-reason-${n}" type="text" placeholder="What you checked (required)" style="min-width:220px">
+              <button class="btn btn-secondary btn-sm" id="sn-release-${n}">Release</button>
+              <button class="btn btn-red btn-sm" id="sn-quarantine-${n}">Quarantine</button></div>` : '<div class="muted">An auditor decides.</div>'}
+          </div>`).join('') : '<p><span class="badge badge-green">Nothing stopped</span> <span class="muted">In normal operation it finds nothing; it exists for the day a component misbehaves.</span></p>'}
+        ${api.role() === 'admin' ? '<button class="btn btn-secondary btn-sm mt-16" id="sn-drill">Run a sentinel drill</button> <span class="muted">Creates a case and plays a defective tool that cites evidence the case never gathered.</span>' : ''}`;
+      sen.held.forEach((x, n) => {
+        const go = async decision => {
+          const reason = document.getElementById(`sn-reason-${n}`).value.trim();
+          if (!reason) { showToast('Record what you checked before deciding', 'error'); return; }
+          try {
+            await api.post('/sentinel/review', { case_id: x.case_id, decision, reason });
+            showToast(`${x.case_id} ${decision === 'release' ? 'released' : 'quarantined'}; recorded in the ledger`, 'success');
+            refreshAll();
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+        const rel = document.getElementById(`sn-release-${n}`);
+        if (rel) rel.onclick = () => go('release');
+        const q = document.getElementById(`sn-quarantine-${n}`);
+        if (q) q.onclick = () => go('quarantine');
+      });
+      const drill = document.getElementById('sn-drill');
+      if (drill) drill.onclick = async () => {
+        drill.disabled = true;
+        try {
+          const r = await thinking(api.post('/sentinel/drill'));
+          showToast(`Drill: the sentinel stopped ${r.case_id}`, r.held ? 'success' : 'error');
+          refreshAll();
+        } catch (e) { showToast(`Error: ${e.message}`, 'error'); drill.disabled = false; }
+      };
+    } catch (e) {
+      body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
+    }
+  }
+  loadSentinel();
 
   // Pipeline visual
   setHTML('pipeline-body', `
@@ -1826,6 +1934,50 @@ export function renderCapture(el, state, h) {
       </div>`;
   }
 
+  // The grounding check, made visible: what the AI drafted that survived
+  // (it is in the expert's own answer) and what it said that did not.
+  function groundingCard(d) {
+    const kept = d.heuristics.flatMap(x => [...(x.checks || []), ...(x.do_not || []), ...(x.escalate_when || [])]);
+    const rejected = d.rejected || [];
+    const fieldName = { check: 'Check', never: 'Never', 'escalate-when': 'Escalate when', heuristic: 'Heuristic' };
+    return `<div class="card grounding-card"><div class="card-header"><h3>Grounding check</h3>
+        <span class="badge ${rejected.length ? 'badge-red' : 'badge-green'}">${kept.length} kept · ${rejected.length} rejected</span></div>
+      <div class="card-body">
+        <p class="muted" style="margin-bottom:8px">Every line the AI drafted must be the expert's own words from the same answer, and must not defeat a safety device. Anything else is rejected here and again on the server when you send.</p>
+        <ul class="ground-list">
+          ${kept.slice(0, 4).map(l => `<li class="ground-ok"><span aria-hidden="true">✓</span> ${esc(l)}</li>`).join('')}
+          ${kept.length > 4 ? `<li class="muted">… and ${kept.length - 4} more kept</li>` : ''}
+          ${rejected.map(r => `<li class="ground-bad"><span aria-hidden="true">✗</span> <span class="sr-only">Rejected:</span> <strong>${esc(fieldName[r.field] || r.field)}:</strong> “${esc(r.text)}” <span class="ground-why">${esc(r.reason)}</span></li>`).join('')}
+        </ul>
+        ${d.heuristics.length ? `<div class="ground-try">
+          <label for="gt-line">Try to slip in a line the expert never said</label>
+          <div class="flex gap-8 flex-wrap"><input id="gt-line" type="text" value="Tighten the terminal to 12 Nm." style="flex:1 1 260px">
+          <button class="btn btn-secondary btn-sm" id="gt-go">Check it</button></div>
+          <div id="gt-result" aria-live="polite"></div>
+        </div>` : ''}
+      </div></div>`;
+  }
+  function wireGroundingTry() {
+    const go = $('gt-go');
+    if (!go) return;
+    go.onclick = async () => {
+      const line = $('gt-line').value.trim();
+      if (!line) return;
+      const [first, ...rest] = draft.heuristics;
+      const heuristics = [{ ...first, checks: [...(first.checks || []), line] }, ...rest];
+      go.disabled = true;
+      try {
+        const r = await api.postJson('/capture/check', {
+          asset_type: $('cap-asset').value, transcript: text.value, heuristics });
+        const hit = (r.rejected || []).find(x => x.text === line);
+        setHTML('gt-result', hit
+          ? `<p class="ground-bad"><span aria-hidden="true">✗</span> <strong>Rejected:</strong> “${esc(line)}”: ${esc(hit.reason)}. It cannot become knowledge.</p>`
+          : `<p class="ground-ok"><span aria-hidden="true">✓</span> Kept: the expert said this in the same answer.</p>`);
+      } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+      go.disabled = false;
+    };
+  }
+
   function modelBadge(d) {
     const by = { adp: 'Tencent Cloud ADP', manual: 'Entered by hand', mock: 'Offline mock model' }[d.provider] || d.provider;
     return `<span class="badge badge-purple">Drafted by: ${esc(by)}</span>`;
@@ -1850,6 +2002,7 @@ export function renderCapture(el, state, h) {
         return other.map(w => `<div class="banner banner-warn"><p>${esc(w)}</p></div>`).join('')
           + (moved.length ? `<div class="banner banner-info"><p><strong>Filed under other pills:</strong> ${moved.map(x => `${esc(x.cause_label)} goes to ${esc(x.asset_type)}`).join('; ')}. Each pill only uses knowledge about its own equipment.</p></div>` : '');
       })()}
+      ${groundingCard(draft)}
       <p class="muted cap-hint">Untick anything that is wrong or unclear and correct causes where needed. You cannot add words the expert did not say: the server checks every quote again.</p>
       ${draft.heuristics.map((x, i) => heuristicCard(x, i, causes, true)).join('')}
       ${draft.provider === 'manual' ? manualForm(causes) : ''}
@@ -1859,6 +2012,7 @@ export function renderCapture(el, state, h) {
         <span class="muted" id="cap-submit-note">A different knowledge steward must approve, and safety-review every check, before it goes live.</span>
       </div>`;
     if (draft.provider === 'manual') wireManualForm(causes);
+    wireGroundingTry();
     const btn = $('cap-submit');
     const kept = () => [...document.querySelectorAll('.kh-keep')].filter(c => c.checked).map(c => +c.dataset.i);
     const refresh = () => {
@@ -1967,6 +2121,7 @@ export function renderCapture(el, state, h) {
     $('cap-result').innerHTML = '<div class="skeleton-card"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div><p class="muted">The model is reading the interview. Each heuristic must quote the expert word for word.</p>';
     try {
       draft = await thinking(api.postJson('/capture/draft', { asset_type: $('cap-asset').value, transcript: text.value }));
+      window.__app__?.refreshSystemInfo?.();  // the AI chip reflects this call's outcome
       await renderDraft();
     } catch (e) {
       draft = null; setStep(1); setStatus('Draft failed', 'badge-red');

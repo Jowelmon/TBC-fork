@@ -42,7 +42,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (314 tests) |
+| `make test` | pytest suite (323 tests) |
 | `make eval` | 12 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -53,6 +53,15 @@ start, with every audit chain re-verified on load (`TBC_PERSIST=0` keeps it
 in memory). Swagger docs are at `/docs`.
 
 ## How it works
+
+| Layer | What it does |
+|---|---|
+| **Tencent Cloud ADP** (AI) | Drafts expert knowledge from interview transcripts; gives an advisory second opinion on each diagnosis |
+| **TBC governance** | Grounding (verbatim quotes only), safety screen, guardrails G1-G9, RBAC, two-steward approval, sentinel |
+| **Decision tree** | Deterministic diagnosis: same evidence, same answer |
+| **A person** | Approves every recommendation; nothing executes without an Asset Ops Manager |
+
+The Dashboard shows this strip, and the top bar shows which model is live.
 
 ```
 observation ─▶ gather evidence ─▶ decision tree ─▶ confidence (W1-W5)
@@ -128,6 +137,11 @@ review, second-steward approval.
     work on one (alarm, trip, contactor, probe, hand mode, lifting a wire)
     is labelled as such and never raises a diagnosis's confidence.
 
+- **Visible when the AI invents something.** The Capture screen's
+  **Grounding check** lists every drafted line that was kept and every line
+  rejected, with why ("no source found in the transcript"). A box lets you
+  try to slip in a line yourself. The same check runs again on the server
+  when the draft is sent (`POST /capture/check` runs it on its own).
 - **Flagged for review.** A quote whose own words rule out its cause, or
   that never names the cause it is filed under, is flagged to the steward.
 - **Filed by pill.** Each heuristic goes to the pill that owns its cause, so
@@ -211,6 +225,20 @@ offline, worried when it disagrees). It only reports; it never acts.
   the ledger, with the head hash that had failed. The ledger is reviewed
   first, and the auditor sees what failed, e.g. "the knowledge base was
   changed outside the governance flow after entry #12".
+- **Sentinel** (`sentinel.py`): an independent supervisor, not an AI. After
+  every write to a case it re-reads the case and checks:
+  - every transition is allowed, and every human step was made by a role
+    that may make it
+  - a diagnosis rests on gathered evidence, and a recommendation cites
+    knowledge and evidence the case actually has
+  - guardrails, decisions and work orders agree with the case's state
+  - the AI second opinion stayed inside the asset's own causes
+  - the audit chain verifies, and tool output has the expected shape
+
+  On a violation it stops the case, records why on the case's audit trail,
+  keeps what it saw, and alerts everyone; an auditor releases or
+  quarantines it. In normal operation it finds nothing. An admin can run
+  a drill on Governance to see it work.
 - **Key handling.** The key comes from `TBC_AUDIT_KEY` or a generated
   `~/.tbc/audit.key` (mode 0600). Anyone holding both the database and the
   key can re-sign the chains, so in production the key belongs in a secrets
@@ -228,6 +256,7 @@ technical_services_pill/
   learning.py        knowledge base, per-pill versions, proposals, ledger
   capture.py         interview → grounded draft knowledge
   safety.py          safety screen for expert know-how
+  sentinel.py        independent supervisor that stops a case breaking a rule
   llm.py             provider seam (mock / Tencent Cloud ADP)
   ai_reasoning.py    advisory second opinion
   auth.py, rbac.py   login, sessions, roles

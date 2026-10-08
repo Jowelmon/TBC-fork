@@ -125,3 +125,33 @@ def test_a_reworded_symptom_becomes_the_experts_closest_sentence_not_the_whole_q
         "evidence_quote": quote, "checks": [], "do_not": [], "escalate_when": []}], "CRAH")
     assert kept[0]["symptom_pattern"] == "A sensor past its calibration date that reads nothing is usually just end of life."
     assert any("reworded" in w for w in kept[0]["notes"])
+
+
+# 4. An AI's invention is shown, not silently discarded --------------------------
+INVENTED = "Tighten the terminal to 12 Nm."
+
+
+def _with_invention():
+    q = "If it's only one sensor and the neighbours are fine, I look at the calibration sticker."
+    return [{"symptom_pattern": q, "likely_cause": "sensor_hardware_failure", "evidence_quote": q,
+             "checks": ["I look at the calibration sticker.", INVENTED], "do_not": [], "escalate_when": []}]
+
+
+def test_the_check_names_the_invented_line_and_why(client):
+    r = client.post("/capture/check", params={"user": "steward1"}, json={
+        "asset_type": "CRAH", "transcript": capture.SAMPLE_INTERVIEW, "heuristics": _with_invention()})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["heuristics"][0]["checks"] == ["I look at the calibration sticker."]
+    assert body["rejected"] == [{"item": 1, "field": "check", "text": INVENTED,
+                                 "reason": "not in the expert's answer: no source found in the transcript"}]
+
+
+def test_an_invented_line_cannot_be_submitted_past_the_screen(client):
+    r = client.post("/capture/interview", params={"user": "steward1"}, json={
+        **_body(), "heuristics": _with_invention()})
+    assert r.status_code == 200, r.text
+    assert INVENTED not in r.json()["heuristics"][0]["checks"]
+    pid = r.json()["proposal_id"]
+    assert INVENTED not in str(LSTORE.find_proposal(pid)["heuristics"])
+    client.post(f"/kb/proposals/{pid}/reject", params={"user": "steward2", "reason": "test cleanup"})
