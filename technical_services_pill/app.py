@@ -133,18 +133,20 @@ def _get_case_for_write(case_id: str) -> AgentState:
 
 
 def _evidence_terms(state: AgentState) -> set[str]:
-    """Vocabulary of what this case's evidence actually shows: field names
-    and string values, plus the names of flags that are set (true)."""
+    """Vocabulary of what is actually wrong in this case: the trigger, and
+    the readings flagged abnormal by the decision trees' own thresholds
+    (``evidence_flags.py``), with their values. Healthy readings and field
+    names that merely exist are left out, so an expert's condition only
+    counts as seen when the case shows it."""
+    from .evidence_flags import abnormal_fields
     from .learning import _terms
 
     words: list[str] = [state.observation.type, state.observation.reading_status.value]
     for ev in state.evidence:
-        words += [ev.source, ev.type]
         payload = ev.payload if isinstance(ev.payload, dict) else {}
-        for k, v in payload.items():
-            if v is False or v is None:
-                continue
+        for k in abnormal_fields(payload):
             words.append(k)
+            v = payload[k]
             if isinstance(v, str):
                 words.append(v)
             elif isinstance(v, list):
@@ -269,6 +271,7 @@ def create_case(
     _need(user, "view_case")
     from .decision_tree import KNOWN_FAULT_TYPES
 
+    asset_id = asset_id.strip().upper()  # "crah-dc1-01" is CRAH-DC1-01, not an unknown asset
     if observation_type not in KNOWN_FAULT_TYPES:
         raise HTTPException(
             400,
@@ -567,6 +570,10 @@ def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     state = STORE.get(case_id)
     snap["knowledge_withdrawn"] = (
         _knowledge_withdrawn(state) if state.current_state == AgentStateName.AWAITING_APPROVAL else None)
+    from .learning import STORE as _LSTORE
+
+    # A broken ledger is cleared by an auditor's review, not by re-scoring.
+    snap["ledger_valid"] = _LSTORE.verify_ledger()
     return snap
 
 
@@ -661,6 +668,9 @@ def _confidence_for(state: AgentState, cause_id: str, kb_refs: list[str]) -> tup
 def _knowledge_withdrawn(state: AgentState) -> str | None:
     from .learning import STORE as _LSTORE
 
+    if not _LSTORE.verify_ledger():
+        return ("the knowledge ledger failed verification, so no score that used the knowledge "
+                "base can be trusted until an auditor reviews it on Governance")
     b = state.confidence_breakdown or {}
     return _LSTORE.withdrawn_reason(b.get("pill"), b.get("kb_version"), b.get("ledger_seq"))
 
@@ -928,16 +938,18 @@ def get_causes(user: str = Depends(resolve_user), asset_type: str | None = None)
 
 
 # Which knowledge steward owns review for each pill (spec §7 governance).
-# A registry-level assignment, not sourced from any HR/roster system --
-# the two stewards this demo seeds (steward1, steward2) split the four
-# pills so the "second steward must approve" rule has a concrete owner
-# to name per pill.
-PILL_OWNERS: dict[str, str] = {
-    "CRAH": "steward1",
-    "Chiller": "steward2",
-    "UPS": "steward1",
-    "Pump": "steward2",
-}
+# The demo's two stewards split the four pills; a deployment sets its own
+# roster with TBC_PILL_OWNERS="CRAH:alice,Chiller:bob,UPS:alice,Pump:bob".
+_DEFAULT_PILL_OWNERS = {"CRAH": "steward1", "Chiller": "steward2", "UPS": "steward1", "Pump": "steward2"}
+
+
+def _pill_owners() -> dict[str, str]:
+    raw = os.environ.get("TBC_PILL_OWNERS", "").strip()
+    pairs = (item.split(":", 1) for item in raw.split(",") if ":" in item)
+    return {**_DEFAULT_PILL_OWNERS, **{k.strip(): v.strip() for k, v in pairs}}
+
+
+PILL_OWNERS: dict[str, str] = _pill_owners()
 
 
 @app.get("/assets")
@@ -1123,9 +1135,10 @@ def _expert_matches(state: AgentState) -> dict:
     from .cause_registry import canonicalize_cause_id
     from .learning import STORE as _LSTORE
     from .learning import corroborating_terms, kb_version_label
-    from .safety import defeats_safety
+    from .safety import defeats_safety, touches_protection
 
     terms = _evidence_terms(state)
+    ledger_ok = _LSTORE.verify_ledger()
     diagnosis = state.diagnosis
     cause_id = canonicalize_cause_id(diagnosis.top_cause_id) if diagnosis else None
     asset_type = _asset_type(state.asset_id)
@@ -1135,13 +1148,22 @@ def _expert_matches(state: AgentState) -> dict:
             if canonicalize_cause_id(item["likely_cause"]) != cause_id or item["asset_type"] != asset_type:
                 continue
             # Screened again at display time (G1 for knowledge): whatever is
-            # stored, an instruction to defeat a protection never reaches the AOM.
-            unsafe = [t for t in (item["evidence_quote"], item["symptom_pattern"],
-                                  *item.get("checks", []), *item.get("escalate_when", []))
-                      if defeats_safety(t)]
-            if unsafe:
+            # stored, an instruction to defeat a protection never reaches the
+            # AOM, nor does unreviewed knowledge about one, nor anything while
+            # the ledger that vouches for it fails verification.
+            lines = (item["evidence_quote"], item["symptom_pattern"],
+                     *item.get("checks", []), *item.get("escalate_when", []))
+            reason = (
+                "the knowledge ledger failed verification, so its knowledge cannot be trusted "
+                "until an auditor reviews it" if not ledger_ok
+                else "contains an instruction that would defeat a safety device (G1)"
+                if any(defeats_safety(t) for t in lines)
+                else "names a protective device but was not safety-reviewed when approved"
+                if any(touches_protection(t) for t in lines) and not item.get("safety_reviewed_by")
+                else None)
+            if reason:
                 withheld.append({"knowledge_id": item["id"], "expert_name": item["expert_name"],
-                                 "reason": "contains an instruction that would defeat a safety device (G1)"})
+                                 "reason": reason})
                 continue
             matches.append({
                 "knowledge_id": item["id"],
@@ -1157,6 +1179,8 @@ def _expert_matches(state: AgentState) -> dict:
                 "kb_version": item["kb_version"],
                 "kb_version_label": f"{item['asset_type']} v{kb_version_label(item['kb_version'])}",
                 "approved_by": item["approved_by"],
+                "safety_reviewed_by": item.get("safety_reviewed_by"),
+                "guidance_only": bool(item.get("safety_reviewed_by")),
                 "matched_terms": corroborating_terms(item["symptom_pattern"], terms),
             })
     return {
@@ -1193,7 +1217,8 @@ def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
 
 
 @app.post("/kb/proposals/{proposal_id}/approve")
-def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(resolve_user)) -> dict:
+def approve_proposal(proposal_id: str, rationale: str = "", safety_reviewed: bool = False,
+                     user: str = Depends(resolve_user)) -> dict:
     """Approve a pending knowledge proposal and ingest it into the live KB (F2).
 
     Requires ``approve_knowledge_version`` capability. On approval the KB
@@ -1207,7 +1232,8 @@ def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(
     _require_intact_ledger()
     _require_pill_owner(proposal_id, user, "approve")
     try:
-        proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user, rationale=rationale)
+        proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user, rationale=rationale,
+                                            safety_reviewed=safety_reviewed)
     except SelfApprovalError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
@@ -1219,19 +1245,23 @@ def approve_proposal(proposal_id: str, rationale: str = "", user: str = Depends(
 
 
 def _require_pill_owner(proposal_id: str, user: str, verb: str) -> None:
-    """The pill's owning steward decides on its knowledge; if the owner
-    proposed it, the other steward stands in. Admin may always decide."""
+    """Knowledge is decided by a knowledge steward, never by an admin alone:
+    the pill's owning steward decides, and if the owner proposed it, another
+    steward stands in."""
     from .learning import STORE as _LSTORE
     from .rbac import Role
 
+    if _user(user).role != Role.KNOWLEDGE_STEWARD:
+        raise HTTPException(403, f"only a knowledge steward can {verb} knowledge; "
+                                 f"{user} can view the queue but not decide")
     p = _LSTORE.find_proposal(proposal_id)
-    if p is None or _user(user).role == Role.ADMIN:
+    if p is None:
         return
     owner = PILL_OWNERS.get(p.get("asset_type") or "")
     if owner and owner != user and owner != p.get("submitted_by"):
         raise HTTPException(
-            403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they (or an admin) "
-                 f"can {verb} it")
+            403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they can {verb} it "
+                 "(another steward stands in only when the owner proposed it)")
 
 
 def _require_intact_ledger() -> None:
@@ -1424,6 +1454,12 @@ def post_demo_seed(user: str = Depends(resolve_user)) -> dict:
     return {"seeded": seed_demo_cases(), "actor": SEED_ACTOR}
 
 
+@app.get("/health")
+def health() -> dict:
+    """Liveness for container health checks; needs no session and reveals nothing."""
+    return {"ok": True}
+
+
 @app.get("/audit/status")
 def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     """Integrity summary for the dashboard banner: any case chain or the
@@ -1440,6 +1476,55 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     return {"broken_cases": broken, "ledger_valid": ledger_ok, "registry_valid": registry_ok,
             "tool_log_valid": tool_log_ok,
             "ok": not broken and ledger_ok and registry_ok and tool_log_ok}
+
+
+@app.post("/audit/review")
+def post_audit_review(target: str, decision: str, reason: str = "",
+                      user: str = Depends(resolve_user)) -> dict:
+    """An auditor's recorded disposition of a chain that failed verification,
+    the only way out of "frozen until an auditor reviews it".
+
+    ``target`` is ``case:<id>``, ``ledger``, ``registry`` or ``tool_log``.
+    ``decision`` is ``accept`` (the record is genuine as it stands: re-sign
+    it) or, for a case, ``quarantine`` (not trusted: close it, redo the work
+    as a new case). A reason is required, and every review is written to
+    the governance ledger as well as to the reviewed chain itself.
+    """
+    _need(user, "review_audit_integrity")
+    from .learning import STORE as _LSTORE
+    from .tools import review_broken_tool_log, verify_tool_log
+
+    reason = reason.strip()
+    if not reason:
+        raise HTTPException(400, "an integrity review needs a reason")
+    if decision not in ("accept", "quarantine"):
+        raise HTTPException(400, "decision must be 'accept' or 'quarantine'")
+    if decision == "quarantine" and not target.startswith("case:"):
+        raise HTTPException(400, "only a case can be quarantined")
+    verdict = "accepted" if decision == "accept" else "quarantined"
+    try:
+        if target.startswith("case:"):
+            cid = target[len("case:"):]
+            _get_case(cid).review_broken_chain(actor=user, reason=reason,
+                                              quarantine=decision == "quarantine")
+            _LSTORE.record_integrity_review(actor=user, reason=f"case {cid} {verdict}: {reason}")
+        elif target == "ledger":
+            _LSTORE.review_broken_ledger(actor=user, reason=reason)
+        elif target == "registry":
+            if STORE.verify_registry():
+                raise ValueError("the case registry verifies; there is nothing to review")
+            STORE.reseal()
+            _LSTORE.record_integrity_review(actor=user, reason=f"case registry accepted: {reason}")
+        elif target == "tool_log":
+            if verify_tool_log():
+                raise ValueError("the tool log verifies; there is nothing to review")
+            review_broken_tool_log()
+            _LSTORE.record_integrity_review(actor=user, reason=f"tool log accepted: {reason}")
+        else:
+            raise HTTPException(400, "target must be case:<id>, ledger, registry or tool_log")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"target": target, "decision": decision, "reviewed_by": user, **get_audit_status(user)}
 
 
 @app.post("/cases/{case_id}/escalation/close")

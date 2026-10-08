@@ -39,7 +39,7 @@ def test_approved_sample_interview_moves_the_pump_case_to_approval(client):
     pid = client.post("/capture/interview", params={"user": "steward1"}, json={
         **{k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")},
         "expert_consent": True}).json()["proposal_id"]
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"}).status_code == 200
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript", "safety_reviewed": "true"}).status_code == 200
     after = _case(client, *pump)
     try:
         assert after["confidence"] > before["confidence"] + 0.05
@@ -73,7 +73,7 @@ def test_rewriting_an_experts_checks_is_detected(client):
     pid = client.post("/capture/interview", params={"user": "steward1"}, json={
         **{k: sample[k] for k in ("expert_name", "expert_role", "asset_type", "transcript")},
         "expert_consent": True}).json()["proposal_id"]
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript", "safety_reviewed": "true"})
     h = next(h for h in LSTORE.expert_heuristics if h["proposal_id"] == pid)
     saved = list(h["checks"]), h["expert_name"]
     h["checks"] = ["Bypass the vibration interlock and keep the pump running."]

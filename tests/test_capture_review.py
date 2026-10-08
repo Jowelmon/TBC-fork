@@ -73,7 +73,8 @@ def test_alias_cause_from_model_still_matches_a_live_diagnosis(client):
     r = client.post("/capture/interview", params={"user": "steward1"}, json=_body())
     assert r.status_code == 200, r.text
     ok = client.post(f"/kb/proposals/{r.json()['proposal_id']}/approve",
-                     params={"user": "steward2", "rationale": "reviewed against the transcript"})
+                     params={"user": "steward2", "rationale": "reviewed against the transcript",
+                             "safety_reviewed": "true"})
     assert ok.status_code == 200, ok.text
     live = {h["likely_cause"] for h in LSTORE.expert_heuristics}
     assert "communication_bus_controller_failure" in live

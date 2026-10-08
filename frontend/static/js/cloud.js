@@ -75,11 +75,28 @@ function place(x, y) {
   const ny = Math.min(Math.max(top, y), window.innerHeight - h - 8);
   el.style.left = `${nx}px`; el.style.top = `${ny}px`;
   el.style.right = 'auto'; el.style.bottom = 'auto';
+  // On the left half the speech bubble opens to the right, staying on screen.
+  el.classList.toggle('cloud-left', nx + w / 2 < window.innerWidth / 2);
   return [nx, ny];
 }
 
+// Default home: in the navigation rail, above its footer, so the cloud never
+// covers a card. Falls back to the CSS corner when the rail is too narrow.
+function dock() {
+  const rail = document.getElementById('nav-rail')?.getBoundingClientRect();
+  const foot = document.getElementById('kb-footer')?.getBoundingClientRect();
+  const w = el.offsetWidth || 90, h = el.offsetHeight || 70;
+  if (!rail || !foot || rail.width < w + 16) {
+    el.style.left = el.style.top = '';
+    el.style.right = el.style.bottom = '';
+    el.classList.remove('cloud-left');
+    return;
+  }
+  place(rail.left + (rail.width - w) / 2, foot.top - h - 16);
+}
+
 function save() {
-  localStorage.setItem('tbc_cloud_pos', JSON.stringify([parseInt(el.style.left, 10), parseInt(el.style.top, 10)]));
+  try { localStorage.setItem('tbc_cloud_pos', JSON.stringify([parseInt(el.style.left, 10), parseInt(el.style.top, 10)])); } catch (_) { /* not remembered */ }
 }
 
 export function initCloud() {
@@ -96,10 +113,10 @@ export function initCloud() {
   document.body.appendChild(el);
   render();
 
-  const saved = JSON.parse(localStorage.getItem('tbc_cloud_pos') || 'null');
-  if (Array.isArray(saved) && saved.every(Number.isFinite)) place(saved[0], saved[1]);
-  // Keep a remembered position on screen when the window shrinks.
-  window.addEventListener('resize', () => { if (el.style.left) place(parseInt(el.style.left, 10), parseInt(el.style.top, 10)); });
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('tbc_cloud_pos') || 'null'); } catch (_) { /* fresh start */ }
+  const moved = Array.isArray(saved) && saved.length === 2 && saved.every(Number.isFinite);
+  if (moved) place(saved[0], saved[1]); else requestAnimationFrame(dock);
 
   // Drag with mouse or touch; a press without movement is a click.
   let start = null;
@@ -133,8 +150,16 @@ export function initCloud() {
       bubble.hidden = true;
     }
   });
+  // Keep the cloud on screen when the window changes size: re-dock it unless
+  // the user has put it somewhere themselves.
   window.addEventListener('resize', () => {
-    if (el.style.left) place(parseInt(el.style.left, 10), parseInt(el.style.top, 10));
+    let remembered = false;
+    try { remembered = !!localStorage.getItem('tbc_cloud_pos'); } catch (_) { /* treat as not moved */ }
+    if (remembered && el.style.left) {
+      place(parseInt(el.style.left, 10), parseInt(el.style.top, 10));
+    } else {
+      dock();
+    }
   });
 }
 

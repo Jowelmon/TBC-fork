@@ -328,8 +328,8 @@ class AgentState:
             self._transition(
                 AgentStateName.ESCALATED,
                 actor=actor,
-                reason=f"confidence {confidence:.2f} < ESCALATE_CONFIDENCE "
-                       f"{ESCALATE_CONFIDENCE:.2f}",
+                reason=f"confidence {confidence:.0%} is below the {ESCALATE_CONFIDENCE:.0%} "
+                       "escalation floor",
             )
             return self.current_state
 
@@ -338,22 +338,22 @@ class AgentState:
                 self._transition(
                     AgentStateName.ESCALATED,
                     actor=actor,
-                    reason="low confidence and max gathering loops (2) exhausted",
+                    reason="confidence still too low after two rounds of gathering evidence",
                 )
                 return self.current_state
             self._gathering_loops += 1
             self._transition(
                 AgentStateName.GATHERING_EVIDENCE,
                 actor=actor,
-                reason=f"confidence {confidence:.2f} < MIN_RECO_CONFIDENCE; "
-                       f"request more evidence (loop {self._gathering_loops}/2)",
+                reason=f"confidence {confidence:.0%} is below the {MIN_RECO_CONFIDENCE:.0%} "
+                       f"needed to recommend; gathering more evidence (round {self._gathering_loops} of 2)",
             )
             return self.current_state
 
         self._transition(
             AgentStateName.RECOMMENDING,
             actor=actor,
-            reason=f"confidence {confidence:.2f} >= MIN_RECO_CONFIDENCE",
+            reason=f"confidence {confidence:.0%} meets the {MIN_RECO_CONFIDENCE:.0%} needed to recommend",
         )
         return self.current_state
 
@@ -535,6 +535,36 @@ class AgentState:
     # ------------------------------------------------------------------ #
     # Audit / observability
     # ------------------------------------------------------------------ #
+    def review_broken_chain(self, *, actor: str, reason: str, quarantine: bool) -> None:
+        """An auditor's disposition of a case whose chain failed verification.
+
+        The history is re-signed as it now stands and an entry records who
+        reviewed it, why, and the head hash that had failed, so the review
+        itself is on the chain. ``quarantine`` also closes the case: its
+        record is not trusted, and the work must be redone as a new case.
+        """
+        from .audit import compute_hash
+
+        if self.verify_audit_chain():
+            raise ValueError(f"case {self.case_id} audit chain verifies; there is nothing to review")
+        old_head = self.history[-1].hash if self.history else GENESIS_HASH
+        prev = GENESIS_HASH
+        rebuilt = []
+        for entry in self.history:
+            fields = entry.model_dump(exclude={"hash", "prev_hash"})
+            rebuilt.append(HistoryEntry(**fields, prev_hash=prev))
+            prev = rebuilt[-1].hash
+        self.history = rebuilt
+        self.chain_seal = compute_hash("seal", {"length": len(self.history), "head": prev})
+        verdict = "quarantined: record not trusted, case closed" if quarantine else "accepted after review"
+        note = f"audit review by {actor}: {verdict} (failed head {old_head[:12]}); {reason}"
+        if quarantine:
+            from_state = self.current_state
+            self.current_state = AgentStateName.CLOSED
+            self._append(from_state, AgentStateName.CLOSED, actor=actor, reason=note)
+        else:
+            self._record_note(actor=actor, reason=note)
+
     def verify_audit_chain(self) -> bool:
         """Recompute every history hash from genesis; True iff chain is intact."""
         from .audit import compute_hash

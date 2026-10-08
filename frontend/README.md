@@ -33,7 +33,7 @@ frontend/
 | Diagnosis | `GET /cases/{id}`, `GET /cases/{id}/expert-knowledge` |
 | AOM Decision | `POST /cases/{id}/approval`, `POST /cases/{id}/rescore`, escalation close |
 | Outcome | `POST /cases/{id}/work-order`, `/outcome`, `/feedback` |
-| Governance | `/kb/queue`, `/kb/proposals`, `/kb/versions?pill=`, `/kb/rollback/{v}?pill=`, `/kb/ledger`, `/pills`, `/audit/trace` |
+| Governance | `/kb/queue`, `/kb/proposals`, `/kb/versions?pill=`, `/kb/rollback/{v}?pill=`, `/kb/ledger`, `/pills`, `/audit/trace`, `/audit/status`, `/audit/review` |
 | Capture | `/capture/sample`, `/capture/draft`, `/capture/interview` |
 
 Identity is a signed session cookie set by `POST /login` (PIN in the body);

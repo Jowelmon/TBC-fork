@@ -19,7 +19,7 @@ demo:  ## Run the end-to-end console demo
 	PYTHONPATH=. $(PY) -m technical_services_pill.demo
 
 serve:  ## Start the app with the UI on :8000 (open http://localhost:8000/ui)
-	PYTHONPATH=. $(PY) -m uvicorn frontend.serve:app --port 8000
+	PYTHONPATH=. $(PY) -m uvicorn frontend.serve:app --port 8000 --no-proxy-headers
 
 reset:  ## Stop a running server, then remove all demo state (cases, proposals, KB); restart with make serve
 	@# A server shutting down saves its state; let it finish first, or the

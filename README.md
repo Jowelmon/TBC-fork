@@ -42,7 +42,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (219 tests) |
+| `make test` | pytest suite (283 tests) |
 | `make eval` | 12 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -111,21 +111,31 @@ review, second-steward approval.
   answer as the quote; anything else is dropped. The capturer can untick
   items or correct a cause but cannot add words. Drafts are re-checked on
   the server when submitted.
-- **Safety-screened.** `safety.py` drops any line that tells someone to
-  bypass, jumper, bridge out, silence, override or raise the limit on a
-  protective device, at capture and again when knowledge is shown; a
-  prohibition ("never bypass the interlock") is kept. It is a pattern screen
-  on the usual phrasings, not a guarantee, so the second steward's review
-  remains the main control.
+- **Safety-screened, deny by default.** `safety.py` works in two layers, at
+  capture and again whenever knowledge is shown:
+  - It drops any line that tells someone to defeat a protective device:
+    bypass, jumper, wire across, tie out, wind up the cut-out, set the
+    overload to max, pull a detection fuse, take a sensor off the BMS, keep
+    resetting a trip. A prohibition ("never bypass the interlock") is kept.
+  - Any other line that names a protective device (alarm, trip, cut-out,
+    interlock, relay, overload, fuse, setpoint, leak detection) is held. The
+    approving steward must tick "safety reviewed", and the knowledge goes
+    live as guidance only, labelled with who reviewed it. It never raises a
+    diagnosis's confidence.
+
+  Wording the first layer misses is still caught by the second, because
+  the second only needs to recognise the device. Knowledge that names a
+  device but was never safety-reviewed is withheld from display.
 - **Flagged for review.** A quote whose own words rule out its cause, or
   that never names the cause it is filed under, is flagged to the steward.
 - **Filed by pill.** Each heuristic goes to the pill that owns its cause, so
   chiller know-how from a CRAH interview lands under Chiller.
 - **Reused with provenance.** On Diagnosis, **Expert Knowledge Reused** shows
   approved heuristics for the same asset type and cause, with the expert,
-  quote and version. Expert knowledge raises confidence only when the case's
-  evidence shows the signals the expert described; it never overrides the
-  decision tree.
+  quote, version and approving steward. Expert knowledge raises confidence
+  only when the case's trigger or abnormal readings (the decision trees' own
+  thresholds) show the signals the expert described. Healthy readings never
+  count, and expert knowledge never overrides the decision tree.
 
 Providers (`TBC_LLM_PROVIDER`): `mock` (default) uses offline models, a
 fault-phrase extractor and an evidence-weighting second opinion, labelled as
@@ -134,11 +144,13 @@ failure is reported in plain language, never silently replaced.
 
 ## Governance
 
-- **Two people per change.** A proposal (outcome feedback, an escalation
-  resolution, or an expert interview) is decided by the pill's owning
-  steward; if they proposed it, the other steward decides. Nobody approves
-  or rejects their own proposal. Approval needs a rationale, rejection a
-  reason, and expert interviews need recorded consent.
+- **Two people per change, stewards only.** A proposal (outcome feedback, an
+  escalation resolution, or an expert interview) is decided by the pill's
+  owning steward; if they proposed it, the other steward decides. Nobody
+  approves or rejects their own proposal, and an admin cannot decide on
+  knowledge at all (admins can revoke and roll back). Approval needs a
+  rationale, rejection a reason, and expert interviews need recorded
+  consent. The roster is configurable (`TBC_PILL_OWNERS`).
 - **Per-pill versions.** Each pill versions its own knowledge (`CRAH v1.4.0`).
   Approving moves only the pills a proposal files knowledge under.
 - **Reversible.** An admin can roll one pill back to an earlier live version
@@ -147,7 +159,10 @@ failure is reported in plain language, never silently replaced.
   be approved until it is re-scored.
 - **Ledgered.** Every proposal, decision, revoke and rollback is written to a
   keyed, hash-chained ledger with actor, reason and the versions it changed.
-  While the ledger fails verification, knowledge changes are refused (423).
+  While the ledger fails verification:
+  - knowledge changes are refused (423)
+  - expert knowledge is withheld from diagnoses
+  - case approvals wait for an auditor's review
 - **Decisions keep their context.** Each manager decision stores the expert
   knowledge it was made with, so a later rollback doesn't rewrite history.
 
@@ -169,7 +184,8 @@ offline, worried when it disagrees). It only reports; it never acts.
 
 - **Login.** `POST /login` checks the PIN (in the body, never the URL) and
   sets an HMAC-signed session cookie that expires and is revoked on logout.
-  Five wrong PINs lock that user out from that client for five minutes.
+  Five wrong PINs lock that user out from that client for five minutes (the
+  server ignores `X-Forwarded-For`, so a client cannot pick its address).
   `?user=` works only as a test fallback under `TBC_DEMO_INSECURE=1`, with a
   banner shown in the UI. Set `TBC_SECRET` outside a demo.
 - **Roles.** Technician, Asset Ops Manager, Knowledge Steward, Auditor,
@@ -181,6 +197,14 @@ offline, worried when it disagrees). It only reports; it never acts.
   the knowledge base, so edits, truncation or deleted cases are detected. A
   case whose chain fails is frozen (423) and shown read-only; any failure
   raises a red banner on the Dashboard.
+- **Integrity review.** On Governance, an auditor records a decision for
+  each failed chain (`POST /audit/review`):
+  - **Accept:** the record is genuine as it stands, so it is re-signed.
+  - **Quarantine** (cases only): the case is closed and the work redone as a
+    new case.
+
+  A reason is required. The review is written to the reviewed chain and to
+  the ledger, with the head hash that had failed.
 - **Key handling.** The key comes from `TBC_AUDIT_KEY` or a generated
   `~/.tbc/audit.key` (mode 0600). Anyone holding both the database and the
   key can re-sign the chains, so in production the key belongs in a secrets

@@ -67,7 +67,7 @@ def test_approval_needs_a_rationale_and_rejection_a_reason(client):
     assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"}).status_code == 400
     assert client.post(f"/kb/proposals/{pid}/reject", params={"user": "steward2", "reason": " "}).status_code == 400
     assert client.post(f"/kb/proposals/{pid}/approve", params={
-        "user": "steward2", "rationale": "each line checked against the interview"}).status_code == 200
+        "user": "steward2", "rationale": "each line checked against the interview", "safety_reviewed": "true"}).status_code == 200
     entry = next(e for e in reversed(LSTORE.ledger) if e["proposal_id"] == pid)
     assert "each line checked against the interview" in entry["reason"]
     client.post(f"/kb/proposals/{pid}/revoke", params={"user": "steward2", "reason": "test cleanup"})
@@ -106,7 +106,7 @@ def test_consent_is_required(client):
 # 4. The knowledge behind a decision is preserved -------------------------------------
 def test_decision_keeps_the_expert_knowledge_it_was_made_with(client):
     sample = client.post("/capture/interview", params={"user": "steward1"}, json=_body()).json()["proposal_id"]
-    client.post(f"/kb/proposals/{sample}/approve", params={"user": "steward2", "rationale": "checked"})
+    client.post(f"/kb/proposals/{sample}/approve", params={"user": "steward2", "rationale": "checked", "safety_reviewed": "true"})
     cid = client.post("/cases", params={"user": "tech1", "asset_id": "CHILLER-DC1-01", "sensor_id": "x",
                                          "observation_type": "chiller_compressor_trip"}).json()["case_id"]
     client.post(f"/cases/{cid}/advance", params={"user": "tech1"})
@@ -115,3 +115,13 @@ def test_decision_keeps_the_expert_knowledge_it_was_made_with(client):
     client.post(f"/kb/proposals/{sample}/revoke", params={"user": "steward2", "reason": "test cleanup"})
     hd = client.get(f"/cases/{cid}", params={"user": "mgr1"}).json()["human_decision"]
     assert hd["expert_knowledge"] and hd["expert_knowledge"][0]["expert_name"] == "R. Tan"
+
+
+def test_a_reworded_symptom_becomes_the_experts_closest_sentence_not_the_whole_quote():
+    quote = ("If it's only one sensor and the neighbours are fine, I look at the calibration sticker. "
+             "A sensor past its calibration date that reads nothing is usually just end of life.")
+    kept, _ = capture._validate_items(capture.SAMPLE_INTERVIEW, [{
+        "symptom_pattern": "Sensor reads nothing and is past calibration", "likely_cause": "sensor_hardware_failure",
+        "evidence_quote": quote, "checks": [], "do_not": [], "escalate_when": []}], "CRAH")
+    assert kept[0]["symptom_pattern"] == "A sensor past its calibration date that reads nothing is usually just end of life."
+    assert any("reworded" in w for w in kept[0]["notes"])

@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from technical_services_pill import auth, capture
 from technical_services_pill.app import app
 from technical_services_pill.learning import STORE as LSTORE
-from technical_services_pill.safety import defeats_safety, said_as_prohibition
+from technical_services_pill.safety import said_as_prohibition
 
 
 @pytest.fixture()
@@ -26,38 +26,7 @@ def client() -> TestClient:
     return TestClient(app)
 
 
-# 1. Safety screen ------------------------------------------------------------
-@pytest.mark.parametrize("text", [
-    "Just bypass the interlock and restart it.",
-    "Don't wait for the vendor, just bypass the interlock.",
-    "If it keeps tripping I bridge out the high-temp interlock.",
-    "Leave the trip bypassed overnight.",
-    "Keep the pressure switch jumpered until the vendor comes.",
-    "Raise the trip setpoint by two degrees.",
-    "The trip keeps going, so jumper it out.",
-    "Silence the alarm and carry on.",
-    "Use a link wire across the HP switch.",
-    "We usually switched off the low-temp cut-out in summer.",
-    "Never mind the alarm, override the interlock.",
-])
-def test_instructions_to_defeat_a_protection_are_caught(text):
-    assert defeats_safety(text)
-
-
-@pytest.mark.parametrize("text", [
-    "Never bypass the interlock, call the vendor.",
-    "If it trips twice, never bypass the interlock, call the vendor.",
-    "Never bypass the trip or silence the alarm.",
-    "I get the safety officer involved for any leak.",
-    "Check the alignment with the laser kit before you touch anything else.",
-    "Isolate and lock out the pump before opening the coupling guard.",
-    "Don't go swapping sensors, you'll waste a whole shift.",
-    "Check the refrigerant charge before anything else.",
-])
-def test_prohibitions_and_ordinary_advice_are_kept(text):
-    assert not defeats_safety(text)
-
-
+# 1. Safety screen in capture and display (phrasings: test_safety_screen.py) ----
 def test_a_never_line_trimmed_of_its_never_still_counts_as_a_prohibition():
     answer = "Never just tighten the base bolts and hope, the vibration comes straight back."
     assert said_as_prohibition("just tighten the base bolts and hope", answer)
@@ -160,7 +129,8 @@ def test_knowledge_changes_freeze_while_the_ledger_fails_verification(client):
 def test_rolling_back_one_pill_leaves_the_others_alone(client):
     pid = _queued_capture("steward1")
     before = {pill: LSTORE.version_of(pill) for pill in ("Chiller", "Pump")}
-    LSTORE.approve_proposal(pid, decided_by="steward2", rationale="checked against the transcript")
+    LSTORE.approve_proposal(pid, decided_by="steward2", rationale="checked against the transcript",
+                           safety_reviewed=True)
     after = {pill: LSTORE.version_of(pill) for pill in ("Chiller", "Pump")}
     assert all(after[p] == before[p] + 1 for p in after)
 

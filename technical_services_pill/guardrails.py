@@ -141,8 +141,8 @@ def check_guardrails(
 
     # G4 — confidence below escalate floor: must NOT recommend.
     if confidence < ESCALATE_CONFIDENCE:
-        res.add("G4", f"confidence {confidence:.2f} < ESCALATE_CONFIDENCE "
-                       f"{ESCALATE_CONFIDENCE:.2f}; escalate, do not recommend",
+        res.add("G4", f"confidence {confidence:.0%} is below the {ESCALATE_CONFIDENCE:.0%} "
+                       "escalation floor; escalate, do not recommend",
                  escalate=True, block=True)
 
     # G1 — banned physical/safety actions: block + escalate.

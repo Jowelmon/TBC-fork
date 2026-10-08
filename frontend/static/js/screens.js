@@ -1,7 +1,7 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
-import { api } from './api.js?v=7';
-import { cloudSvg } from './cloud.js?v=4';
+import { api } from './api.js?v=8';
+import { cloudSvg } from './cloud.js?v=5';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -66,6 +66,13 @@ const kbRef = r => {
     : String(r);
   return `<span class="kb-ref" title="${_esc(r)}">${_esc(label)}</span>`;
 };
+// A symptom is shown after a "When" label; drop the expert's own leading
+// "When"/"If" so it never reads "When When the supply air...".
+const whenText = t => {
+  const s = String(t || '').trim().replace(/^(when|if|whenever)\s+/i, '');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
 // Model calls make the on-screen cloud "think" while they run.
 const thinking = p => (window.__cloud__ ? window.__cloud__.cloudThinking(p) : p);
 const cloudMood = m => window.__cloud__ && window.__cloud__.setCloudMood(m);
@@ -95,9 +102,12 @@ function decisionFacts(s, esc, confBand) {
 }
 
 function corroboration(m, esc) {
+  if (m.guidance_only) {
+    return `<div class="muted" style="margin:4px 0"><span class="badge badge-yellow">Names a protective device</span> Safety-reviewed by ${esc(m.safety_reviewed_by)}. Guidance for a person only: it never raises confidence.</div>`;
+  }
   return m.matched_terms && m.matched_terms.length
-    ? `<div class="muted" style="margin:4px 0"><span class="badge badge-green">Seen in this case's evidence</span> ${m.matched_terms.map(t => `<code>${esc(t)}</code>`).join(' ')}</div>`
-    : `<div class="muted" style="margin:4px 0"><span class="badge badge-grey">Not seen in this case's evidence</span> Shown as guidance; it does not raise confidence.</div>`;
+    ? `<div class="muted" style="margin:4px 0"><span class="badge badge-green">Seen in this case's abnormal readings</span> ${m.matched_terms.map(t => `<code>${esc(t)}</code>`).join(' ')}</div>`
+    : `<div class="muted" style="margin:4px 0"><span class="badge badge-grey">Not seen in this case's abnormal readings</span> Shown as guidance; it does not raise confidence.</div>`;
 }
 
 // Approved expert know-how for this cause, shown where the decision is made.
@@ -106,9 +116,9 @@ function expertChecks(ek, esc) {
     return `<p class="muted" style="margin-top:8px">No approved expert knowledge matches this cause yet.</p>`;
   }
   const list = (title, items) => items && items.length ? `<div><strong>${title}:</strong><ul class="expert-list">${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>` : '';
-  return `<div class="mt-16"><span class="tier-label tier-advisory">Expert knowledge to apply (steward-approved)</span>
+  return `<div class="mt-16"><span class="tier-label tier-advisory">Expert knowledge to apply (approved by a knowledge steward)</span>
     ${ek.matches.map(m => `<article class="expert-match">
-      <div><strong>${esc(m.expert_name)}</strong> <span class="muted">— ${esc(m.expert_role)} · KB v${esc(m.kb_version_label)}</span></div>
+      <div><strong>${esc(m.expert_name)}</strong> <span class="muted">— ${esc(m.expert_role)} · ${esc(m.kb_version_label)} · approved by ${esc(m.approved_by)}</span></div>
       ${corroboration(m, esc)}
       ${list('Check before acting', m.checks)}${list('Never', m.do_not)}${list('Escalate when', m.escalate_when)}
       <blockquote class="expert-quote">“${esc(m.evidence_quote)}”</blockquote>
@@ -147,6 +157,20 @@ const FIELD_LABELS = {
   temp_c: 'Temp (°C)', charge_pct: 'Refrigerant charge (%)', approach_temp: 'Approach temp (°C)',
   axial_mm_s: 'Axial vibration (mm/s)', npsh_margin: 'NPSH margin', load_pct: 'Load (%)',
   flow_pct: 'Flow (%)', float_voltage: 'Float voltage (V)', battery_voltage: 'Battery voltage (V)',
+  past_eol: 'Past end of life', is_past_calibration: 'Past calibration date', calibration_overdue: 'Calibration overdue',
+  calibration_interval_days: 'Calibration interval (days)', last_calibrated_at: 'Last calibrated',
+  npsh_margin_m: 'NPSH margin', scada_link: 'SCADA link', scada_link_healthy: 'SCADA link healthy',
+  bus_id: 'Bus', bus_alive: 'Bus alive', bus_reachable: 'Bus reachable', controller_id: 'Controller',
+  tags_alive: 'Tags reporting', tags_dead: 'Tags silent', other_tags_reporting: 'Other tags on the bus reporting',
+  tag_remap: 'Tag renamed or remapped', ts: 'Time', last_good_ts: 'Last good reading at',
+  last_good_value: 'Last good value', soh: 'State of health', soft_foot_detected: 'Soft foot detected',
+  dominant_order: 'Dominant vibration order', directional_dominant: 'Directional vibration dominant',
+  bearing_freq_present: 'Bearing defect frequency present', rpm: 'Speed (rpm)', oil_level: 'Oil level',
+  superheat: 'Superheat (K)', subcooling: 'Subcooling (K)', winding_resistance: 'Winding resistance (MΩ)',
+  motor_overcurrent: 'Motor overcurrent', fouling_factor: 'Fouling factor', cooling_capacity_kw: 'Cooling capacity (kW)',
+  design_supply_temp_c: 'Design supply temp (°C)', design_return_temp_c: 'Design return temp (°C)',
+  charge_current: 'Charge current (A)', on_battery: 'Running on battery', ups_id: 'UPS',
+  parent_system_id: 'Parent system', site_id: 'Site', commissioned_at: 'Commissioned',
 };
 
 function _humaniseKey(key) {
@@ -276,7 +300,7 @@ export function renderDashboard(el, state, h) {
       if (!st.ledger_valid) parts.push('the knowledge governance ledger failed verification');
       if (!st.registry_valid) parts.push('the set of cases does not match its seal (a case was added or removed outside the app)');
       if (!st.tool_log_valid) parts.push('the tool audit log failed verification');
-      setHTML('integrity-banner', `<div class="banner banner-error" role="alert"><p><strong>Audit integrity alert:</strong> ${parts.join('; ')}. An auditor should review this before anyone relies on it.</p></div>`);
+      setHTML('integrity-banner', `<div class="banner banner-error" role="alert"><p><strong>Audit integrity alert:</strong> ${parts.join('; ')}. An auditor reviews it on Governance (Integrity Review) before anyone relies on it.</p></div>`);
     } catch (_) { /* banner is best-effort */ }
   })();
   document.getElementById('btn-new').onclick = () => {
@@ -425,14 +449,18 @@ export function renderDiagnosis(el, state, h) {
       const obs = s.observation || {};
       const cb = s.diagnosis ? confBand(s.confidence, s.current_state) : { cls: 'badge-grey', label: 'Not yet diagnosed' };
 
-      const nextHintText = {
+      const nextHintText = s.audit_chain_valid === false
+        ? 'this case is frozen: an auditor must review its audit chain on Governance.'
+        : {
         GATHERING_EVIDENCE: 'click Advance Agent to run the decision tree.',
         DIAGNOSING: 'the agent is diagnosing; refresh in a moment.',
         RECOMMENDING: 'a recommendation is being prepared.',
-        AWAITING_APPROVAL: s.knowledge_withdrawn
+        AWAITING_APPROVAL: s.ledger_valid === false
+          ? 'the knowledge ledger failed verification: approval waits for an auditor review on Governance.'
+          : s.knowledge_withdrawn
           ? 'knowledge this diagnosis used was withdrawn: re-score it on AOM Decision before anyone approves it.'
           : 'move to AOM Decision to approve, reject or modify it.',
-        EXECUTING: 'a work order is being raised; check the Outcome screen.',
+        EXECUTING: 'approved: raise the work order on the Outcome screen.',
         MONITORING_OUTCOME: 'record the outcome once work is complete, on the Outcome screen.',
         RECORDING_OUTCOME: 'outcome recording is in progress.',
         FEEDBACK_QUEUED: 'feedback is queued for a knowledge steward to review.',
@@ -620,10 +648,11 @@ export function renderDiagnosis(el, state, h) {
               </div>
               <div class="expert-meta">
                 <span><strong>Knowledge ID:</strong> <code>${esc(item.knowledge_id)}</code></span>
-                <span><strong>KB version:</strong> ${esc(item.kb_version_label)}</span>
+                <span><strong>Knowledge version:</strong> ${esc(item.kb_version_label)}</span>
+                <span><strong>Approved by:</strong> ${esc(item.approved_by)}${item.safety_reviewed_by ? ' (safety-reviewed)' : ''}</span>
                 <span><strong>Cause:</strong> ${esc(causeLabel(item.likely_cause))}</span>
               </div>
-              <p><strong>Matched pattern:</strong> ${esc(item.symptom_pattern)}</p>
+              <p><strong>When:</strong> ${esc(whenText(item.symptom_pattern))}</p>
               ${corroboration(item, esc)}
               ${item.checks.length ? `<div><strong>Expert checks:</strong><ul class="expert-list">${item.checks.map(check => `<li>${esc(check)}</li>`).join('')}</ul></div>` : ''}
               ${item.do_not.length ? `<div><strong>Never:</strong><ul class="expert-list">${item.do_not.map(caution => `<li>${esc(caution)}</li>`).join('')}</ul></div>` : ''}
@@ -806,10 +835,16 @@ export function renderDecision(el, state, h) {
         .find(r => r.startsWith('[G2b]') || r.startsWith('[G2]'));
       if (s.ai_hypothesis && s.ai_hypothesis.status === 'ok' && s.ai_hypothesis.hypothesis && !s.ai_hypothesis.agrees_with_rules) cloudMood('alert');
 
-      const decisionHint = s.current_state === 'ESCALATED'
+      const decisionHint = s.audit_chain_valid === false
+        ? 'this case is frozen: an auditor must review its audit chain on Governance.'
+        : s.current_state === 'ESCALATED'
         ? 'resolve the escalation below, or request more evidence to send it back to the agent.'
         : s.current_state === 'AWAITING_APPROVAL'
         ? (canApprove ? 'approve, reject or modify sends the case to execution.' : 'an Asset Ops Manager needs to approve, reject or modify this.')
+        : s.current_state === 'EXECUTING'
+        ? 'approved: raise the work order on the Outcome screen.'
+        : s.current_state === 'MONITORING_OUTCOME'
+        ? 'work order raised: record the outcome on the Outcome screen once the work is done.'
         : 'this case has no pending decision right now.';
       let html = `${nextHint(decisionHint)}<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
 
@@ -823,8 +858,8 @@ export function renderDecision(el, state, h) {
         // decision itself -- not only in the Diagnosis screen's guardrail
         // grid, which an approver reviewing here may never have scrolled to.
         if (s.knowledge_withdrawn) {
-          html += `<div class="banner banner-error"><p><strong>Knowledge withdrawn:</strong> ${esc(s.knowledge_withdrawn)}. The confidence below may no longer hold, so approval is blocked until the case is re-scored against the current knowledge base.</p>
-            ${canApprove ? '<button class="btn btn-primary mt-16" id="btn-rescore">Re-score against current knowledge</button>' : ''}</div>`;
+          html += `<div class="banner banner-error"><p><strong>Knowledge withdrawn:</strong> ${esc(s.knowledge_withdrawn)}. ${s.ledger_valid === false ? 'Approval is blocked until an auditor reviews the knowledge ledger on Governance.' : 'The confidence below may no longer hold, so approval is blocked until the case is re-scored against the current knowledge base.'}</p>
+            ${canApprove && s.ledger_valid !== false ? '<button class="btn btn-primary mt-16" id="btn-rescore">Re-score against current knowledge</button>' : ''}</div>`;
         }
         const decidedAs = s.human_decision && { approve: 'Approved', reject: 'Rejected', modify: 'Modified' }[s.human_decision.decision];
         html += `<div class="card"><div class="card-header"><h3>${decidedAs ? `Recommendation (${decidedAs})` : 'Recommendation Under Review'}</h3></div><div class="card-body">
@@ -872,7 +907,9 @@ export function renderDecision(el, state, h) {
           html += `<div class="card"><div class="card-header"><h3>What the pill found</h3></div><div class="card-body">
             ${decisionFacts(s, esc, confBand)}${expertChecks(ek, esc)}</div></div>`;
         }
-        html += `<div class="card"><div class="card-header"><h3>Resolve Escalation</h3></div><div class="card-body" id="esc-actions"></div></div>`;
+        if (s.audit_chain_valid !== false) {
+          html += `<div class="card"><div class="card-header"><h3>Resolve Escalation</h3></div><div class="card-body" id="esc-actions"></div></div>`;
+        }
       } else if (!s.human_decision) {
         html += `<div class="banner banner-info"><p>No recommendation to review yet. Case status: ${statePill(s.current_state)}</p></div>`;
       }
@@ -885,7 +922,7 @@ export function renderDecision(el, state, h) {
           <p><span class="badge ${cls}">${esc(hd.decision)}</span> by <strong>${esc(hd.decided_by)}</strong> at ${fmtTime(hd.timestamp)}</p>
           ${hd.rationale ? `<p style="margin-top:8px;font-style:italic">"${esc(hd.rationale)}"</p>` : ''}
           ${(hd.expert_knowledge || []).length ? `<div class="mt-16"><span class="tier-label tier-advisory">Expert knowledge in force when this was decided</span>
-            ${hd.expert_knowledge.map(m => `<div class="muted" style="margin-top:6px"><strong>${esc(m.expert_name)}</strong> · KB v${esc(m.kb_version_label)} · <code>${esc(m.knowledge_id)}</code> — “${esc(m.evidence_quote)}”</div>`).join('')}</div>` : ''}
+            ${hd.expert_knowledge.map(m => `<div class="muted" style="margin-top:6px"><strong>${esc(m.expert_name)}</strong> · ${esc(m.kb_version_label)} · <code>${esc(m.knowledge_id)}</code> — “${esc(m.evidence_quote)}”</div>`).join('')}</div>` : ''}
           ${hd.modified_actions ? `<div class="mt-16">
             <span class="tier-label tier-human">Human-Validated</span>
             <div class="diff-grid">
@@ -904,8 +941,8 @@ export function renderDecision(el, state, h) {
             </div>
           </div>` : ''}
         </div></div>`;
-      } else if (s.current_state === 'AWAITING_APPROVAL') {
-        // Show decision controls
+      } else if (s.current_state === 'AWAITING_APPROVAL' && s.audit_chain_valid !== false) {
+        // Show decision controls (never on a frozen case: the server refuses them)
         if (!canApprove) {
           html += `<div class="banner banner-error"><p><strong>Approval Blocked</strong></p><p>You are signed in as ${esc(role)} (${esc(h.roleDisplayName(role))}); that role cannot approve, reject or modify.</p><p>Switch to Asset Operations Manager (mgr1) to approve, reject, or modify.</p></div>`;
         } else {
@@ -915,7 +952,7 @@ export function renderDecision(el, state, h) {
               <button class="btn btn-red" id="btn-reject">Reject</button>
               ${s.knowledge_withdrawn ? '' : '<button class="btn btn-secondary" id="btn-modify">Modify</button>'}
             </div>
-            ${s.knowledge_withdrawn ? '<p class="muted" style="margin-bottom:12px">Approve and Modify return once the case is re-scored. Reject is still available.</p>' : ''}
+            ${s.knowledge_withdrawn ? `<p class="muted" style="margin-bottom:12px">${s.ledger_valid === false ? 'Approve and Modify return once an auditor reviews the knowledge ledger on Governance.' : 'Approve and Modify return once the case is re-scored.'} Reject is still available.</p>` : ''}
             <div id="decision-form"></div>
           </div></div>`;
         }
@@ -1049,11 +1086,17 @@ export function renderOutcome(el, state, h) {
       // pending for a steward separately) -- so "submit feedback" must stop
       // showing the moment current_state is CLOSED, not stay pinned on
       // whether an outcome was ever recorded.
-      const outcomeHint = s.current_state === 'CLOSED'
+      const outcomeHint = s.audit_chain_valid === false
+        ? 'this case is frozen: an auditor must review its audit chain on Governance.'
+        : s.current_state === 'CLOSED'
         ? 'this case is closed. Feedback (if submitted) is with a knowledge steward on Governance.'
         : s.outcome
         ? 'submit feedback so a knowledge steward can validate it into the knowledge base.'
-        : 'raise the work order, then record the outcome once the work is done.';
+        : s.current_state === 'MONITORING_OUTCOME'
+        ? 'record the outcome once the work is done.'
+        : s.current_state === 'EXECUTING'
+        ? 'raise the work order.'
+        : 'the outcome is recorded after the AOM approves and a work order is raised.';
       let html = `${nextHint(outcomeHint)}<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
 
       // Work order
@@ -1198,6 +1241,7 @@ export function renderGovernance(el, state, h) {
 
   el.innerHTML = `
     ${nextHint('approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.')}
+    <div class="card" id="integrity-card" hidden><div class="card-header"><h3>Integrity Review</h3><span class="badge badge-red">Action needed</span></div><div class="card-body" id="integrity-body"></div></div>
     <div class="stats-row" id="gov-stats"></div>
     <div class="card"><div class="card-header"><h3>Pill Registry</h3></div><div class="card-body" id="pill-registry-body"></div></div>
     <div class="grid-2">
@@ -1345,9 +1389,56 @@ export function renderGovernance(el, state, h) {
   loadApproved();
 
   function refreshAll() {
-    loadQueue(); loadStats(); loadRollback(); loadPills(); loadLedger(); loadApproved();
+    loadQueue(); loadStats(); loadRollback(); loadPills(); loadLedger(); loadApproved(); loadIntegrity();
     window.__app__?.refreshKbVersion?.();
   }
+
+  // Integrity review: the way out of "frozen until an auditor reviews it".
+  // An auditor records a disposition for each chain that fails verification:
+  // accept it as genuine (re-signed, with the review on the chain and in the
+  // ledger) or, for a case, quarantine it (closed; redo the work as a new case).
+  async function loadIntegrity() {
+    const card = document.getElementById('integrity-card');
+    const body = document.getElementById('integrity-body');
+    if (!card || !body) return;
+    try {
+      const st = await api.get('/audit/status');
+      const items = [
+        ...st.broken_cases.map(cid => ({ target: `case:${cid}`, label: `Case ${cid}: its audit chain failed verification; the case is frozen.`, quarantine: true })),
+        ...(st.ledger_valid ? [] : [{ target: 'ledger', label: 'Knowledge ledger: failed verification. Knowledge changes are frozen and expert knowledge is withheld from diagnoses.' }]),
+        ...(st.registry_valid ? [] : [{ target: 'registry', label: 'Case registry: a case was added or removed outside the app.' }]),
+        ...(st.tool_log_valid ? [] : [{ target: 'tool_log', label: 'Tool log: entries were changed or removed.' }]),
+      ];
+      card.hidden = !items.length;
+      if (!items.length) return;
+      if (!api.can('review_audit_integrity')) {
+        body.innerHTML = `<p>${items.map(i => esc(i.label)).join('<br>')}</p><p class="muted">An auditor (auditor1) reviews these and records a decision.</p>`;
+        return;
+      }
+      body.innerHTML = `<p class="muted" style="margin-bottom:10px">Investigate first (Case Audit Trace below, the snapshot and server logs). <strong>Accept</strong> means the record is genuine as it stands: it is re-signed, and your review is written to the chain and the ledger. <strong>Quarantine</strong> closes a case whose record you do not trust; redo the work as a new case.</p>` +
+        items.map((i, n) => `<div class="rerun-row">
+          <div>${esc(i.label)}</div>
+          <div class="flex gap-8 flex-wrap"><input id="ir-reason-${n}" type="text" placeholder="What you checked (required)" style="min-width:220px">
+            <button class="btn btn-secondary btn-sm" id="ir-accept-${n}">Accept</button>
+            ${i.quarantine ? `<button class="btn btn-red btn-sm" id="ir-quarantine-${n}">Quarantine</button>` : ''}</div>
+        </div>`).join('');
+      items.forEach((i, n) => {
+        const go = async decision => {
+          const reason = document.getElementById(`ir-reason-${n}`).value.trim();
+          if (!reason) { showToast('Record what you checked before deciding', 'error'); document.getElementById(`ir-reason-${n}`).focus(); return; }
+          try {
+            await api.post('/audit/review', { target: i.target, decision, reason });
+            showToast(`${i.target.replace('case:', 'Case ')} ${decision === 'accept' ? 'accepted' : 'quarantined'}; recorded in the ledger`, 'success');
+            refreshAll();
+          } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+        };
+        document.getElementById(`ir-accept-${n}`).onclick = () => go('accept');
+        const q = document.getElementById(`ir-quarantine-${n}`);
+        if (q) q.onclick = () => go('quarantine');
+      });
+    } catch (e) { card.hidden = true; }
+  }
+  loadIntegrity();
 
   // Pipeline visual
   setHTML('pipeline-body', `
@@ -1385,7 +1476,8 @@ export function renderGovernance(el, state, h) {
           ${x.source === 'manual' ? '<span class="badge badge-yellow">entered by hand</span>' : ''}
           ${x.check_cause ? '<div class="kh-new">The expert\'s own words may rule this cause out.</div>' : ''}
           ${x.off_topic ? '<div class="kh-new">The expert\'s answer never names this cause or its usual signs.</div>' : ''}
-          <div class="q-field"><span class="q-field-lbl">When</span> ${esc(x.symptom_pattern)}</div>
+          ${(x.safety_review || []).length ? `<div class="banner banner-warn q-safety"><p><strong>Safety review needed:</strong> these lines name a protective device. Approve only if none of them tells anyone to defeat, bypass or weaken a protection. Once live, this heuristic is guidance only and never raises confidence.</p><ul>${x.safety_review.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : ''}
+          <div class="q-field"><span class="q-field-lbl">When</span> ${esc(whenText(x.symptom_pattern))}</div>
           ${lines('Check', x.checks)}${lines('Never', x.do_not)}${lines('Escalate when', x.escalate_when)}
           <div class="q-quote">"${esc(x.evidence_quote)}"</div></li>`;
       const describe = p => p.kind === 'expert_capture'
@@ -1400,13 +1492,16 @@ export function renderGovernance(el, state, h) {
             <div class="q-meta">Confirmed cause: <strong>${esc(causeLabel(p.confirmed_cause))}</strong> · Case ${esc(p.case_id)} · ${esc(p.asset_id)} · submitted by ${esc(p.submitted_by)}</div>`;
       qb.innerHTML = queue.map(p => {
         const own = p.submitted_by === me;
-        // Mirrors the server rule: the pill's owner decides, the other
-        // steward stands in only when the owner proposed it; admin may.
-        const notOwner = !own && api.role() !== 'admin' && p.owner_steward
-          && p.owner_steward !== me && p.owner_steward !== p.submitted_by;
-        const blocked = own || notOwner;
-        const why = own ? 'You sent this. A different steward must decide.'
-          : `${esc(p.asset_type)} knowledge is owned by ${esc(p.owner_steward)}; they (or an admin) decide.`;
+        // Mirrors the server rule: only a knowledge steward decides; the
+        // pill's owner does, and the other steward stands in only when the
+        // owner proposed it. Admin can view, revoke and roll back, not decide.
+        const notSteward = api.role() !== 'knowledge_steward';
+        const notOwner = !own && p.owner_steward && p.owner_steward !== me && p.owner_steward !== p.submitted_by;
+        const blocked = own || notSteward || notOwner;
+        const why = notSteward ? 'Only a knowledge steward decides on knowledge.'
+          : own ? 'You sent this. A different steward must decide.'
+          : `${esc(p.asset_type)} knowledge is owned by ${esc(p.owner_steward)}; they decide.`;
+        const held = (p.heuristics || []).flatMap(h => h.safety_review || []);
         const pid = esc(p.proposal_id);
         return `<div class="card q-card" style="margin-bottom:8px">
           <div class="q-body">${describe(p)}</div>
@@ -1417,6 +1512,7 @@ export function renderGovernance(el, state, h) {
             <div class="q-reject" id="ap-${pid}" hidden>
               <label for="ap-reason-${pid}">Why is this sound? (recorded in the ledger)</label>
               <input id="ap-reason-${pid}" type="text" placeholder="e.g. Checked each line against the interview">
+              ${held.length ? `<label class="hazard-ack"><input type="checkbox" id="ap-safety-${pid}"> I reviewed the ${held.length} line(s) about protective devices: none tells anyone to defeat, bypass or weaken a protection.</label>` : ''}
               <div class="flex gap-8"><button class="btn btn-green btn-sm" id="ap-go-${pid}">Confirm approval</button><button class="btn btn-secondary btn-sm" id="ap-cancel-${pid}">Cancel</button></div>
             </div>
             <div class="q-reject" id="rj-${pid}" hidden>
@@ -1439,8 +1535,10 @@ export function renderGovernance(el, state, h) {
         document.getElementById(`ap-go-${id}`).onclick = async () => {
           const rationale = document.getElementById(`ap-reason-${id}`).value.trim();
           if (!rationale) { showToast('Say why this knowledge is sound before approving', 'error'); document.getElementById(`ap-reason-${id}`).focus(); return; }
+          const safety = document.getElementById(`ap-safety-${id}`);
+          if (safety && !safety.checked) { showToast('Confirm the safety review of the lines about protective devices', 'error'); safety.focus(); return; }
           try {
-            const r = await api.post(`/kb/proposals/${id}/approve`, { rationale });
+            const r = await api.post(`/kb/proposals/${id}/approve`, { rationale, safety_reviewed: safety ? 'true' : '' });
             showToast(`${id} approved: now live as ${(r.kb_version_labels || []).join(', ') || 'new knowledge'}`, 'success');
             refreshAll();
           } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
@@ -1593,10 +1691,10 @@ export function renderGovernance(el, state, h) {
     try {
       const { entries, chain_valid } = await api.get('/kb/ledger');
       setHTML('ledger-status', chain_valid ? '<span class="badge badge-green">Ledger verified</span>' : '<span class="badge badge-red">Ledger FAILED verification</span>');
-      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_rejected: 'Rejected', proposal_revoked: 'Revoked', rollback: 'Rollback', seeded: 'Seeded' };
+      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_rejected: 'Rejected', proposal_revoked: 'Revoked', rollback: 'Rollback', seeded: 'Seeded', integrity_review: 'Integrity review' };
       setHTML('ledger-body', !entries.length
         ? '<p class="muted">No governance actions yet.</p>'
-        : `<p class="muted" style="margin-bottom:8px">Every proposal, approval, rejection and rollback, with who did it and why. Keyed hash chain: editing any entry breaks verification.</p>
+        : `<p class="muted" style="margin-bottom:8px">Every proposal, approval, rejection, rollback and integrity review, with who did it and why. Keyed hash chain: editing any entry breaks verification.</p>
           <div class="table-wrap"><table>
           <thead><tr><th>#</th><th>Action</th><th>Actor</th><th>Proposal</th><th>Change</th><th>Reason</th><th>Time</th></tr></thead>
           <tbody>${entries.slice().reverse().map(e => `<tr>
@@ -1724,7 +1822,9 @@ export function renderCapture(el, state, h) {
         ${x.check_cause ? '<div class="kh-new">Check the cause: the expert\'s own words may rule it out. Correct it below or untick this item.</div>' : ''}
         ${x.off_topic ? '<div class="kh-new">Nothing in the expert\'s answer names this cause or its usual signs. Check it is filed under the right cause.</div>' : ''}
         ${editable && !x.new_cause ? `<div class="form-group kh-cause"><label for="kh-cause-${i}">Cause (correct it if the AI got it wrong)</label><select id="kh-cause-${i}" class="kh-cause-sel" data-i="${i}">${causeOptions(causes, x.likely_cause)}</select></div>` : ''}
-        <div class="kh-row"><span class="kh-label">When</span>${esc(x.symptom_pattern)}</div>
+        ${(x.safety_review || []).length ? '<div class="kh-new">Names a protective device: the approving steward must confirm a safety review, and once live it is guidance only (it never raises confidence).</div>' : ''}
+        ${(x.notes || []).filter(n => !/names a protective device|pill, so it will be filed/.test(n)).map(n => `<div class="kh-note">${esc(n.replace(/^Item \d+:?\s*/, ''))}</div>`).join('')}
+        <div class="kh-row"><span class="kh-label">When</span>${esc(whenText(x.symptom_pattern))}</div>
         ${fieldList('Checks', (x.checks || []).filter(c => c !== x.symptom_pattern))}${fieldList('Never', x.do_not)}${fieldList('Escalate when', x.escalate_when)}
         <span class="kh-label" style="margin-top:10px">Expert's own words</span>
         <blockquote class="kh-quote">"${esc(x.evidence_quote)}"</blockquote>
@@ -1748,7 +1848,9 @@ export function renderCapture(el, state, h) {
       ${(() => {
         const ws = draft.warnings || [];
         const filing = ws.filter(w => w.includes(' pill, so it will be filed'));
-        const other = ws.filter(w => !filing.includes(w));
+        // A kept heuristic's own notes are shown on its card, not as banners.
+        const onCards = new Set(draft.heuristics.flatMap(x => x.notes || []));
+        const other = ws.filter(w => !filing.includes(w) && !onCards.has(w));
         const moved = draft.heuristics.filter(x => x.asset_type && x.asset_type !== $('cap-asset').value);
         return other.map(w => `<div class="banner banner-warn"><p>${esc(w)}</p></div>`).join('')
           + (moved.length ? `<div class="banner banner-info"><p><strong>Filed under other pills:</strong> ${moved.map(x => `${esc(x.cause_label)} goes to ${esc(x.asset_type)}`).join('; ')}. Each pill only uses knowledge about its own equipment.</p></div>` : '');

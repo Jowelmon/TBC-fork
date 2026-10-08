@@ -24,14 +24,14 @@ const STEPS = [
     title: 'Second steward approves, version bumps',
     role: 'steward2', screen: 'governance',
     say: 'A second steward reviews the expert\'s words and approves. Only now does it become live knowledge, versioned and reversible.',
-    notice: 'Approve the proposal. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 65%, past the 55% recommendation threshold.',
+    notice: 'Approve the proposal with a reason. The chiller answer mentions a trip, so the approver must also tick the safety review: that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 65%, past the 55% recommendation threshold.',
   },
   {
     title: 'Captured know-how changes the outcome',
     role: 'tech1', screen: 'diagnosis', asset: 'PUMP-DC1-01',
     newCase: { sensor_id: 'PUMP-DC1-01-VIB', observation_type: 'pump_vibration_high', reading_status: 'invalid' },
     say: 'A new vibration alarm on the same pump. Yesterday this escalated at 49%. Today the pill knows what R. Tan knows.',
-    notice: 'This is a fresh PUMP-DC1-01 case diagnosed with the approved knowledge: it now clears 55% and goes to the Asset Operations Manager. "Expert Knowledge Reused" quotes R. Tan and shows which of his words appear in this case\'s evidence.',
+    notice: 'This is a fresh PUMP-DC1-01 case diagnosed with the approved knowledge: it now clears 55% and goes to the Asset Operations Manager. "Expert Knowledge Reused" quotes R. Tan and shows which of his words match this case\'s abnormal readings.',
   },
   {
     title: 'Transparent, deterministic diagnosis',

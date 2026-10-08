@@ -484,8 +484,13 @@ def _run_expert_harvest() -> bool:
     pump_before = pump_case()
 
     _login(client, "steward2")  # a DIFFERENT steward must approve
+    # The chiller answer names a trip, so the approver must confirm a safety
+    # review; that heuristic becomes guidance only and never raises confidence.
+    held = [h for h in draft["heuristics"] if h.get("safety_review")]
+    print(f"   {len(held)} heuristic(s) name a protective device and need the approver's safety review")
     approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve",
-                           params={"rationale": "quotes checked against the interview"})
+                           params={"rationale": "quotes checked against the interview",
+                                   "safety_reviewed": "true"})
     approval.raise_for_status()
     print(
         f"2. Different steward approved {draft['proposal_id']}; "

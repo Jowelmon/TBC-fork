@@ -67,6 +67,20 @@ def compute_hash(prev_hash: str, fields: dict[str, Any]) -> str:
     return hmac.new(audit_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def resign_chain(entries: list[dict[str, Any]], fields: tuple[str, ...]) -> None:
+    """Re-link and re-hash a chain of dict entries in place, as they stand.
+
+    Only for an auditor's recorded review of a chain that failed
+    verification (``POST /audit/review``): the caller always appends an
+    entry saying who accepted it and why, so a re-signed chain is never
+    silent."""
+    prev = GENESIS_HASH
+    for e in entries:
+        e["prev_hash"] = prev
+        e["hash"] = compute_hash(prev, {f: e.get(f) for f in fields})
+        prev = e["hash"]
+
+
 def verify_chain(entries: list[dict[str, Any]], fields: tuple[str, ...]) -> bool:
     """Recompute a chain of dict entries; True iff every link and hash holds."""
     prev = GENESIS_HASH

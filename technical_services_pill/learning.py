@@ -89,6 +89,12 @@ def jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+def needs_safety_review(p: dict[str, Any]) -> list[str]:
+    """Lines of a proposal's heuristics that name a protective device and so
+    need the approver's explicit safety review (see ``safety.py``)."""
+    return [line for h in p.get("heuristics") or [] for line in h.get("safety_review") or []]
+
+
 def proposal_pills(p: dict[str, Any]) -> list[str]:
     """The pills a proposal files knowledge under."""
     if p.get("kind") == "expert_capture":
@@ -202,7 +208,8 @@ class LearningStore:
                 (h["id"], h["likely_cause"], h["asset_type"], h["evidence_quote"],
                  h["kb_version"], h["approved_by"], h.get("expert_name"), h.get("expert_role"),
                  h.get("symptom_pattern"), tuple(h.get("checks") or ()),
-                 tuple(h.get("do_not") or ()), tuple(h.get("escalate_when") or ()))
+                 tuple(h.get("do_not") or ()), tuple(h.get("escalate_when") or ()),
+                 tuple(h.get("safety_review") or ()), h.get("safety_reviewed_by"))
                 for h in self.expert_heuristics
             ),
             "proposals": [
@@ -226,6 +233,27 @@ class LearningStore:
             return False
         return self.ledger_seal == compute_hash(
             "seal", {"length": len(self.ledger), "head": self.ledger[-1]["hash"]})
+
+    def review_broken_ledger(self, *, actor: str, reason: str) -> dict[str, Any]:
+        """An auditor's disposition of a ledger that failed verification: the
+        entries are re-signed as they stand, statistics are rebuilt from the
+        validated cases, and a new entry records who accepted the current
+        knowledge base and why (with the head hash that had failed)."""
+        from .audit import resign_chain
+
+        if self.verify_ledger():
+            raise ValueError("the knowledge ledger verifies; there is nothing to review")
+        old_head = self.ledger[-1]["hash"] if self.ledger else ""
+        resign_chain(self.ledger, LEDGER_FIELDS)
+        self.rebuild_stats()
+        return self._log(actor=actor, action="integrity_review",
+                         reason=f"knowledge ledger accepted after review (failed head {old_head[:12]}); "
+                                f"{reason}")
+
+    def record_integrity_review(self, *, actor: str, reason: str) -> dict[str, Any]:
+        """Record an auditor's review of another chain (a case, the case
+        registry, the tool log) in the governance ledger."""
+        return self._log(actor=actor, action="integrity_review", reason=reason)
 
     def withdrawn_reason(self, pill: str | None, kb_version_used: int | None,
                          ledger_seq_at_use: int | None) -> str | None:
@@ -390,13 +418,23 @@ class LearningStore:
             )
         return p
 
-    def approve_proposal(self, proposal_id: str, *, decided_by: str, rationale: str) -> dict[str, Any]:
+    def approve_proposal(self, proposal_id: str, *, decided_by: str, rationale: str,
+                         safety_reviewed: bool = False) -> dict[str, Any]:
         """Approve a pending proposal: its knowledge goes live and each pill
-        it files knowledge under moves to a new version."""
+        it files knowledge under moves to a new version. Knowledge that names
+        a protective device needs the approver's explicit safety review."""
         if not rationale.strip():
             raise ValueError("approving knowledge needs a rationale")
         p = self._pending(proposal_id, decided_by, "approve")
+        held = needs_safety_review(p)
+        if held and not safety_reviewed:
+            raise ValueError(
+                f"approving knowledge that names a protective device needs a safety review: "
+                f"{len(held)} line(s) mention an alarm, trip, cut-out, interlock or similar; "
+                "confirm you reviewed them (safety_reviewed=true)")
         before = dict(self._kb_version)
+        if held:
+            p["safety_reviewed_by"] = decided_by
         p["status"] = "approved"
         p["decided_by"] = decided_by
         p["decided_at"] = _now().isoformat()
@@ -425,8 +463,9 @@ class LearningStore:
             )
             self._ingest(vc)
             p["validated_case_id"] = vc.id
+        review = f" (safety review confirmed for {len(held)} line(s))" if held else ""
         self._log(actor=decided_by, action="proposal_approved", proposal_id=proposal_id,
-                  reason=f"approved proposal from {p.get('submitted_by')}: {rationale.strip()}",
+                  reason=f"approved proposal from {p.get('submitted_by')}{review}: {rationale.strip()}",
                   versions_before=before)
         return p
 
@@ -455,10 +494,13 @@ class LearningStore:
                 "asset_type": pill,
                 "proposal_id": p["proposal_id"],
                 "approved_by": p["decided_by"],
+                "safety_reviewed_by": p.get("safety_reviewed_by") if h.get("safety_review") else None,
                 "kb_version": version,
             })
             added.append(hid)
-            if h["likely_cause"] in KNOWN_CAUSE_IDS:
+            # Knowledge about a protective device is guidance for a person,
+            # reviewed as such: it never raises a diagnosis's confidence.
+            if h["likely_cause"] in KNOWN_CAUSE_IDS and not h.get("safety_review"):
                 self._ingest(ValidatedCase(
                     id=hid,
                     case_id="EXPERT",
@@ -587,7 +629,11 @@ class LearningStore:
                     evidence_terms: set[str] | None = None) -> list[ValidatedCase]:
         """Top-k KB entries supporting this case, plus an asset-type bonus."""
         scored: list[tuple[float, ValidatedCase]] = []
+        # Expert knowledge is only as good as the ledger vouching for it.
+        trust_expert = self.verify_ledger()
         for vc in self.validated:
+            if vc.case_id == "EXPERT" and not trust_expert:
+                continue
             sim = self._similarity(fault_signature, vc, evidence_terms)
             if vc.case_id == "EXPERT" and sim <= 0.0:
                 continue  # the expert's condition is not in this case's evidence

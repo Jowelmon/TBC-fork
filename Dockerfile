@@ -14,4 +14,7 @@ COPY frontend/ ./frontend/
 EXPOSE 8000
 
 # Default: run the API + UI (open /ui). Override CMD to run demo.
-CMD ["uvicorn", "frontend.serve:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-proxy-headers: the PIN lockout keys on the client address, so a
+# client must not be able to choose it with X-Forwarded-For. Behind a real
+# proxy, replace with --forwarded-allow-ips=<proxy address>.
+CMD ["uvicorn", "frontend.serve:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

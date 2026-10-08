@@ -68,6 +68,14 @@ def verify_tool_log() -> bool:
     return TOOL_LOG_SEAL["seal"] == compute_hash("seal", {"length": len(TOOL_AUDIT_LOG), "head": head})
 
 
+def review_broken_tool_log() -> None:
+    """Re-sign the tool log as it stands after an auditor's recorded review."""
+    from .audit import resign_chain
+
+    resign_chain(TOOL_AUDIT_LOG, _TOOL_FIELDS)
+    _seal_tool_log()
+
+
 def _log(tool: str, inputs: dict, output: Any) -> None:
     import json
 
@@ -324,7 +332,7 @@ def _create_work_order(action: RecommendationAction, asset_id: str, case_id: str
     go through the state-aware ``create_work_order_for_state`` (the only
     sanctioned public entry point) which enforces the precondition explicitly.
     """
-    wo_id = f"WO-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    wo_id = f"WO-{datetime.now().astimezone().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     _log("_create_work_order",
          {"action_type": action.type, "asset_id": asset_id, "case_id": case_id}, wo_id)
     return wo_id

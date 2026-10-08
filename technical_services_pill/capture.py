@@ -26,7 +26,7 @@ from . import llm
 from .cause_registry import canonicalize_cause_id, cause_asset_type, cause_label
 from .decision_tree import KNOWN_CAUSE_IDS
 from .guardrails import sanitize_metadata
-from .safety import defeats_safety, said_as_prohibition
+from .safety import defeats_safety, said_as_prohibition, touches_protection
 
 MAX_TRANSCRIPT_CHARS = 20_000
 _LIST_FIELDS = ("checks", "do_not", "escalate_when")
@@ -66,6 +66,20 @@ def _paragraph_of(sanitized: str, quote: str) -> str:
     return " ".join(sentences[start:start + 4])
 
 
+def _closest_sentence(symptom: str, quote: str) -> str:
+    """The sentence of the expert's quote that shares most words with a
+    reworded symptom (the first, if none do), so the WHEN text stays in the
+    expert's words without repeating the whole quote."""
+    from .learning import _terms
+
+    sentences = [x.strip() for x in _SENTENCES.split(quote) if x.strip()]
+    if len(sentences) <= 1:
+        return quote
+    wanted = _terms(symptom or "")
+    best = max(sentences, key=lambda x: len(wanted & _terms(x)))
+    return best if not defeats_safety(best) else sentences[0]
+
+
 def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
                   warnings: list[str]) -> list[str]:
     """Keep a check / never / escalate-when line only if the expert said it,
@@ -74,7 +88,8 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
     kept = []
     for line in lines:
         if _norm(line) not in _norm(answer):
-            warnings.append(f"Item {idx}: dropped a {field} line the expert did not say in this answer.")
+            article = "an" if field[0] in "aeiou" else "a"
+            warnings.append(f"Item {idx}: dropped {article} {field} line the expert did not say in this answer.")
         elif field == "never" and not said_as_prohibition(line, answer):
             # Shown under "Never", but the expert did not say it as one:
             # it could be read as an instruction, so screen it like one.
@@ -84,7 +99,8 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
             else:
                 kept.append(line)
         elif field != "never" and defeats_safety(line):
-            warnings.append(f"Item {idx}: dropped a {field} line that would defeat a safety device.")
+            article = "an" if field[0] in "aeiou" else "a"
+            warnings.append(f"Item {idx}: dropped {article} {field} line that would defeat a safety device.")
         else:
             kept.append(line)
     return kept
@@ -132,6 +148,7 @@ def _validate_items(
         if not isinstance(item, dict):
             warnings.append(f"Item {idx} was not a heuristic object and was dropped.")
             continue
+        notes_from = len(warnings)
         quote = str(item.get("evidence_quote", "")).strip()
         if "[REDACTED" in quote or "[REDACTED" in str(item.get("symptom_pattern", "")):
             warnings.append(f"Item {idx} was dropped: it contains text redacted as an injection attempt.")
@@ -172,7 +189,13 @@ def _validate_items(
         symptom = str(item.get("symptom_pattern", "")).strip()
         if (not symptom or len(symptom) > 600 or _norm(symptom) not in _norm(answer)
                 or defeats_safety(symptom)):
-            symptom = quote  # the expert's own words, never a paraphrase
+            # The expert's own words, never a paraphrase: the sentence of the
+            # quote closest to what the draft meant.
+            fallback = _closest_sentence(symptom, quote)
+            if symptom and _norm(symptom) != _norm(fallback):
+                warnings.append(f"Item {idx}: the WHEN text was reworded, so the expert's own sentence "
+                                f"is used: \"{fallback}\"")
+            symptom = fallback
         off_topic = not is_new and not _mentions_cause(f"{quote} {answer}", cause)
         if off_topic:
             warnings.append(
@@ -182,8 +205,23 @@ def _validate_items(
         names = {"checks": "check", "do_not": "never", "escalate_when": "escalate-when"}
         lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings)
                  for f in _LIST_FIELDS}
+        # Deny by default: any line naming a protective device or its
+        # monitoring is held for the approving steward's safety review.
+        safety_review = [t for t in (quote, symptom, *lists["checks"], *lists["escalate_when"])
+                         if touches_protection(t)]
+        safety_review += [t for t in lists["do_not"]
+                          if not said_as_prohibition(t, answer) and touches_protection(t)]
+        safety_review = list(dict.fromkeys(safety_review))
+        if safety_review:
+            warnings.append(
+                f"Item {idx} names a protective device (alarm, trip, cut-out, interlock...). The "
+                "approving steward must confirm a safety review, and it is shown as guidance only: "
+                "it never raises confidence.")
         kept.append({
             "check_cause": check_cause,
+            "safety_review": safety_review,
+            # This item's own warnings, so the review card can show them in place.
+            "notes": warnings[notes_from:],
             "off_topic": off_topic,
             "symptom_pattern": symptom,
             "likely_cause": cause,
