@@ -27,6 +27,8 @@ function humanDetail(detail, status) {
   return detail;
 }
 
+const TEXT_FIELDS = new Set(['rationale', 'reason', 'notes', 'modified_action_detail']);
+
 function apiError(res, body) {
   const e = new Error(humanDetail(body.detail, res.status));
   e.status = res.status;
@@ -70,16 +72,22 @@ const api = {
     return res.json();
   },
 
+  // Free text that records a decision (rationale, reason, notes) goes in a
+  // JSON body, never the URL, so it stays out of history and access logs.
   async post(path, params) {
     const url = new URL(path, window.location.origin);
+    const text = {};
     if (params) {
       for (const [k, v] of Object.entries(params)) {
-        if (v !== undefined && v !== null && v !== '') {
-          url.searchParams.set(k, v);
-        }
+        if (v === undefined || v === null || v === '') continue;
+        if (TEXT_FIELDS.has(k)) text[k] = v; else url.searchParams.set(k, v);
       }
     }
-    const res = await fetch(url, { method: 'POST', credentials: 'same-origin' });
+    const hasText = Object.keys(text).length > 0;
+    const res = await fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      ...(hasText ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(text) } : {}),
+    });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw apiError(res, body);
     return body;

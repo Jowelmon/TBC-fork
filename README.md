@@ -42,7 +42,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (283 tests) |
+| `make test` | pytest suite (314 tests) |
 | `make eval` | 12 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -111,21 +111,23 @@ review, second-steward approval.
   answer as the quote; anything else is dropped. The capturer can untick
   items or correct a cause but cannot add words. Drafts are re-checked on
   the server when submitted.
-- **Safety-screened, deny by default.** `safety.py` works in two layers, at
-  capture and again whenever knowledge is shown:
-  - It drops any line that tells someone to defeat a protective device:
-    bypass, jumper, wire across, tie out, wind up the cut-out, set the
-    overload to max, pull a detection fuse, take a sensor off the BMS, keep
-    resetting a trip. A prohibition ("never bypass the interlock") is kept.
-  - Any other line that names a protective device (alarm, trip, cut-out,
-    interlock, relay, overload, fuse, setpoint, leak detection) is held. The
-    approving steward must tick "safety reviewed", and the knowledge goes
-    live as guidance only, labelled with who reviewed it. It never raises a
-    diagnosis's confidence.
+- **Safety-screened, with a person in the loop.** A word list cannot
+  recognise every workaround, so `safety.py` and the approval step work
+  together, at capture and again whenever knowledge is shown:
+  - **Dropped:** any line that tells someone to defeat a protective device,
+    in textbook or everyday words. Examples: bypass, jumper, wire across,
+    wind up the cut-out, set the overload to max, cable-tie the contactor
+    closed, a magnet on the flow reed, unplug the leak rope, clip the probe
+    to the frame, "so it never cuts in". A prohibition ("never bypass the
+    interlock") is kept.
+  - **Safety-reviewed:** every check is an action on equipment, so approving
+    any expert knowledge needs the steward to tick "safety reviewed".
+    Without the tick it does not go live, and a check that was never
+    reviewed is withheld from display.
+  - **Guidance only:** a line that names a protective device or describes
+    work on one (alarm, trip, contactor, probe, hand mode, lifting a wire)
+    is labelled as such and never raises a diagnosis's confidence.
 
-  Wording the first layer misses is still caught by the second, because
-  the second only needs to recognise the device. Knowledge that names a
-  device but was never safety-reviewed is withheld from display.
 - **Flagged for review.** A quote whose own words rule out its cause, or
   that never names the cause it is filed under, is flagged to the steward.
 - **Filed by pill.** Each heuristic goes to the pill that owns its cause, so
@@ -135,7 +137,8 @@ review, second-steward approval.
   quote, version and approving steward. Expert knowledge raises confidence
   only when the case's trigger or abnormal readings (the decision trees' own
   thresholds) show the signals the expert described. Healthy readings never
-  count, and expert knowledge never overrides the decision tree.
+  count. One heuristic alone can lift the knowledge match only part of the
+  way, and expert knowledge never overrides the decision tree.
 
 Providers (`TBC_LLM_PROVIDER`): `mock` (default) uses offline models, a
 fault-phrase extractor and an evidence-weighting second opinion, labelled as
@@ -160,6 +163,7 @@ failure is reported in plain language, never silently replaced.
 - **Ledgered.** Every proposal, decision, revoke and rollback is written to a
   keyed, hash-chained ledger with actor, reason and the versions it changed.
   While the ledger fails verification:
+  - nothing new is written to it, including reviews of other records
   - knowledge changes are refused (423)
   - expert knowledge is withheld from diagnoses
   - case approvals wait for an auditor's review
@@ -204,7 +208,9 @@ offline, worried when it disagrees). It only reports; it never acts.
     new case.
 
   A reason is required. The review is written to the reviewed chain and to
-  the ledger, with the head hash that had failed.
+  the ledger, with the head hash that had failed. The ledger is reviewed
+  first, and the auditor sees what failed, e.g. "the knowledge base was
+  changed outside the governance flow after entry #12".
 - **Key handling.** The key comes from `TBC_AUDIT_KEY` or a generated
   `~/.tbc/audit.key` (mode 0600). Anyone holding both the database and the
   key can re-sign the chains, so in production the key belongs in a secrets

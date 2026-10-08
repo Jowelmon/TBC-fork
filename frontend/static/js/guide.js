@@ -24,7 +24,7 @@ const STEPS = [
     title: 'Second steward approves, version bumps',
     role: 'steward2', screen: 'governance',
     say: 'A second steward reviews the expert\'s words and approves. Only now does it become live knowledge, versioned and reversible.',
-    notice: 'Approve the proposal with a reason. The chiller answer mentions a trip, so the approver must also tick the safety review: that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 65%, past the 55% recommendation threshold.',
+    notice: 'Approve the proposal with a reason and tick the safety review: every check must be confirmed safe before it goes live. The chiller answer mentions a trip, so that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 60%, past the 55% recommendation threshold.',
   },
   {
     title: 'Captured know-how changes the outcome',

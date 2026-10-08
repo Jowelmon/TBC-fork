@@ -30,6 +30,10 @@ SEED_KB_MINOR = 3
 PILLS = ("CRAH", "Chiller", "UPS", "Pump")
 
 
+class LedgerBrokenError(ValueError):
+    """A write was refused because the knowledge ledger fails verification."""
+
+
 class SelfApprovalError(ValueError):
     """Raised when the approver of a knowledge proposal is its proposer."""
 
@@ -42,6 +46,10 @@ def kb_version_label(version: int) -> str:
     """
     return f"{SEED_KB_MAJOR}.{SEED_KB_MINOR + version}.0"
 
+
+# 【ASSUMPTION】 how far one approved expert heuristic alone can move the
+# similarity behind kb_match (1.0 would let a single interview max it out).
+EXPERT_SIMILARITY_CAP = 0.7
 
 LEDGER_FIELDS = (
     "seq", "at", "actor", "action", "proposal_id", "reason",
@@ -90,9 +98,15 @@ def jaccard(a: str, b: str) -> float:
 
 
 def needs_safety_review(p: dict[str, Any]) -> list[str]:
-    """Lines of a proposal's heuristics that name a protective device and so
-    need the approver's explicit safety review (see ``safety.py``)."""
-    return [line for h in p.get("heuristics") or [] for line in h.get("safety_review") or []]
+    """Lines of a proposal's heuristics the approver must explicitly
+    safety-review: every check (an action someone will take on equipment,
+    however it is worded) and every line naming a protective device (see
+    ``safety.py``). A word list cannot recognise every workaround, so no
+    action reaches the AOM without a person confirming it."""
+    lines: list[str] = []
+    for h in p.get("heuristics") or []:
+        lines += [*(h.get("checks") or []), *(h.get("safety_review") or [])]
+    return list(dict.fromkeys(lines))
 
 
 def proposal_pills(p: dict[str, Any]) -> list[str]:
@@ -163,9 +177,19 @@ class LearningStore:
     # ------------------------------------------------------------------ #
     # Governance ledger
     # ------------------------------------------------------------------ #
+    def _require_verified(self) -> None:
+        """Called before any change that the ledger will record. Each entry
+        carries a digest of the knowledge base as it then is, so writing to a
+        ledger that already fails verification would silently vouch for
+        whatever broke it. Only the auditor's ledger review may proceed."""
+        if self.ledger and not self.verify_ledger():
+            raise LedgerBrokenError("the knowledge ledger failed verification; an auditor must "
+                                    "review it before anything else is recorded")
+
     def _log(self, *, actor: str, action: str, proposal_id: str | None = None, reason: str = "",
              versions_before: dict[str, int] | None = None) -> dict[str, Any]:
         from .audit import GENESIS_HASH, compute_hash
+
 
         after = dict(self._kb_version)
         entry: dict[str, Any] = {
@@ -244,15 +268,38 @@ class LearningStore:
         if self.verify_ledger():
             raise ValueError("the knowledge ledger verifies; there is nothing to review")
         old_head = self.ledger[-1]["hash"] if self.ledger else ""
+        problem = self.ledger_problem()
         resign_chain(self.ledger, LEDGER_FIELDS)
         self.rebuild_stats()
         return self._log(actor=actor, action="integrity_review",
-                         reason=f"knowledge ledger accepted after review (failed head {old_head[:12]}); "
-                                f"{reason}")
+                         reason=f"knowledge ledger accepted after review ({problem}; failed head "
+                                f"{old_head[:12]}): {reason}")
+
+    def ledger_problem(self) -> str | None:
+        """What failed, in words an auditor can investigate, or None."""
+        from .audit import GENESIS_HASH, compute_hash
+
+        prev = GENESIS_HASH
+        for e in self.ledger:
+            if e.get("prev_hash") != prev or e.get("hash") != compute_hash(
+                    prev, {f: e.get(f) for f in LEDGER_FIELDS}):
+                return f"ledger entry #{e.get('seq')} ({e.get('action')} by {e.get('actor')}) was altered"
+            prev = e["hash"]
+        if not self.ledger:
+            return "the ledger is empty"
+        if self._cause_stats != self._derived_stats():
+            return "cause statistics no longer match the validated cases"
+        if self.ledger[-1]["kb_digest"] != self._kb_digest():
+            return ("the knowledge base (cases, expert heuristics, proposals or versions) was changed "
+                    f"outside the governance flow after entry #{self.ledger[-1]['seq']}")
+        if self.ledger_seal != compute_hash("seal", {"length": len(self.ledger), "head": prev}):
+            return "the ledger was truncated (its seal does not match)"
+        return None
 
     def record_integrity_review(self, *, actor: str, reason: str) -> dict[str, Any]:
         """Record an auditor's review of another chain (a case, the case
         registry, the tool log) in the governance ledger."""
+        self._require_verified()
         return self._log(actor=actor, action="integrity_review", reason=reason)
 
     def withdrawn_reason(self, pill: str | None, kb_version_used: int | None,
@@ -349,6 +396,7 @@ class LearningStore:
 
     def record_feedback(self, fb: FeedbackRecord, *, confidence: float, action_taken: str = "") -> dict:
         """A pending proposal from outcome feedback; nothing is live yet."""
+        self._require_verified()
         p = self._new_proposal(
             kind="outcome_feedback", feedback_id=fb.feedback_id, case_id=fb.case_id,
             asset_id=fb.asset_id, asset_type=fb.asset_type, confirmed_cause=fb.confirmed_cause,
@@ -369,6 +417,7 @@ class LearningStore:
     ) -> dict[str, Any]:
         """Queue how an expert resolved an escalation as a knowledge proposal:
         the cases the pill could not solve are where the know-how is."""
+        self._require_verified()
         p = self._new_proposal(
             kind="escalation_resolution", feedback_id=f"ESC-{uuid.uuid4().hex[:8].upper()}",
             case_id=case_id, asset_id=asset_id, asset_type=asset_type,
@@ -384,6 +433,7 @@ class LearningStore:
     def record_expert_capture(self, *, draft: dict[str, Any], submitted_by: str, expert_name: str,
                               expert_role: str, asset_type: str, expert_consent: bool) -> dict[str, Any]:
         """Queue drafted expert knowledge; a different steward must approve."""
+        self._require_verified()
         p = self._new_proposal(
             kind="expert_capture", feedback_id=None, case_id=None, asset_id=None,
             asset_type=asset_type,
@@ -421,17 +471,18 @@ class LearningStore:
     def approve_proposal(self, proposal_id: str, *, decided_by: str, rationale: str,
                          safety_reviewed: bool = False) -> dict[str, Any]:
         """Approve a pending proposal: its knowledge goes live and each pill
-        it files knowledge under moves to a new version. Knowledge that names
-        a protective device needs the approver's explicit safety review."""
+        it files knowledge under moves to a new version. Expert knowledge
+        needs the approver's explicit safety review (``needs_safety_review``)."""
+        self._require_verified()
         if not rationale.strip():
             raise ValueError("approving knowledge needs a rationale")
         p = self._pending(proposal_id, decided_by, "approve")
         held = needs_safety_review(p)
         if held and not safety_reviewed:
             raise ValueError(
-                f"approving knowledge that names a protective device needs a safety review: "
-                f"{len(held)} line(s) mention an alarm, trip, cut-out, interlock or similar; "
-                "confirm you reviewed them (safety_reviewed=true)")
+                f"approving expert knowledge needs a safety review: confirm that none of its "
+                f"{len(held)} check(s) or protective-device line(s) tells anyone to defeat, bypass "
+                "or weaken a protection (safety_reviewed=true)")
         before = dict(self._kb_version)
         if held:
             p["safety_reviewed_by"] = decided_by
@@ -494,7 +545,7 @@ class LearningStore:
                 "asset_type": pill,
                 "proposal_id": p["proposal_id"],
                 "approved_by": p["decided_by"],
-                "safety_reviewed_by": p.get("safety_reviewed_by") if h.get("safety_review") else None,
+                "safety_reviewed_by": p.get("safety_reviewed_by"),
                 "kb_version": version,
             })
             added.append(hid)
@@ -529,6 +580,7 @@ class LearningStore:
     def reject_proposal(self, proposal_id: str, *, decided_by: str, reason: str) -> dict[str, Any]:
         """Reject a pending proposal. A reason is required, and the proposer
         cannot reject their own proposal any more than approve it."""
+        self._require_verified()
         if not reason.strip():
             raise ValueError("rejecting knowledge needs a reason")
         p = self._pending(proposal_id, decided_by, "reject")
@@ -544,6 +596,7 @@ class LearningStore:
         """Withdraw one approved proposal's knowledge, leaving everything
         else. Each affected pill moves to a new version; the revocation is
         permanent (a later rollback does not bring it back)."""
+        self._require_verified()
         if not reason.strip():
             raise ValueError("a revocation needs a reason")
         p = self.find_proposal(proposal_id)
@@ -577,6 +630,7 @@ class LearningStore:
         its later versions rolled back; other pills are untouched. Version
         numbers are not reused, so no label ever names two states.
         """
+        self._require_verified()
         if not reason.strip():
             raise ValueError("a rollback needs a reason")
         if pill not in PILLS:
@@ -621,8 +675,11 @@ class LearningStore:
         described appear in this case's evidence (three or more is full
         support); none means the heuristic does not apply to this case."""
         if vc.case_id == "EXPERT":
+            # One interview is one person's word, not an observed outcome: on
+            # its own it can lift kb_match only part of the way (validated
+            # outcomes on the same cause carry it further).
             matched = corroborating_terms(vc.fault_signature, evidence_terms)
-            return min(1.0, len(matched) / 3)
+            return EXPERT_SIMILARITY_CAP * min(1.0, len(matched) / 3)
         return jaccard(fault_signature, vc.fault_signature)
 
     def get_similar(self, fault_signature: str, asset_type: str | None = None, k: int = 3,

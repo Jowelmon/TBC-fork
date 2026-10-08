@@ -47,6 +47,69 @@ THRESHOLDS: dict[str, Any] = {
 }
 
 
+# Plain-English names for evidence fields: the one source for every label on
+# screen (the case snapshot sends them with each evidence item) and in the
+# AI second opinion's evidence lines.
+FIELD_LABELS = {
+    "soh_pct": "State of health (%)",
+    "age_months": "Age (months)",
+    "battery_temp_c": "Battery temp (°C)",
+    "temp_c": "Temp (°C)",
+    "charge_pct": "Refrigerant charge (%)",
+    "approach_temp": "Approach temp (°C)",
+    "axial_mm_s": "Axial vibration (mm/s)",
+    "npsh_margin": "NPSH margin",
+    "load_pct": "Load (%)",
+    "flow_pct": "Flow (%)",
+    "float_voltage": "Float voltage (V)",
+    "battery_voltage": "Battery voltage (V)",
+    "past_eol": "Past end of life",
+    "is_past_calibration": "Past calibration date",
+    "calibration_overdue": "Calibration overdue",
+    "calibration_interval_days": "Calibration interval (days)",
+    "last_calibrated_at": "Last calibrated",
+    "npsh_margin_m": "NPSH margin",
+    "scada_link": "SCADA link",
+    "scada_link_healthy": "SCADA link healthy",
+    "bus_id": "Bus",
+    "bus_alive": "Bus alive",
+    "bus_reachable": "Bus reachable",
+    "controller_id": "Controller",
+    "tags_alive": "Tags reporting",
+    "tags_dead": "Tags silent",
+    "other_tags_reporting": "Other tags on the bus reporting",
+    "tag_remap": "Tag renamed or remapped",
+    "ts": "Time",
+    "last_good_ts": "Last good reading at",
+    "last_good_value": "Last good value",
+    "soh": "State of health",
+    "soft_foot_detected": "Soft foot detected",
+    "dominant_order": "Dominant vibration order",
+    "directional_dominant": "Directional vibration dominant",
+    "bearing_freq_present": "Bearing defect frequency present",
+    "rpm": "Speed (rpm)",
+    "oil_level": "Oil level",
+    "superheat": "Superheat (K)",
+    "subcooling": "Subcooling (K)",
+    "winding_resistance": "Winding resistance (MΩ)",
+    "motor_overcurrent": "Motor overcurrent",
+    "fouling_factor": "Fouling factor",
+    "cooling_capacity_kw": "Cooling capacity (kW)",
+    "design_supply_temp_c": "Design supply temp (°C)",
+    "design_return_temp_c": "Design return temp (°C)",
+    "charge_current": "Charge current (A)",
+    "on_battery": "Running on battery",
+    "ups_id": "UPS",
+    "parent_system_id": "Parent system",
+    "site_id": "Site",
+    "commissioned_at": "Commissioned",
+}
+
+
+def field_label(key: str) -> str:
+    return FIELD_LABELS.get(key) or key.replace("_", " ").capitalize()
+
+
 def abnormal_fields(payload: Any) -> list[str]:
     """Names of the fields in one evidence payload that signal a fault."""
     if not isinstance(payload, dict):

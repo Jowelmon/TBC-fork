@@ -19,8 +19,10 @@ RBAC capabilities are mapped per role in ``rbac.DEMO_USERS``.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -40,6 +42,7 @@ from .auth import (
     resolve_user,
     unlocked_users,
 )
+from .learning import LedgerBrokenError
 from .models import (
     AgentStateName,
     HumanDecision,
@@ -82,6 +85,60 @@ app = FastAPI(
     version="1.0.0",
     lifespan=_lifespan,
 )
+
+
+class _DecisionTextFromBody:
+    """Free text that records a decision (rationales, reasons, resolutions,
+    outcome notes) travels in a JSON body, not the URL, so it never lands in
+    browser history or access logs. For the decision endpoints only, a JSON
+    object body's scalar fields are handed to the route as its parameters;
+    query parameters still work for scripts and tests."""
+
+    _PATHS = re.compile(
+        r"^/(?:cases/[^/]+/(?:approval|outcome|escalation/close|escalation/evidence)|"
+        r"kb/proposals/[^/]+/(?:approve|reject|revoke)|kb/rollback/\d+|audit/review)$")
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if (scope["type"] != "http" or scope["method"] != "POST"
+                or not self._PATHS.match(scope["path"])
+                or b"application/json" not in dict(scope["headers"]).get(b"content-type", b"")):
+            return await self.inner(scope, receive, send)
+        body, more = b"", True
+        while more:
+            message = await receive()
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+        try:
+            fields = json.loads(body or b"{}")
+        except ValueError:
+            fields = None
+        if isinstance(fields, dict):
+            from urllib.parse import parse_qsl, urlencode
+
+            query = dict(parse_qsl(scope["query_string"].decode(), keep_blank_values=True))
+            query.update({k: ("true" if v is True else "" if v in (False, None) else str(v))
+                          for k, v in fields.items() if not isinstance(v, (dict, list))})
+            scope = {**scope, "query_string": urlencode(query).encode()}
+
+        async def replay():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return await self.inner(scope, replay, send)
+
+
+app.add_middleware(_DecisionTextFromBody)
+
+
+@app.exception_handler(LedgerBrokenError)
+async def _ledger_broken(request: Request, exc: LedgerBrokenError):
+    """Any write that would append to a ledger failing verification is
+    refused, wherever it comes from (the routes also check up front)."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=423, content={"detail": str(exc)})
 
 
 @app.middleware("http")
@@ -562,11 +619,13 @@ def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     snap = STORE.snapshot(case_id)
     if snap is None:
         raise HTTPException(404, "case not found")
-    from .evidence_flags import abnormal_fields
+    from .evidence_flags import abnormal_fields, field_label
 
     snap["asset_type"] = _asset_type(snap["asset_id"])
     for ev in snap["evidence"]:
         ev["abnormal"] = abnormal_fields(ev.get("payload"))
+        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+        ev["labels"] = {k: field_label(k) for k in payload}
     state = STORE.get(case_id)
     snap["knowledge_withdrawn"] = (
         _knowledge_withdrawn(state) if state.current_state == AgentStateName.AWAITING_APPROVAL else None)
@@ -1158,8 +1217,9 @@ def _expert_matches(state: AgentState) -> dict:
                 "until an auditor reviews it" if not ledger_ok
                 else "contains an instruction that would defeat a safety device (G1)"
                 if any(defeats_safety(t) for t in lines)
-                else "names a protective device but was not safety-reviewed when approved"
-                if any(touches_protection(t) for t in lines) and not item.get("safety_reviewed_by")
+                else "was not safety-reviewed when approved"
+                if (item.get("checks") or any(touches_protection(t) for t in lines))
+                and not item.get("safety_reviewed_by")
                 else None)
             if reason:
                 withheld.append({"knowledge_id": item["id"], "expert_name": item["expert_name"],
@@ -1180,7 +1240,10 @@ def _expert_matches(state: AgentState) -> dict:
                 "kb_version_label": f"{item['asset_type']} v{kb_version_label(item['kb_version'])}",
                 "approved_by": item["approved_by"],
                 "safety_reviewed_by": item.get("safety_reviewed_by"),
-                "guidance_only": bool(item.get("safety_reviewed_by")),
+                # Lines about protective devices or work on equipment are for a
+                # person to weigh; they never raise confidence (learning.py).
+                "guidance_only": bool(item.get("safety_review")
+                                      or any(touches_protection(t) for t in lines)),
                 "matched_terms": corroborating_terms(item["symptom_pattern"], terms),
             })
     return {
@@ -1473,7 +1536,9 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     ledger_ok = _LSTORE.verify_ledger()
     registry_ok = STORE.verify_registry()
     tool_log_ok = verify_tool_log()
-    return {"broken_cases": broken, "ledger_valid": ledger_ok, "registry_valid": registry_ok,
+    return {"broken_cases": broken, "ledger_valid": ledger_ok,
+            "ledger_problem": None if ledger_ok else _LSTORE.ledger_problem(),
+            "registry_valid": registry_ok,
             "tool_log_valid": tool_log_ok,
             "ok": not broken and ledger_ok and registry_ok and tool_log_ok}
 
@@ -1502,6 +1567,11 @@ def post_audit_review(target: str, decision: str, reason: str = "",
     if decision == "quarantine" and not target.startswith("case:"):
         raise HTTPException(400, "only a case can be quarantined")
     verdict = "accepted" if decision == "accept" else "quarantined"
+    # The ledger first: every review is recorded in it, and recording one in
+    # a ledger that fails verification would re-sign whatever broke it.
+    if target != "ledger" and not _LSTORE.verify_ledger():
+        raise HTTPException(409, "review the knowledge ledger first: every integrity review is "
+                                 "recorded in it, so it must verify before anything else is accepted")
     try:
         if target.startswith("case:"):
             cid = target[len("case:"):]

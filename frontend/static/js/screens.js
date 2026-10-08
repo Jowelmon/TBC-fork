@@ -1,6 +1,6 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
-import { api } from './api.js?v=8';
+import { api } from './api.js?v=9';
 import { cloudSvg } from './cloud.js?v=5';
 
 // Async loaders can resolve after the user has navigated away; never crash.
@@ -57,6 +57,9 @@ function causeOptions(causes, selected = '') {
 }
 
 const plain = v => String(v || '').replace(/_/g, ' ');
+// Model-written prose can carry internal ids ("temperature_measurement_missing");
+// show those words, not the identifier.
+const prose = v => String(v || '').replace(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g, m => m.replace(/_/g, ' '));
 // "kb:technical_services:pump_tree:v1:Q2" -> "Pump tree v1, Q2"; the full
 // reference stays in the tooltip.
 const kbRef = r => {
@@ -86,7 +89,7 @@ function decisionFacts(s, esc, confBand) {
   const abnormal = [`Trigger: ${plain(obs.type)} (reading ${obs.reading_status || 'unknown'})`];
   (s.evidence || []).forEach(ev => {
     (ev.abnormal || []).forEach(k => {
-      abnormal.push(`${_humaniseKey(k)}: ${_formatValue(k, ev.payload[k], true)}`);
+      abnormal.push(`${_humaniseKey(k, ev.labels)}: ${_formatValue(k, ev.payload[k], true)}`);
     });
   });
   const hyp = s.ai_hypothesis;
@@ -103,7 +106,7 @@ function decisionFacts(s, esc, confBand) {
 
 function corroboration(m, esc) {
   if (m.guidance_only) {
-    return `<div class="muted" style="margin:4px 0"><span class="badge badge-yellow">Names a protective device</span> Safety-reviewed by ${esc(m.safety_reviewed_by)}. Guidance for a person only: it never raises confidence.</div>`;
+    return `<div class="muted" style="margin:4px 0"><span class="badge badge-yellow">Protective device or work on equipment</span> Safety-reviewed by ${esc(m.safety_reviewed_by)}. Guidance for a person only: it never raises confidence.</div>`;
   }
   return m.matched_terms && m.matched_terms.length
     ? `<div class="muted" style="margin:4px 0"><span class="badge badge-green">Seen in this case's abnormal readings</span> ${m.matched_terms.map(t => `<code>${esc(t)}</code>`).join(' ')}</div>`
@@ -112,6 +115,9 @@ function corroboration(m, esc) {
 
 // Approved expert know-how for this cause, shown where the decision is made.
 function expertChecks(ek, esc) {
+  if ((!ek.matches || !ek.matches.length) && (ek.withheld || []).length) {
+    return `<div class="banner banner-warn mt-16"><p>${ek.withheld.length} approved expert heuristic(s) for this cause are withheld: ${esc(ek.withheld[0].reason)}.</p></div>`;
+  }
   if (!ek.matches || !ek.matches.length) {
     return `<p class="muted" style="margin-top:8px">No approved expert knowledge matches this cause yet.</p>`;
   }
@@ -120,7 +126,7 @@ function expertChecks(ek, esc) {
     ${ek.matches.map(m => `<article class="expert-match">
       <div><strong>${esc(m.expert_name)}</strong> <span class="muted">— ${esc(m.expert_role)} · ${esc(m.kb_version_label)} · approved by ${esc(m.approved_by)}</span></div>
       ${corroboration(m, esc)}
-      ${list('Check before acting', m.checks)}${list('Never', m.do_not)}${list('Escalate when', m.escalate_when)}
+      ${list(`Checks (safety-reviewed by ${esc(m.safety_reviewed_by || m.approved_by)})`, m.checks)}${list('Never', m.do_not)}${list('Escalate when', m.escalate_when)}
       <blockquote class="expert-quote">“${esc(m.evidence_quote)}”</blockquote>
     </article>`).join('')}</div>`;
 }
@@ -152,29 +158,12 @@ let _evidenceRawMode = false;
 // The timeline opens on abnormal readings only; "show all" lists every item.
 let _evidenceShowAll = false;
 
-const FIELD_LABELS = {
-  soh_pct: 'State of health (%)', age_months: 'Age (months)', battery_temp_c: 'Battery temp (°C)',
-  temp_c: 'Temp (°C)', charge_pct: 'Refrigerant charge (%)', approach_temp: 'Approach temp (°C)',
-  axial_mm_s: 'Axial vibration (mm/s)', npsh_margin: 'NPSH margin', load_pct: 'Load (%)',
-  flow_pct: 'Flow (%)', float_voltage: 'Float voltage (V)', battery_voltage: 'Battery voltage (V)',
-  past_eol: 'Past end of life', is_past_calibration: 'Past calibration date', calibration_overdue: 'Calibration overdue',
-  calibration_interval_days: 'Calibration interval (days)', last_calibrated_at: 'Last calibrated',
-  npsh_margin_m: 'NPSH margin', scada_link: 'SCADA link', scada_link_healthy: 'SCADA link healthy',
-  bus_id: 'Bus', bus_alive: 'Bus alive', bus_reachable: 'Bus reachable', controller_id: 'Controller',
-  tags_alive: 'Tags reporting', tags_dead: 'Tags silent', other_tags_reporting: 'Other tags on the bus reporting',
-  tag_remap: 'Tag renamed or remapped', ts: 'Time', last_good_ts: 'Last good reading at',
-  last_good_value: 'Last good value', soh: 'State of health', soft_foot_detected: 'Soft foot detected',
-  dominant_order: 'Dominant vibration order', directional_dominant: 'Directional vibration dominant',
-  bearing_freq_present: 'Bearing defect frequency present', rpm: 'Speed (rpm)', oil_level: 'Oil level',
-  superheat: 'Superheat (K)', subcooling: 'Subcooling (K)', winding_resistance: 'Winding resistance (MΩ)',
-  motor_overcurrent: 'Motor overcurrent', fouling_factor: 'Fouling factor', cooling_capacity_kw: 'Cooling capacity (kW)',
-  design_supply_temp_c: 'Design supply temp (°C)', design_return_temp_c: 'Design return temp (°C)',
-  charge_current: 'Charge current (A)', on_battery: 'Running on battery', ups_id: 'UPS',
-  parent_system_id: 'Parent system', site_id: 'Site', commissioned_at: 'Commissioned',
-};
 
-function _humaniseKey(key) {
-  if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+
+// Field names come from the server (evidence_flags.FIELD_LABELS, sent with
+// each evidence item as ``labels``); this only covers anything it lacks.
+function _humaniseKey(key, labels = {}) {
+  if (labels[key]) return labels[key];
   const t = key.replace(/_/g, ' ');
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
@@ -188,13 +177,13 @@ function _formatValue(key, val, abnormal) {
   return String(val);
 }
 
-function renderEvidencePlain(payload, abnormalKeys = []) {
+function renderEvidencePlain(payload, abnormalKeys = [], labels = {}) {
   if (!payload || typeof payload !== 'object') {
     return '<span class="muted">—</span>';
   }
   const entries = Object.entries(payload);
   return `<div class="evidence-plain">` + entries.map(([key, val]) => {
-    const label = _humaniseKey(key);
+    const label = _humaniseKey(key, labels);
     const abnormal = abnormalKeys.includes(key);
     const displayVal = _formatValue(key, val, abnormal);
     const cls = abnormal ? 'evidence-abnormal' : 'evidence-normal';
@@ -228,7 +217,7 @@ export function renderDashboard(el, state, h) {
       <div class="card-body">
         <p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
         <p><strong>Stage 2 -- Production on Tencent Cloud:</strong> containerised deploy (the repo's own Dockerfile), SQLite swapped for a managed database, secrets moved to Tencent Cloud's secret manager, real CMMS work-order integration.</p>
-        <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, a real steward roster in place of the fixed two-steward registry demo.</p>
+        <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, the steward roster set per site (it is already configurable with TBC_PILL_OWNERS).</p>
         <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>
       </div>
     </details>
@@ -459,12 +448,16 @@ export function renderDiagnosis(el, state, h) {
           ? 'the knowledge ledger failed verification: approval waits for an auditor review on Governance.'
           : s.knowledge_withdrawn
           ? 'knowledge this diagnosis used was withdrawn: re-score it on AOM Decision before anyone approves it.'
-          : 'move to AOM Decision to approve, reject or modify it.',
+          : api.can('approve_reject_modify')
+          ? 'move to AOM Decision to approve, reject or modify it.'
+          : 'an Asset Operations Manager reviews it on AOM Decision; you can follow it there.',
         EXECUTING: 'approved: raise the work order on the Outcome screen.',
         MONITORING_OUTCOME: 'record the outcome once work is complete, on the Outcome screen.',
         RECORDING_OUTCOME: 'outcome recording is in progress.',
         FEEDBACK_QUEUED: 'feedback is queued for a knowledge steward to review.',
-        ESCALATED: 'move to AOM Decision to see why, and to resolve it.',
+        ESCALATED: api.can('approve_reject_modify')
+          ? 'move to AOM Decision to see why, and to resolve it.'
+          : 'escalated to a person: an Asset Operations Manager resolves it on AOM Decision.',
         CLOSED: 'this case is closed; nothing further is needed.',
       }[s.current_state] || 'check back as the case progresses.';
 
@@ -492,7 +485,7 @@ export function renderDiagnosis(el, state, h) {
       const evsAll = s.evidence || [];
       const abnormalReadings = evsAll.flatMap(ev => (ev.abnormal || [])
         .filter(k => ev.payload && k in ev.payload)
-        .map(k => `${_humaniseKey(k)}: ${_formatValue(k, ev.payload[k], true)}`));
+        .map(k => `${_humaniseKey(k, ev.labels)}: ${_formatValue(k, ev.payload[k], true)}`));
       if (s.diagnosis) {
         const hypS = s.ai_hypothesis;
         const aiLine = !hypS ? 'not run'
@@ -562,7 +555,7 @@ export function renderDiagnosis(el, state, h) {
           const payload = JSON.stringify(ev.payload, null, 2);
           const payloadHtml = _evidenceRawMode
             ? `<pre class="evidence-payload">${esc(payload)}</pre>`
-            : renderEvidencePlain(ev.payload, ev.abnormal || []);
+            : renderEvidencePlain(ev.payload, ev.abnormal || [], ev.labels || {});
           return `<div class="evidence-item">
             <div class="evidence-dot dot-${src}"></div>
             <div style="flex:1;min-width:0">
@@ -621,11 +614,11 @@ export function renderDiagnosis(el, state, h) {
               : '<span class="badge badge-grey">No independent opinion</span>') : ''}
           </div>
           ${hyp.hypothesis ? `<div style="margin-bottom:8px"><span class="muted">AI hypothesis:</span> <strong>${esc(causeLabel(hyp.hypothesis))}</strong></div>` : ''}
-          <p class="muted" style="margin-bottom:8px">${esc(hyp.summary || '')}</p>
-          ${hyp.supporting_evidence && hyp.supporting_evidence.length ? `<div><strong>Supporting:</strong><ul class="expert-list">${hyp.supporting_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
-          ${hyp.conflicting_evidence && hyp.conflicting_evidence.length ? `<div><strong>Conflicting:</strong><ul class="expert-list">${hyp.conflicting_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
-          ${hyp.missing_evidence && hyp.missing_evidence.length ? `<div><strong>Would help:</strong><ul class="expert-list">${hyp.missing_evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>` : ''}
-          ${hyp.recommended_next_check ? `<div class="muted" style="margin-top:8px"><strong>Suggested next check:</strong> ${esc(hyp.recommended_next_check)}</div>` : ''}
+          <p class="muted" style="margin-bottom:8px">${esc(prose(hyp.summary || ''))}</p>
+          ${hyp.supporting_evidence && hyp.supporting_evidence.length ? `<div><strong>Supporting:</strong><ul class="expert-list">${hyp.supporting_evidence.map(e => `<li>${esc(prose(e))}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.conflicting_evidence && hyp.conflicting_evidence.length ? `<div><strong>Conflicting:</strong><ul class="expert-list">${hyp.conflicting_evidence.map(e => `<li>${esc(prose(e))}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.missing_evidence && hyp.missing_evidence.length ? `<div><strong>Would help:</strong><ul class="expert-list">${hyp.missing_evidence.map(e => `<li>${esc(prose(e))}</li>`).join('')}</ul></div>` : ''}
+          ${hyp.recommended_next_check ? `<div class="muted" style="margin-top:8px"><strong>Suggested next check:</strong> ${esc(prose(hyp.recommended_next_check))}</div>` : ''}
           <div class="muted" style="margin-top:10px">The AOM decides. This card never approves, executes or changes the case.</div>
         `;
       }
@@ -1405,7 +1398,7 @@ export function renderGovernance(el, state, h) {
       const st = await api.get('/audit/status');
       const items = [
         ...st.broken_cases.map(cid => ({ target: `case:${cid}`, label: `Case ${cid}: its audit chain failed verification; the case is frozen.`, quarantine: true })),
-        ...(st.ledger_valid ? [] : [{ target: 'ledger', label: 'Knowledge ledger: failed verification. Knowledge changes are frozen and expert knowledge is withheld from diagnoses.' }]),
+        ...(st.ledger_valid ? [] : [{ target: 'ledger', label: `Knowledge ledger: ${st.ledger_problem || 'failed verification'}. Knowledge changes are frozen and expert knowledge is withheld from diagnoses. Review this first: every other review is recorded in the ledger.` }]),
         ...(st.registry_valid ? [] : [{ target: 'registry', label: 'Case registry: a case was added or removed outside the app.' }]),
         ...(st.tool_log_valid ? [] : [{ target: 'tool_log', label: 'Tool log: entries were changed or removed.' }]),
       ];
@@ -1476,7 +1469,7 @@ export function renderGovernance(el, state, h) {
           ${x.source === 'manual' ? '<span class="badge badge-yellow">entered by hand</span>' : ''}
           ${x.check_cause ? '<div class="kh-new">The expert\'s own words may rule this cause out.</div>' : ''}
           ${x.off_topic ? '<div class="kh-new">The expert\'s answer never names this cause or its usual signs.</div>' : ''}
-          ${(x.safety_review || []).length ? `<div class="banner banner-warn q-safety"><p><strong>Safety review needed:</strong> these lines name a protective device. Approve only if none of them tells anyone to defeat, bypass or weaken a protection. Once live, this heuristic is guidance only and never raises confidence.</p><ul>${x.safety_review.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : ''}
+          ${(x.safety_review || []).length ? `<div class="banner banner-warn q-safety"><p><strong>Protective device or work on equipment:</strong> approve only if none of these lines tells anyone to defeat, bypass or weaken a protection. Once live, this heuristic is guidance only and never raises confidence.</p><ul>${x.safety_review.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : ''}
           <div class="q-field"><span class="q-field-lbl">When</span> ${esc(whenText(x.symptom_pattern))}</div>
           ${lines('Check', x.checks)}${lines('Never', x.do_not)}${lines('Escalate when', x.escalate_when)}
           <div class="q-quote">"${esc(x.evidence_quote)}"</div></li>`;
@@ -1501,7 +1494,9 @@ export function renderGovernance(el, state, h) {
         const why = notSteward ? 'Only a knowledge steward decides on knowledge.'
           : own ? 'You sent this. A different steward must decide.'
           : `${esc(p.asset_type)} knowledge is owned by ${esc(p.owner_steward)}; they decide.`;
-        const held = (p.heuristics || []).flatMap(h => h.safety_review || []);
+        // Every check, and every line about a protective device, needs the
+        // approver's explicit safety review (learning.needs_safety_review).
+        const held = [...new Set((p.heuristics || []).flatMap(h => [...(h.checks || []), ...(h.safety_review || [])]))];
         const pid = esc(p.proposal_id);
         return `<div class="card q-card" style="margin-bottom:8px">
           <div class="q-body">${describe(p)}</div>
@@ -1512,7 +1507,7 @@ export function renderGovernance(el, state, h) {
             <div class="q-reject" id="ap-${pid}" hidden>
               <label for="ap-reason-${pid}">Why is this sound? (recorded in the ledger)</label>
               <input id="ap-reason-${pid}" type="text" placeholder="e.g. Checked each line against the interview">
-              ${held.length ? `<label class="hazard-ack"><input type="checkbox" id="ap-safety-${pid}"> I reviewed the ${held.length} line(s) about protective devices: none tells anyone to defeat, bypass or weaken a protection.</label>` : ''}
+              ${held.length ? `<label class="hazard-ack"><input type="checkbox" id="ap-safety-${pid}"> Safety review: I read all ${held.length} check(s) and line(s) about protective devices above. None tells anyone to defeat, bypass or weaken a protection.</label>` : ''}
               <div class="flex gap-8"><button class="btn btn-green btn-sm" id="ap-go-${pid}">Confirm approval</button><button class="btn btn-secondary btn-sm" id="ap-cancel-${pid}">Cancel</button></div>
             </div>
             <div class="q-reject" id="rj-${pid}" hidden>
@@ -1822,7 +1817,7 @@ export function renderCapture(el, state, h) {
         ${x.check_cause ? '<div class="kh-new">Check the cause: the expert\'s own words may rule it out. Correct it below or untick this item.</div>' : ''}
         ${x.off_topic ? '<div class="kh-new">Nothing in the expert\'s answer names this cause or its usual signs. Check it is filed under the right cause.</div>' : ''}
         ${editable && !x.new_cause ? `<div class="form-group kh-cause"><label for="kh-cause-${i}">Cause (correct it if the AI got it wrong)</label><select id="kh-cause-${i}" class="kh-cause-sel" data-i="${i}">${causeOptions(causes, x.likely_cause)}</select></div>` : ''}
-        ${(x.safety_review || []).length ? '<div class="kh-new">Names a protective device: the approving steward must confirm a safety review, and once live it is guidance only (it never raises confidence).</div>' : ''}
+        ${(x.safety_review || []).length ? '<div class="kh-new">Names a protective device or work on equipment: once live it is guidance only (it never raises confidence).</div>' : ''}
         ${(x.notes || []).filter(n => !/names a protective device|pill, so it will be filed/.test(n)).map(n => `<div class="kh-note">${esc(n.replace(/^Item \d+:?\s*/, ''))}</div>`).join('')}
         <div class="kh-row"><span class="kh-label">When</span>${esc(whenText(x.symptom_pattern))}</div>
         ${fieldList('Checks', (x.checks || []).filter(c => c !== x.symptom_pattern))}${fieldList('Never', x.do_not)}${fieldList('Escalate when', x.escalate_when)}
@@ -1861,7 +1856,7 @@ export function renderCapture(el, state, h) {
       <label class="hazard-ack"><input type="checkbox" id="cap-consent"> ${esc($('cap-name').value.trim() || 'The expert')} agreed to their words being recorded and reused as knowledge.</label>
       <div class="cap-submit">
         <button class="btn btn-primary" id="cap-submit">Send ${draft.heuristics.length} for steward approval</button>
-        <span class="muted" id="cap-submit-note">A different knowledge steward must approve before it goes live.</span>
+        <span class="muted" id="cap-submit-note">A different knowledge steward must approve, and safety-review every check, before it goes live.</span>
       </div>`;
     if (draft.provider === 'manual') wireManualForm(causes);
     const btn = $('cap-submit');

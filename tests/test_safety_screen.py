@@ -35,10 +35,24 @@ DEFEATS = [
     "Turn the alarm off at the panel.",
     "Max out the overload.",
     "Reset it over and over until it stays in.",
+    # Everyday workarounds that name no device in the textbook way (round 10).
+    "I cable-tie the contactor closed so the fans keep running.",
+    "Put a magnet on the flow sensor reed and it'll stay happy.",
+    "Unplug the leak rope under the floor tile when it keeps going off.",
+    "Run it in hand mode so the controller can't stop the fans.",
+    "Clip the battery temperature probe to the frame so it reads cooler.",
+    "Pull the buzzer lead, it drives the night shift mad.",
+    "Turn the thermostat knob fully so it never cuts in.",
+    "Leave it on so it never trips again.",
 ]
 
 # Ordinary advice and prohibitions: never dropped.
 KEPT = [
+    "Check the contactor for pitting and replace it if the tips are burnt.",
+    "Clip the meter probe across the terminals to measure the voltage.",
+    "Lift the sensor wire on terminal 14 and measure the resistance across the sensor.",
+    "Put the unit in hand mode while you test, then back to auto.",
+    "Set the thermostat to the design value on the drawing.",
     "Never bypass the interlock, call the vendor.",
     "If it trips twice, never bypass the interlock, call the vendor.",
     "Never bypass the trip or silence the alarm.",
@@ -57,6 +71,9 @@ KEPT = [
 
 # Kept, but they name a protective device, so a steward must review them.
 NEEDS_REVIEW = [
+    "I just lift the sensor wire on terminal 14 and leave the CRAH in hand mode overnight",
+    "Check the contactor for pitting and replace it if the tips are burnt.",
+    "Put the unit in hand mode while you test, then back to auto.",
     "If it trips, switch off the supply and isolate it.",
     "Reset the trip once, and if it trips again escalate to the vendor.",
     "Check the alarm log for the last 24 hours.",

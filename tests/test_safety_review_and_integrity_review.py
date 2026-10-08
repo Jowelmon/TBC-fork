@@ -167,3 +167,65 @@ def test_audit_reasons_use_plain_words_not_constant_names(client):
     cid = _case(client)
     reasons = " ".join(h["reason"] for h in client.get(f"/cases/{cid}", params={"user": "tech1"}).json()["history"])
     assert "_CONFIDENCE" not in reasons
+
+
+# 6. Every check is safety-reviewed; lay workarounds are held ------------------
+PLAIN = "If the sensor reads nothing, check the calibration sticker and log it."
+LAY = "I just lift the sensor wire on terminal 14 and leave the CRAH in hand mode overnight"
+
+
+def test_every_check_needs_the_safety_review_even_without_device_words(client):
+    r = client.post("/capture/interview", params={"user": "steward1"}, json={
+        "expert_name": "K. Wong", "expert_role": "Technician", "asset_type": "CRAH",
+        "transcript": f"Technician: {PLAIN}\n", "expert_consent": True,
+        "heuristics": [{"symptom_pattern": PLAIN, "likely_cause": "sensor_hardware_failure",
+                        "evidence_quote": PLAIN, "checks": ["check the calibration sticker and log it"],
+                        "do_not": [], "escalate_when": []}],
+    })
+    pid = r.json()["proposal_id"]
+    assert client.post(f"/kb/proposals/{pid}/approve",
+                       params={"user": "steward2", "rationale": "ok"}).status_code == 400
+    client.post(f"/kb/proposals/{pid}/reject", params={"user": "steward2", "reason": "test cleanup"})
+
+
+def test_a_lay_workaround_is_held_and_never_raises_confidence(client):
+    r = _capture(client, quote=LAY, transcript=f"Technician: {LAY}\n")
+    assert r.status_code == 200, r.text
+    assert r.json()["heuristics"][0]["safety_review"]
+
+
+# 7. A case review cannot re-sign a broken ledger ------------------------------
+def test_reviewing_a_case_cannot_launder_tampered_knowledge(client):
+    pid = _capture(client).json()["proposal_id"]
+    client.post(f"/kb/proposals/{pid}/approve",
+                params={"user": "steward2", "rationale": "checked", "safety_reviewed": "true"})
+    cid = _case(client)
+    store.STORE.get(cid).history[0].reason = "edited outside the app"
+    heuristic = next(h for h in LSTORE.expert_heuristics if h["proposal_id"] == pid)
+    original = heuristic["evidence_quote"]
+    heuristic["evidence_quote"] = "Jumper the high-temp interlock."
+    try:
+        status = client.get("/audit/status", params={"user": "auditor1"}).json()
+        assert status["ledger_valid"] is False and "outside the governance flow" in status["ledger_problem"]
+        r = client.post("/audit/review", params={"user": "auditor1", "target": f"case:{cid}",
+                                                 "decision": "quarantine", "reason": "unknown"})
+        assert r.status_code == 409 and "ledger first" in r.json()["detail"]
+        assert not LSTORE.verify_ledger()  # nothing was re-signed
+        with pytest.raises(ValueError):
+            LSTORE.record_integrity_review(actor="auditor1", reason="direct call")
+    finally:
+        heuristic["evidence_quote"] = original
+    assert LSTORE.verify_ledger()
+    client.post(f"/kb/proposals/{pid}/revoke", params={"user": "steward2", "reason": "test cleanup"})
+    client.post("/audit/review", params={"user": "auditor1", "target": f"case:{cid}",
+                                         "decision": "quarantine", "reason": "test cleanup"})
+
+
+# 8. Decision text can travel in the body, not the URL --------------------------
+def test_a_rationale_can_be_sent_in_a_json_body(client):
+    cid = _case(client)
+    r = client.post(f"/cases/{cid}/approval", params={"user": "mgr1", "decision": "approve"},
+                    json={"rationale": "evidence matches the expert's pattern"})
+    assert r.status_code == 200, r.text
+    snap = client.get(f"/cases/{cid}", params={"user": "tech1"}).json()
+    assert snap["human_decision"]["rationale"] == "evidence matches the expert's pattern"

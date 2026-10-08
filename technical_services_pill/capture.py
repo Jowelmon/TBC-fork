@@ -214,9 +214,9 @@ def _validate_items(
         safety_review = list(dict.fromkeys(safety_review))
         if safety_review:
             warnings.append(
-                f"Item {idx} names a protective device (alarm, trip, cut-out, interlock...). The "
-                "approving steward must confirm a safety review, and it is shown as guidance only: "
-                "it never raises confidence.")
+                f"Item {idx} names a protective device or work on equipment (alarm, trip, contactor, "
+                "probe, hand mode...). The approving steward must confirm a safety review, and it is "
+                "shown as guidance only: it never raises confidence.")
         kept.append({
             "check_cause": check_cause,
             "safety_review": safety_review,

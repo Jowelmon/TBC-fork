@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evidence_flags import field_label
 from .guardrails import sanitize_metadata
 from .llm import LLMError, diagnostic_second_opinion
 
@@ -43,6 +44,8 @@ def _fallback(reason: str) -> dict[str, Any]:
 
 
 def _value(v: Any) -> str:
+    if v is None:
+        return "no reading"
     if isinstance(v, bool):
         return "yes" if v else "no"
     if isinstance(v, list):
@@ -50,16 +53,6 @@ def _value(v: Any) -> str:
     return str(v)
 
 
-FIELD_LABELS = {
-    "soh_pct": "State of health (%)", "age_months": "Age (months)", "battery_temp_c": "Battery temp (°C)",
-    "temp_c": "Temp (°C)", "charge_pct": "Refrigerant charge (%)", "approach_temp": "Approach temp (°C)",
-    "axial_mm_s": "Axial vibration (mm/s)", "npsh_margin": "NPSH margin", "load_pct": "Load (%)",
-    "flow_pct": "Flow (%)", "float_voltage": "Float voltage (V)", "battery_voltage": "Battery voltage (V)",
-}
-
-
-def field_label(key: str) -> str:
-    return FIELD_LABELS.get(key) or key.replace("_", " ").capitalize()
 
 
 def evidence_line(source: str, finding: str, payload: Any) -> str:

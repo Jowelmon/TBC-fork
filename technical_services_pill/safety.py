@@ -99,6 +99,29 @@ _INSTRUCTION = [
                r"protection)\b", re.IGNORECASE),
     re.compile(r"\bpull(?:s|ed|ing)?\b[^.;]{0,50}?\b(?:off|out\s+of)\s+(?:the\s+)?"
                r"(?:bms|scada|monitoring|alarm\s+list|protection)\b", re.IGNORECASE),
+    # everyday workarounds: "cable-tie the contactor closed", "a magnet on the
+    # flow reed", "unplug the leak rope", "clip the probe to the frame",
+    # "pull the buzzer lead", "turn the thermostat knob fully"
+    re.compile(r"\b(?:cable-?ti(?:e|es|ed|ing)|zip-?ti(?:e|es|ed|ing)|ti(?:e|es|ed|ing)|wedg(?:e|es|ed|ing)|"
+               r"jam(?:s|med|ming)?|strap(?:s|ped|ping)?|hold(?:s|ing)?|held|block(?:s|ed|ing)?)\b"
+               r"[^.;]{0,30}?\bcontactors?\b[^.;]{0,20}?\b(?:in|closed|shut|on)\b", re.IGNORECASE),
+    re.compile(r"\bmagnets?\b[^.;]{0,40}?\b(?:reed|flow|float|level|door|limit|switch|sensor)\w*", re.IGNORECASE),
+    re.compile(r"\b(?:unplug\w*|disconnect\w*|pull\w*|remov\w*|cut(?:s|ting)?|lift\w*)\b[^.;]{0,30}?"
+               r"\b(?:leak|water)[- ]?(?:detection\s+)?(?:rope|cable|tape|sensor|detector)s?\b", re.IGNORECASE),
+    re.compile(r"\b(?:clip\w*|tap(?:e|es|ed|ing)|stick(?:s|ing)?|stuck|mov(?:e|es|ed|ing)|hang(?:s|ing)?|hung|"
+               r"zip-?ti\w*|cable-?ti\w*)\b[^.;]{0,40}?\b(?:probes?|sensors?|thermistors?|rtds?)\b[^.;]{0,30}?"
+               r"\b(?:to|on|onto|against|under|outside)\s+(?:the\s+)?(?:frame|chassis|casing|outside|floor|door|"
+               r"cabinet|wall|pipe|ambient|cold\w*)\b", re.IGNORECASE),
+    re.compile(r"\b(?:pull\w*|unplug\w*|disconnect\w*|cut(?:s|ting)?|lift\w*|remov\w*)\b[^.;]{0,30}?"
+               r"\b(?:buzzers?|sounders?|horns?|beacons?|sirens?|strobes?|bells?)\b", re.IGNORECASE),
+    re.compile(r"\bthermostats?\b[^.;]{0,40}?\b(?:fully|all\s+the\s+way|right|max\w*|full)\b", re.IGNORECASE),
+    # the intent gives it away: "...so it never cuts in", "so the controller can't stop the fans"
+    re.compile(r"\bso\s+(?:that\s+)?(?:it|they|the\s+\w+(?:\s+\w+)?)\s+(?:never|won'?t|doesn'?t|don'?t|"
+               r"can'?t|cannot|stops?|isn'?t\s+able\s+to)\b[^.;]{0,30}?\b(?:cut\w*|trip\w*|alarm\w*|call\w*|"
+               r"pag\w*|shut\w*|stop\w*|go(?:es)?\s+off|kick\w*|see\w*|sens\w*|detect\w*|warn\w*)\b",
+               re.IGNORECASE),
+    re.compile(r"\bstop(?:s|ped|ping)?\s+it\s+(?:from\s+)?(?:alarm|trip|call|pag|cutt?|shutt?|go)\w*\b",
+               re.IGNORECASE),
     # resetting a protection until it stays in: "I keep resetting the compressor trip"
     re.compile(r"\b(?:keep|keeps|kept|keeping)\s+(?:on\s+)?re-?sett?ing\b", re.IGNORECASE),
     re.compile(r"\bre-?set(?:s|ting)?\b[^.;]{0,40}?\b(?:again\s+and\s+again|over\s+and\s+over|"
@@ -113,6 +136,10 @@ _PROTECTION = re.compile(
     r"(?:leak|smoke|fire|gas|water)[- ]?detect\w*|set\s?points?|"
     r"(?:high|low|temperature|temp|pressure|current)\s+limits?|safety\s+(?:device|valve|circuit|chain|"
     r"relay|system|interlock)|shut-?(?:down|off)s?|"
+    r"contactors?|thermostats?|buzzers?|sounders?|horns?|beacons?|sirens?|probes?|thermistors?|"
+    r"leak\s+ropes?|reed\s+switch(?:es)?|reeds?|flow\s+sensors?|float\w*|magnets?|"
+    r"terminal\s+\d+|(?:hand|manual|override|bypass)\s+mode|"
+    r"(?:lift\w*|unplug\w*|disconnect\w*|clip\w*)\s+(?:the\s+|a\s+)?(?:\w+\s+){0,2}?(?:wire|lead|cable|plug)s?|"
     # taking something out of monitoring (calling "the BMS vendor" is not)
     r"(?:off|out\s+of|from)\s+(?:the\s+)?(?:bms|scada|monitoring))\b",
     re.IGNORECASE,

@@ -786,10 +786,12 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 
 /* Projector widths: keep Status and Confidence on screen by dropping the
    Sensor and Reading columns (both are on the Diagnosis screen). */
-@media (max-width: 1100px) {
+@media (max-width: 1366px) {
   #cases-table th:nth-child(4), #cases-table td:nth-child(4),
   #cases-table th:nth-child(5), #cases-table td:nth-child(5) { display: none; }
   #cases-table th, #cases-table td { padding-left: 8px; padding-right: 8px; }
+}
+@media (max-width: 1100px) {
   .role-label { display: none; }
   #role-switcher .btn-sm { padding: 4px 8px; }
   #model-chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

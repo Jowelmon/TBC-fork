@@ -71,15 +71,17 @@ explaining why.
 **Say:** "A different knowledge steward has to sign off."
 
 **Do:** Switch role to **steward2**. The queue shows every line of every
-heuristic, exactly as the AOM will see it. The chiller answer mentions a
-trip, so its card says **Safety review needed**. Click **Approve…** and say
-why it is sound (recorded in the ledger). Try to confirm without ticking the
-safety review: it is refused. Tick it and confirm. That chiller heuristic
-goes live as guidance only and never raises confidence. Point at the version bump in
+heuristic, exactly as the AOM will see it. Click **Approve…** and say why
+it is sound (recorded in the ledger). Try to confirm without ticking the
+safety review: it is refused, because every check an expert gives is an
+action on equipment and a person must confirm none of them defeats a
+protection. Tick it and confirm. The chiller answer mentions a trip, so its
+card says **Protective device or work on equipment**: that heuristic goes
+live as guidance only and never raises confidence. Point at the version bump in
 the toast and in the nav footer: the interview covers CRAH, Chiller and
 Pump, so those three pills move and UPS does not. In **Re-run Diagnosis on
 Similar Open Cases**, re-run the seeded **PUMP-DC1-01** case: 49% becomes
-about 65%, past the 55% recommendation threshold, because R. Tan's pump
+about 60%, past the 55% recommendation threshold, because R. Tan's pump
 answer is now approved knowledge and the case's evidence shows what he
 described.
 
@@ -174,7 +176,7 @@ reason that is written to the chain and the ledger.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 283
+**If asked "is any of this real?"** — `make test` (pytest, currently 314
 tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires
