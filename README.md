@@ -195,8 +195,11 @@ recorded in the audit trail. Seeded case **UPS-DC1-02** shows a real
 disagreement (the rules say end of life; the second opinion flags thermal
 runaway risk).
 
-The small draggable cloud on every screen shows the AI's state (thinking,
-offline, worried when it disagrees). It only reports; it never acts.
+Cloudy, the small draggable cloud on every screen, shows the AI's state
+(thinking, offline, worried when it disagrees). Clicking it opens an
+assistant panel with the live model, what the AI does on the current
+screen and what it may not do, and shortcuts. It reports and helps people
+find things; it never acts on a case.
 
 ## Identity and audit
 

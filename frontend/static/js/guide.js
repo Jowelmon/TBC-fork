@@ -16,26 +16,26 @@ const STEPS = [
   },
   {
     title: 'Nobody approves their own change',
-    role: 'steward1', screen: 'governance',
+    role: 'steward1', screen: 'governance', tab: ['gov', 'review'],
     say: 'The draft is a proposal, not knowledge. As the steward who captured it, I will try to approve it myself.',
-    notice: 'Look at your own expert-interview proposal: Approve is locked with "You sent this". The server enforces the same rule if anyone calls it directly.',
+    notice: 'On the Approval queue tab, look at your own expert-interview proposal: Approve is locked with "You sent this". The server enforces the same rule if anyone calls it directly.',
   },
   {
     title: 'Second steward approves, version bumps',
-    role: 'steward2', screen: 'governance',
+    role: 'steward2', screen: 'governance', tab: ['gov', 'review'],
     say: 'A second steward reviews the expert\'s words and approves. Only now does it become live knowledge, versioned and reversible.',
     notice: 'Approve the proposal with a reason and tick the safety review: every check must be confirmed safe before it goes live. The chiller answer mentions a trip, so that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 60%, past the 55% recommendation threshold.',
   },
   {
     title: 'Captured know-how changes the outcome',
-    role: 'tech1', screen: 'diagnosis', asset: 'PUMP-DC1-01',
+    role: 'tech1', screen: 'diagnosis', asset: 'PUMP-DC1-01', tab: ['diag', 'expert'],
     newCase: { sensor_id: 'PUMP-DC1-01-VIB', observation_type: 'pump_vibration_high', reading_status: 'invalid' },
     say: 'A new vibration alarm on the same pump. Yesterday this escalated at 49%. Today the pill knows what R. Tan knows.',
-    notice: 'This is a fresh PUMP-DC1-01 case diagnosed with the approved knowledge: it now clears 55% and goes to the Asset Operations Manager. "Expert Knowledge Reused" quotes R. Tan and shows which of his words match this case\'s abnormal readings.',
+    notice: 'This is a fresh PUMP-DC1-01 case diagnosed with the approved knowledge: it now clears 55% and goes to the Asset Operations Manager. The Expert knowledge tab quotes R. Tan and shows which of his words match this case\'s abnormal readings.',
   },
   {
     title: 'Transparent, deterministic diagnosis',
-    role: 'tech1', screen: 'diagnosis', asset: 'CHILLER-DC1-01',
+    role: 'tech1', screen: 'diagnosis', asset: 'CHILLER-DC1-01', tab: ['diag', 'scoring'],
     say: 'Diagnosis is a deterministic decision tree built from approved knowledge. Same evidence, same answer, every time. Confidence is a visible formula, not a black box.',
     notice: 'Evidence in plain English, the W1 to W5 confidence breakdown against the 0.55 and 0.35 thresholds, and a refrigerant leak forced to human approval with a safety escalation.',
   },
@@ -53,9 +53,9 @@ const STEPS = [
   },
   {
     title: 'From one asset to the portfolio',
-    role: 'auditor1', screen: 'governance',
+    role: 'auditor1', screen: 'governance', tab: ['gov', 'audit'],
     say: 'Chillers, CRAH units, UPS and pumps share one engine. Knowledge is plain data the organisation owns, the model is swappable, and every decision is auditable.',
-    notice: 'The audit trace, version history and cause distribution are what a compliance officer reviews.',
+    notice: 'The Audit & sentinel tab holds the ledger, the case audit trace and the sentinel; Overview has the version history and cause distribution a compliance officer reviews.',
   },
 ];
 
@@ -73,12 +73,38 @@ export function initGuide({ api, navigate, setRole, showToast }) {
   const panel = document.getElementById('guide-panel');
   const toggle = document.getElementById('guide-toggle');
 
+  // Minimised, the guide is a slim bar (step, title, Next) that stays out of
+  // the way of the screen; the choice is remembered.
+  let mini = false;
+  try { mini = localStorage.getItem('tbc_guide_mini') === '1'; } catch (_) { /* default */ }
+  function setMini(v) {
+    mini = v;
+    try { localStorage.setItem('tbc_guide_mini', v ? '1' : '0'); } catch (_) { /* not remembered */ }
+    render();
+  }
+
   function render() {
     const s = STEPS[idx];
+    panel.classList.toggle('guide-mini', mini);
+    if (mini) {
+      panel.innerHTML = `
+        <span class="guide-count">Step ${idx + 1}/${STEPS.length}</span>
+        <span class="guide-mini-title">${s.title}</span>
+        <button class="btn btn-secondary btn-sm" id="guide-next" ${idx === STEPS.length - 1 ? 'disabled' : ''}>Next</button>
+        <button class="guide-close" id="guide-expand" aria-label="Expand demo guide" title="Expand">&#9652;</button>
+        <button class="guide-close" id="guide-close" aria-label="Close demo guide" title="Close">&times;</button>`;
+      document.getElementById('guide-expand').onclick = () => setMini(false);
+      document.getElementById('guide-close').onclick = close;
+      document.getElementById('guide-next').onclick = () => { idx += 1; save(); go(); };
+      return;
+    }
     panel.innerHTML = `
       <div class="guide-head">
         <span class="guide-count">Step ${idx + 1} of ${STEPS.length}</span>
-        <button class="guide-close" id="guide-close" aria-label="Close demo guide">&times;</button>
+        <span>
+          <button class="guide-close" id="guide-min" aria-label="Minimise demo guide" title="Minimise">&#8211;</button>
+          <button class="guide-close" id="guide-close" aria-label="Close demo guide" title="Close">&times;</button>
+        </span>
       </div>
       <h2 class="guide-title">${s.title}</h2>
       <div class="guide-label">Say</div>
@@ -91,6 +117,7 @@ export function initGuide({ api, navigate, setRole, showToast }) {
         <button class="btn btn-secondary btn-sm" id="guide-next" ${idx === STEPS.length - 1 ? 'disabled' : ''}>Next</button>
       </div>`;
     document.getElementById('guide-close').onclick = close;
+    document.getElementById('guide-min').onclick = () => setMini(true);
     document.getElementById('guide-prev').onclick = () => { idx -= 1; save(); go(); };
     document.getElementById('guide-next').onclick = () => { idx += 1; save(); go(); };
     document.getElementById('guide-go').onclick = go;
@@ -114,6 +141,14 @@ export function initGuide({ api, navigate, setRole, showToast }) {
       if (!caseId) { showToast(`No ${s.asset} case yet. Switch to admin1 and click Seed Demo Cases on the Dashboard.`, 'error'); navigate('dashboard'); return; }
     }
     navigate(s.screen, caseId);
+    // Land on the tab this step talks about, once the screen has drawn it.
+    const tab = s.tab || { diagnosis: ['diag', 'summary'], decision: ['decision', 'decide'], outcome: ['outcome', 'work'] }[s.screen];
+    if (tab) {
+      for (let i = 0; i < 20 && !document.getElementById(`tab-${tab[0]}-${tab[1]}`); i++) {
+        await new Promise(r => setTimeout(r, 150));
+      }
+      window.__tabs__?.open(...tab);
+    }
   }
 
   function open() { panel.hidden = false; toggle.setAttribute('aria-expanded', 'true'); render(); }

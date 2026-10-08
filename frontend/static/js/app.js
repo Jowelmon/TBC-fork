@@ -1,9 +1,9 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
 import { api } from './api.js?v=9';
-import { initGuide } from './guide.js?v=11';
-import { initCloud, setCloudStatus, setCloudMood, cloudThinking } from './cloud.js?v=5';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=34';
+import { initGuide } from './guide.js?v=14';
+import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=6';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=37';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -121,6 +121,7 @@ async function refreshKbVersion() {
 function navigate(screen, caseId = null) {
   state.screen = screen;
   setCloudMood(null); // screens set a mood again if their case calls for one
+  setCloudScreen(screen);
   refreshKbVersion();
   if (caseId) state.caseId = caseId;
 
