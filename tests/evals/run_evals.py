@@ -16,15 +16,14 @@ import traceback
 # Isolate from any real demo/test database before importing the app.
 _TMP = tempfile.mkdtemp(prefix="tbc-evals-")
 os.environ["TBC_DB_PATH"] = os.path.join(_TMP, "tbc.sqlite")
-os.environ["TBC_CASE_DB_PATH"] = os.path.join(_TMP, "cases.sqlite3")
 os.environ["TBC_PERSIST"] = "1"
 os.environ.setdefault("TBC_DEMO_INSECURE", "1")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from technical_services_pill.app import app  # noqa: E402
+from technical_services_pill.app import app
 
 RESULTS: list[tuple[str, str, bool, str]] = []  # (id, title, passed, detail)
 
@@ -150,12 +149,14 @@ def eval_05(client):
 
 @eval_("EVAL-06", "Persistence: case state survives a process restart")
 def eval_06(client):
-    from technical_services_pill.store import CaseStore
+    from technical_services_pill import persistence, store
     snap = _create_and_advance(client)
     case_id = snap["case_id"]
-    # Simulate a restart: a brand new CaseStore reading the same DB file.
-    reloaded = CaseStore(os.environ["TBC_CASE_DB_PATH"])
-    restored = reloaded.snapshot(case_id)
+    # Simulate a restart: save, wipe the in-memory cases, restore from disk.
+    persistence.save_state()
+    store.STORE._cases.clear()
+    persistence.load_state()
+    restored = store.STORE.snapshot(case_id)
     assert restored is not None, "case not found after simulated restart"
     assert restored["current_state"] == snap["current_state"]
     assert restored["confidence"] == snap["confidence"]
@@ -171,16 +172,16 @@ def eval_07(client):
     client.post(f"/cases/{case_id}/outcome", params={
         "user": "tech1", "result": "resolved", "root_cause_confirmed": "sensor_hardware_failure",
     })
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     assert fb["proposal_status"] == "pending", "feedback must not enter the KB directly"
-    version_after_submit = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_after_submit = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     assert version_after_submit == version_before, "KB version must not move before approval"
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1"})
+    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 403, "the proposer must not be able to approve their own proposal"
-    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    resp = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 200, "a different steward must be able to approve"
     return "pending proposal, self-approval blocked, second steward approved"
 
@@ -206,7 +207,7 @@ def eval_08(client):
 def eval_09(client):
     baseline = _create_and_advance(client)
     confidence_before = baseline["confidence"]
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     case_id = baseline["case_id"]
     client.post(f"/cases/{case_id}/approval", params={"user": "mgr1", "decision": "approve", "rationale": "x"})
     client.post(f"/cases/{case_id}/work-order", params={"user": "mgr1"})
@@ -216,9 +217,9 @@ def eval_09(client):
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1"})
+    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
     restored = _create_and_advance(client)
     assert restored["confidence"] == confidence_before, (

@@ -1,12 +1,5 @@
-"""Fixes for docs/JUDGE_REPORT_2026-10-07_round2.md's top 5 findings (77/100):
-
-1. Mock capture extractor mis-tagged causes on transcripts that merely
-   mention (while denying) another cause's keywords.
-2. G2b safety/environmental hazard not shown on AOM Decision.
-3. G5 (unknown asset) unreachable from the UI (closed dropdown).
-4. "New Case" form rendered below the fold.
-5. Stale "what happens next" hint on Outcome after feedback submitted.
-"""
+"""Capture ignores causes the expert denies; the safety hazard (G2b) and
+unknown-asset escalation (G5) are reachable from the UI."""
 from __future__ import annotations
 
 import pytest
@@ -38,12 +31,13 @@ def test_mock_extractor_does_not_draft_a_heuristic_for_a_denied_cause():
     )
 
 
-def test_mock_extractor_still_drafts_the_sample_interviews_four_heuristics():
+def test_mock_extractor_still_drafts_the_sample_interviews_heuristics():
     from technical_services_pill.capture import SAMPLE_INTERVIEW
     result = llm._mock_extract(SAMPLE_INTERVIEW)
     causes = {h["likely_cause"] for h in result["heuristics"]}
     assert causes == {
-        "refrigerant_leak", "condenser_fouling", "comm_bus_failure", "sensor_hardware_failure",
+        "refrigerant_leak", "condenser_fouling", "communication_bus_controller_failure",
+        "sensor_hardware_failure", "shaft_misalignment",
     }
 
 

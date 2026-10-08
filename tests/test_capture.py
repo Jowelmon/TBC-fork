@@ -14,7 +14,7 @@ def client():
 
 def _body(transcript=capture.SAMPLE_INTERVIEW):
     return {"expert_name": "R. Tan", "expert_role": "Senior M&E Technician",
-            "asset_type": "CRAH", "transcript": transcript}
+            "asset_type": "CRAH", "transcript": transcript, "expert_consent": True}
 
 
 def test_capture_creates_pending_proposal_not_kb_change(client):
@@ -24,7 +24,7 @@ def test_capture_creates_pending_proposal_not_kb_change(client):
     assert r.json()["status"] == "pending"
     after = LSTORE.stats()
     assert after["expert_heuristics"] == before["expert_heuristics"]
-    assert after["kb_version"] == before["kb_version"]
+    assert after["kb_versions"] == before["kb_versions"]
     causes = {h["likely_cause"] for h in r.json()["heuristics"]}
     # Stored as canonical IDs, never aliases, so diagnosis matching works.
     assert {"refrigerant_leak", "communication_bus_controller_failure"} <= causes
@@ -81,17 +81,19 @@ def test_technician_cannot_capture(client):
 def test_approval_needs_second_steward_and_bumps_version(client):
     pid = client.post("/capture/interview", params={"user": "steward1"},
                       json=_body()).json()["proposal_id"]
-    v0 = LSTORE.get_kb_version()
-    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1"}).status_code == 403
-    ok = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    v0 = {pill: LSTORE.version_of(pill) for pill in ("CRAH", "Chiller", "Pump")}
+    assert client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript", "safety_reviewed": "true"}).status_code == 403
+    ok = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript", "safety_reviewed": "true"})
     assert ok.status_code == 200
-    assert LSTORE.get_kb_version() == v0 + 1
+    # Each pill the interview files knowledge under moves on; UPS does not.
+    assert all(LSTORE.version_of(pill) == v + 1 for pill, v in v0.items())
     live = client.get("/kb/expert-heuristics", params={"user": "mgr1"}).json()["heuristics"]
     mine = [h for h in live if h["proposal_id"] == pid]
     assert mine and all(h["approved_by"] == "steward2" for h in mine)
 
-    # rollback removes them again
-    client.post(f"/kb/rollback/{v0}", params={"user": "admin1"})
+    # rolling each pill back removes them again
+    for pill, v in v0.items():
+        client.post(f"/kb/rollback/{v}", params={"user": "admin1", "pill": pill, "reason": "test rollback"})
     live = client.get("/kb/expert-heuristics", params={"user": "mgr1"}).json()["heuristics"]
     assert not [h for h in live if h["proposal_id"] == pid]
 
@@ -106,7 +108,7 @@ def test_case_surfaces_approved_expert_knowledge_for_matching_diagnosis(client):
     proposal_id = capture_response.json()["proposal_id"]
     approval = client.post(
         f"/kb/proposals/{proposal_id}/approve",
-        params={"user": "steward2"},
+        params={"user": "steward2", "rationale": "reviewed against the transcript", "safety_reviewed": "true"},
     )
     assert approval.status_code == 200, approval.text
 
@@ -135,7 +137,7 @@ def test_case_surfaces_approved_expert_knowledge_for_matching_diagnosis(client):
     assert match["asset_type"] == result["asset_type"] == "CRAH"
     assert match["knowledge_id"].startswith("KB-EXP-")
     assert match["evidence_quote"]
-    assert match["kb_version_label"].startswith("1.")
+    assert match["kb_version_label"].startswith("CRAH v1.")
 
 
 def test_unconfigured_adp_fails_loudly(client, monkeypatch):

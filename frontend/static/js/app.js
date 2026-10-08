@@ -1,8 +1,9 @@
 // app.js - App controller: navigation, role switching, toasts, helpers
 
-import { api } from './api.js?v=4';
-import { initGuide } from './guide.js?v=7';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture, seedDemoCases } from './screens.js?v=14';
+import { api } from './api.js?v=9';
+import { initGuide } from './guide.js?v=11';
+import { initCloud, setCloudStatus, setCloudMood, cloudThinking } from './cloud.js?v=5';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=34';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -65,7 +66,7 @@ function roleDisplayName(id) {
 }
 
 function statePill(stateVal) {
-  // Miora spec status pill mapping
+  // Status pill mapping
   const map = {
     TRIGGERED:          { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
     GATHERING_EVIDENCE: { cls: 'badge-grey',   label: 'Awaiting diagnosis' },
@@ -83,9 +84,11 @@ function statePill(stateVal) {
   return `<span class="badge ${m.cls}">${m.label}</span>`;
 }
 
-function confBand(conf) {
-  // Miora spec confidence bands
+function confBand(conf, state) {
+  // Confidence bands. An escalated case is with a human whatever
+  // its score, so it never reads as "Medium" or "Recommendable".
   if (conf === null || conf === undefined) return { cls: 'badge-grey', label: 'N/A' };
+  if (state === 'ESCALATED') return { cls: 'badge-red', label: (conf * 100).toFixed(0) + '% · escalated' };
   if (conf < 0.35) return { cls: 'badge-red', label: (conf * 100).toFixed(0) + '% Escalate' };
   if (conf < 0.55) return { cls: 'badge-yellow', label: (conf * 100).toFixed(0) + '% Medium' };
   return { cls: 'badge-green', label: (conf * 100).toFixed(0) + '% Recommendable' };
@@ -103,18 +106,21 @@ function esc(s) {
 }
 
 // ── Navigation ─────────────────────────────────────────────
-// Keep the nav footer in step with the live KB version (same source as Governance).
+// Keep the nav footer in step with each pill's live KB version (same source as Governance).
 async function refreshKbVersion() {
   const el = document.getElementById('nav-kb-version');
   if (!el) return;
   try {
     const stats = await api.get('/kb/stats');
-    el.textContent = stats.kb_version_label ? `KB v${stats.kb_version_label}` : 'KB version unavailable';
+    const labels = Object.values(stats.kb_version_labels || {});
+    el.textContent = labels.length ? `KB ${labels.join(' · ')}` : 'KB version unavailable';
+    el.title = 'Each pill versions its own knowledge';
   } catch (_) { if (el.textContent.includes('loading')) el.textContent = 'KB version unavailable'; }
 }
 
 function navigate(screen, caseId = null) {
   state.screen = screen;
+  setCloudMood(null); // screens set a mood again if their case calls for one
   refreshKbVersion();
   if (caseId) state.caseId = caseId;
 
@@ -152,7 +158,7 @@ function navigate(screen, caseId = null) {
 }
 
 function renderScreen() {
-  const h = { api, showToast, statePill, confBand, fmtTime, esc, navigate, seedDemoCases, copyToClipboard, roleDisplayName };
+  const h = { api, showToast, statePill, confBand, fmtTime, esc, navigate, copyToClipboard, roleDisplayName };
   switch (state.screen) {
     case 'dashboard':
       renderDashboard(content, state, h);
@@ -201,12 +207,39 @@ themeToggle.addEventListener('click', () => {
 roleSelect.value = state.role;
 roleBadge.textContent = roleDisplayName(state.role);
 
+// ── PIN sign-in ────────────────────────────────────────────
+// Naming a user is not enough to act as them: the server checks their PIN
+// (five wrong tries lock that user out for five minutes). Once a PIN has
+// been proven in this browser, switching back to that user needs no PIN.
+function askPin(userId, note = '') {
+  const backdrop = document.getElementById('pin-backdrop');
+  const form = document.getElementById('pin-dialog');
+  const input = document.getElementById('pin-input');
+  const err = document.getElementById('pin-error');
+  document.getElementById('pin-prompt').textContent =
+    `Enter the PIN for ${userId} (${roleDisplayName(userId)}). Demo PINs are listed in DEMO.md.`;
+  input.value = ''; err.textContent = note;
+  backdrop.hidden = false;
+  input.focus();
+  return new Promise(resolve => {
+    const done = value => { backdrop.hidden = true; form.onsubmit = null; resolve(value); };
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      try { await api.login(userId, input.value); done(true); }
+      catch (e) { err.textContent = e.message; input.select(); }
+    };
+    document.getElementById('pin-cancel').onclick = () => done(false);
+  });
+}
+
+async function signIn(userId) {
+  try { await api.login(userId); return true; }
+  catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
+}
+
 async function setRole(role) {
   if (roleSelect.value === role && state.role === role) return true;
-  try {
-    await api.login(role);
-  } catch (e) {
-    showToast(`Could not switch role: ${e.message}`, 'error');
+  if (!(await signIn(role))) {
     roleSelect.value = state.role; // revert the dropdown
     return false;
   }
@@ -229,16 +262,23 @@ navItems.forEach(item => {
 });
 
 // ── Model chip (which model drafts expert knowledge) + insecure banner ──
+// The AI's presence on every screen: the avatar's state says whether the
+// model is answering, offline, or the offline (non-LLM) models are in use.
 async function refreshSystemInfo() {
   const chip = document.getElementById('model-chip');
   const banner = document.getElementById('insecure-banner');
   try {
     const info = await api.get('/system/info');
-    chip.textContent = `Capture model: ${info.llm_label}`;
-    if (info.llm_provider === 'adp' && !info.adp_configured) {
-      chip.textContent += ' (key missing)';
-      chip.className = 'badge badge-red';
-    }
+    const view = {
+      online: ['online', 'badge-purple', `AI: ${info.llm_label}`],
+      ready: ['ready', 'badge-purple', `AI: ${info.llm_label}`],
+      offline: ['offline', 'badge-red', `AI offline (${info.llm_label})`],
+      'offline-model': ['ready', 'badge-purple', 'AI: offline models (no LLM)'],
+    }[info.ai_status] || ['ready', 'badge-purple', `AI: ${info.llm_label}`];
+    setCloudStatus(view[0], info.ai_status === 'offline' ? info.ai_status_message : '');
+    chip.className = `badge ${view[1]}`;
+    chip.textContent = view[2];
+    chip.title = info.ai_status_message;
     if (banner) banner.hidden = !info.demo_insecure;
   } catch (_) { chip.hidden = true; }
 }
@@ -247,11 +287,10 @@ async function refreshSystemInfo() {
 // Identity lives in a signed session cookie (auth.py): log in as the
 // last-used role before any other request, so the cookie — not a client
 // -controlled ?user= — is what the server sees from here on.
+initCloud();
 (async () => {
-  try {
-    await api.login(state.role);
-  } catch (e) {
-    showToast(`Login failed: ${e.message}`, 'error');
+  while (!(await signIn(state.role))) {
+    showToast('Sign in to continue', 'error');
   }
   initGuide({ api, navigate, setRole, showToast });
   navigate('dashboard');
@@ -260,4 +299,5 @@ async function refreshSystemInfo() {
 })();
 
 // Expose for debugging
-window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion };
+window.__app__ = { state, navigate, showToast, copyToClipboard, refreshKbVersion, refreshSystemInfo };
+window.__cloud__ = { setCloudMood, cloudThinking };

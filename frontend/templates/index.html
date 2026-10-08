@@ -14,7 +14,7 @@
       document.documentElement.setAttribute('data-theme', 'dark');
     }
   </script>
-  <link rel="stylesheet" href="/static/css/app.css?v=11">
+  <link rel="stylesheet" href="/static/css/app.css?v=26">
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to main content</a>
@@ -69,7 +69,7 @@
           </div>
         </div>
         <div id="role-switcher">
-          <span class="badge badge-purple" id="model-chip" title="Model that drafts expert knowledge. Diagnosis itself is deterministic.">Capture model: ...</span>
+          <span class="badge badge-purple" id="model-chip" title="AI used for expert capture and the advisory second opinion. Diagnosis itself is deterministic.">AI: ...</span>
           <button class="btn btn-secondary btn-sm" id="theme-toggle" aria-pressed="false" title="Switch between light and dark theme">Dark theme</button>
           <button class="btn btn-secondary btn-sm" id="guide-toggle" aria-expanded="false" aria-controls="guide-panel">Demo guide</button>
           <span class="role-badge" id="role-badge">mgr1</span>
@@ -90,6 +90,21 @@
 
   <aside id="guide-panel" class="guide-panel" hidden aria-label="Demo guide"></aside>
 
+  <!-- PIN sign-in: switching to a role needs that user's PIN -->
+  <div id="pin-backdrop" class="pin-backdrop" hidden>
+    <form id="pin-dialog" class="pin-dialog" role="dialog" aria-modal="true" aria-labelledby="pin-title">
+      <h2 id="pin-title">Sign in</h2>
+      <p id="pin-prompt">Enter the PIN for this user.</p>
+      <label for="pin-input" class="role-label">PIN</label>
+      <input id="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="12" required>
+      <div class="pin-error" id="pin-error" role="alert"></div>
+      <div class="pin-actions">
+        <button type="button" class="btn btn-secondary" id="pin-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+      </div>
+    </form>
+  </div>
+
   <!-- Toast -->
   <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
 
@@ -102,6 +117,6 @@
       {% endfor %}
     ];
   </script>
-  <script type="module" src="/static/js/app.js?v=14"></script>
+  <script type="module" src="/static/js/app.js?v=35"></script>
 </body>
 </html>

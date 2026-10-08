@@ -6,7 +6,7 @@ const STEPS = [
     title: 'The problem',
     role: 'mgr1', screen: 'dashboard',
     say: 'Data centre cooling faults are diagnosed by a handful of senior technicians. When they leave, the know-how leaves with them. This Intelligence Pill captures that know-how for Technical Services fault diagnosis.',
-    notice: 'Three live cases: one resolved, one escalated, one waiting for the Asset Operations Manager.',
+    notice: 'Seeded cases: one resolved, a bus fault escalated to the BMS pill, a chiller waiting for the Asset Operations Manager, a UPS where the AI disagrees with the rules, and a pump escalated at 49% because nobody has written down how to read its vibration yet.',
   },
   {
     title: 'Harvest tacit knowledge',
@@ -24,7 +24,14 @@ const STEPS = [
     title: 'Second steward approves, version bumps',
     role: 'steward2', screen: 'governance',
     say: 'A second steward reviews the expert\'s words and approves. Only now does it become live knowledge, versioned and reversible.',
-    notice: 'Approve the proposal. The KB version in the sidebar ticks up. Rollback restores any earlier version.',
+    notice: 'Approve the proposal with a reason and tick the safety review: every check must be confirmed safe before it goes live. The chiller answer mentions a trip, so that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 60%, past the 55% recommendation threshold.',
+  },
+  {
+    title: 'Captured know-how changes the outcome',
+    role: 'tech1', screen: 'diagnosis', asset: 'PUMP-DC1-01',
+    newCase: { sensor_id: 'PUMP-DC1-01-VIB', observation_type: 'pump_vibration_high', reading_status: 'invalid' },
+    say: 'A new vibration alarm on the same pump. Yesterday this escalated at 49%. Today the pill knows what R. Tan knows.',
+    notice: 'This is a fresh PUMP-DC1-01 case diagnosed with the approved knowledge: it now clears 55% and goes to the Asset Operations Manager. "Expert Knowledge Reused" quotes R. Tan and shows which of his words match this case\'s abnormal readings.',
   },
   {
     title: 'Transparent, deterministic diagnosis',
@@ -42,7 +49,7 @@ const STEPS = [
     title: 'The Asset Operations Manager decides',
     role: 'mgr1', screen: 'decision', asset: 'CHILLER-DC1-01',
     say: 'No work order exists until the AOM approves, modifies or rejects, with a rationale. A technician cannot do this step.',
-    notice: 'Approve, modify and reject all require a rationale. Every transition is written to a SHA-256 hash-chained audit trail.',
+    notice: 'Approve, modify and reject all require a rationale. Every transition is written to a keyed (HMAC-SHA256) hash-chained audit trail.',
   },
   {
     title: 'From one asset to the portfolio',
@@ -95,9 +102,16 @@ export function initGuide({ api, navigate, setRole, showToast }) {
     const s = STEPS[idx];
     await setRole(s.role);
     let caseId = null;
-    if (s.asset) {
+    if (s.newCase) {
+      // Raise a fresh alarm so the diagnosis uses today's knowledge base.
+      try {
+        const r = await api.post('/cases', { asset_id: s.asset, ...s.newCase });
+        await api.post(`/cases/${r.case_id}/advance`);
+        caseId = r.case_id;
+      } catch (e) { showToast(`Could not raise the case: ${e.message}`, 'error'); }
+    } else if (s.asset) {
       try { caseId = await findCaseId(api, s.asset); } catch (_) { /* fall through */ }
-      if (!caseId) { showToast(`No ${s.asset} case yet. Seed demo cases on the Dashboard.`, 'error'); navigate('dashboard'); return; }
+      if (!caseId) { showToast(`No ${s.asset} case yet. Switch to admin1 and click Seed Demo Cases on the Dashboard.`, 'error'); navigate('dashboard'); return; }
     }
     navigate(s.screen, caseId);
   }

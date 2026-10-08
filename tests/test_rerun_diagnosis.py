@@ -54,7 +54,7 @@ def test_similar_lists_matching_open_cases_only(client: TestClient):
     assert open_case["case_id"] in ids
 
     # A cause nothing is diagnosed with returns no matches.
-    resp = client.get("/cases/similar", params={"user": "tech1", "cause": "battery_eol"})
+    resp = client.get("/cases/similar", params={"user": "tech1", "cause": "impeller_imbalance"})
     assert resp.json()["matches"] == []
 
 

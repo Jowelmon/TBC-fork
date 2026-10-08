@@ -24,8 +24,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .agent_state import AgentState
-from .confidence import peer_agreement_from_registry, score_confidence, evidence_coverage_score
+from .confidence import (
+    evidence_coverage_score,
+    peer_agreement_from_registry,
+    score_confidence,
+)
 from .decision_tree import evaluate_decision_tree
+from .learning import kb_version_label
 from .models import (
     AgentStateName,
     CandidateCause,
@@ -35,9 +40,8 @@ from .models import (
     Observation,
     Outcome,
     OutcomeResult,
-    Recommendation,
-    RecommendationAction,
     ReadingStatus,
+    Recommendation,
 )
 from .tools import (
     create_work_order_for_state,
@@ -61,7 +65,9 @@ def _login(client, user_id: str):
     every TestClient-driven scenario below logs in before acting — the same
     thing the top-bar role switcher does in /ui.
     """
-    resp = client.post("/login", params={"user_id": user_id})
+    from .auth import _pins
+
+    resp = client.post("/login", json={"user_id": user_id, "pin": _pins()[user_id]})
     resp.raise_for_status()
     return client
 
@@ -289,10 +295,10 @@ def _run_learning_loop() -> tuple[str, float, float]:
     # F2: steward approves the proposal to ingest it into the live KB
     _LSTORE.approve_by_feedback_id(fb_id, decided_by="steward2")
     print(f"feedback {fb_id} proposal approved -> promoted to KB")
-    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, version={_LSTORE.get_kb_version()}")
+    print(f"  KB now: {_LSTORE.stats()['total_validated_cases']} cases, feedback_added={_LSTORE.stats()['feedback_added']}, KB {_LSTORE.label_of('CRAH')}")
     # re-diagnose identical signature -> should reuse the new validated case
     _diagnose_asset("diagnose #2 (after  feedback)")
-    st2, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
+    _, conf2, kbm2 = _diagnose_asset("diagnose #3 (after  feedback)")
     delta = conf2 - conf1
     print(f"confidence {conf1:.3f} -> {conf2:.3f} (delta {delta:+.3f}) | kb_match {kbm1:.3f} -> {kbm2:.3f}")
     learned = delta > 0
@@ -453,6 +459,7 @@ def _run_expert_harvest() -> bool:
             "expert_role": "Senior M&E Technician",
             "asset_type": "CRAH",
             "transcript": SAMPLE_INTERVIEW,
+            "expert_consent": True,
         },
     )
     response.raise_for_status()
@@ -465,13 +472,38 @@ def _run_expert_harvest() -> bool:
     for heuristic in draft["heuristics"]:
         print(f"   {heuristic['likely_cause']}: {heuristic['evidence_quote']}")
 
+    def pump_case() -> tuple[str, float]:
+        _login(client, "tech1")
+        cid = client.post("/cases", params={
+            "asset_id": "PUMP-DC1-01", "sensor_id": "PUMP-DC1-01-VIB",
+            "observation_type": "pump_vibration_high", "reading_status": "invalid",
+        }).json()["case_id"]
+        r = client.post(f"/cases/{cid}/advance").json()
+        return r["current_state"], r["confidence"]
+
+    pump_before = pump_case()
+
     _login(client, "steward2")  # a DIFFERENT steward must approve
-    approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve")
+    # The chiller answer names a trip, so the approver must confirm a safety
+    # review; that heuristic becomes guidance only and never raises confidence.
+    held = [h for h in draft["heuristics"] if h.get("safety_review")]
+    print(f"   {len(held)} heuristic(s) name a protective device and need the approver's safety review")
+    approval = client.post(f"/kb/proposals/{draft['proposal_id']}/approve",
+                           params={"rationale": "quotes checked against the interview",
+                                   "safety_reviewed": "true"})
     approval.raise_for_status()
     print(
         f"2. Different steward approved {draft['proposal_id']}; "
-        f"KB version {approval.json()['kb_version']}"
+        f"KB {', '.join(f'{p} v{kb_version_label(v)}' for p, v in approval.json()['kb_versions'].items())}"
     )
+    pump_after = pump_case()
+    print(
+        f"   Same pump alarm before vs after: {pump_before[0]} at {pump_before[1]:.2f} -> "
+        f"{pump_after[0]} at {pump_after[1]:.2f} (captured know-how changed the routing)"
+    )
+    if not (pump_before[0] == "ESCALATED" and pump_after[0] == "AWAITING_APPROVAL"):
+        print("   expected the approved interview to move the pump case to approval; demo failed")
+        return False
 
     _login(client, "tech1")
     created = client.post("/cases", params={
@@ -496,7 +528,7 @@ def _run_expert_harvest() -> bool:
     match = matches[0]
     print(
         f"3. New incident diagnosed as {cause_id}; reused {match['knowledge_id']} "
-        f"from {match['expert_name']} (KB {match['kb_version_label']})"
+        f"from {match['expert_name']} ({match['kb_version_label']})"
     )
 
     _login(client, "mgr1")
@@ -537,9 +569,11 @@ def _run_expert_harvest() -> bool:
     if feedback_proposal is None:
         print("5. Feedback proposal missing from steward queue; demo failed")
         return False
-    learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve")
+    learned = client.post(f"/kb/proposals/{feedback_proposal['proposal_id']}/approve",
+                          params={"rationale": "outcome confirmed by the work order"})
     learned.raise_for_status()
-    print(f"5. Steward validated outcome; KB is now {learned.json()['kb_version']}")
+    print(f"5. Steward validated outcome; KB is now "
+          f"{', '.join(f'{p} v{kb_version_label(v)}' for p, v in learned.json()['kb_versions'].items())}")
     return True
 
 

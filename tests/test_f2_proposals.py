@@ -9,8 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from technical_services_pill.app import app
-from technical_services_pill.learning import STORE as LSTORE
-from technical_services_pill.store import STORE as CASE_STORE
 
 
 @pytest.fixture()
@@ -85,7 +83,7 @@ def test_f2_feedback_creates_pending_proposal(client: TestClient):
 def test_f2_approve_proposal_ingests_into_kb(client: TestClient):
     """Approving a proposal ingests it into the KB and bumps the version."""
     fb_id = _create_closed_case(client)
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
 
     # Find the proposal
     resp = client.get("/kb/queue", params={"user": "steward1"})
@@ -94,11 +92,11 @@ def test_f2_approve_proposal_ingests_into_kb(client: TestClient):
     )
 
     # Approve it
-    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2"})
+    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "approved"
-    version_after = resp.json()["kb_version"]
-    assert version_after == version_before + 1, "KB version must increment on approve"
+    version_after = resp.json()["kb_versions"]["CRAH"]
+    assert version_after > version_before, "KB version must move forward on approve"
 
     # Verify it's no longer pending
     resp = client.get("/kb/queue", params={"user": "steward1"})
@@ -112,7 +110,7 @@ def test_f2_approve_proposal_ingests_into_kb(client: TestClient):
 def test_f2_reject_proposal_does_not_enter_kb(client: TestClient):
     """Rejecting a proposal keeps it out of the KB."""
     fb_id = _create_closed_case(client)
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
 
     resp = client.get("/kb/queue", params={"user": "steward1"})
     proposal_id = next(
@@ -120,13 +118,13 @@ def test_f2_reject_proposal_does_not_enter_kb(client: TestClient):
     )
 
     resp = client.post(f"/kb/proposals/{proposal_id}/reject", params={
-        "user": "steward1", "reason": "invalid cause attribution",
+        "user": "steward2", "reason": "invalid cause attribution",
     })
     assert resp.status_code == 200
     assert resp.json()["status"] == "rejected"
 
     # Version must NOT increment
-    version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     assert version_after == version_before, "KB version must not change on reject"
 
     # Not in queue anymore
@@ -140,26 +138,25 @@ def test_f2_rollback_removes_approved_cases(client: TestClient):
     # Approve first proposal
     resp = client.get("/kb/queue", params={"user": "steward1"})
     pid1 = next(p["proposal_id"] for p in resp.json()["queue"] if p["feedback_id"] == fb1)
-    client.post(f"/kb/proposals/{pid1}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid1}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
+    first = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
 
     fb2 = _create_closed_case(client)
     resp = client.get("/kb/queue", params={"user": "steward1"})
     pid2 = next(p["proposal_id"] for p in resp.json()["queue"] if p["feedback_id"] == fb2)
-    client.post(f"/kb/proposals/{pid2}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid2}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
-    version = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
-    assert version >= 2
+    version = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
+    assert version > first
 
-    # Rollback to version 1 (keep only first approved proposal)
-    # Requires rollback_knowledge_version capability (admin only)
-    resp = client.post("/kb/rollback/1", params={"user": "admin1"})
+    # Roll back to the version right after the first approval (admin only)
+    resp = client.post(f"/kb/rollback/{first}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
     assert resp.status_code == 200
-    assert resp.json()["rolled_back_to"] == 1
+    assert resp.json()["rolled_back_to"] == first
     assert resp.json()["removed_cases"] >= 1
 
-    # Version should be 1 now
     stats = client.get("/kb/stats", params={"user": "tech1"}).json()
-    assert stats["kb_version"] == 1
+    assert stats["kb_versions"]["CRAH"] == first
 
 
 def test_f2_rbac_kb_queue_requires_steward(client: TestClient):
@@ -170,7 +167,7 @@ def test_f2_rbac_kb_queue_requires_steward(client: TestClient):
 
 def test_f2_rbac_rollback_requires_steward(client: TestClient):
     """Technician cannot rollback (requires rollback_knowledge_version — admin only)."""
-    resp = client.post("/kb/rollback/0", params={"user": "tech1"})
+    resp = client.post("/kb/rollback/0", params={"user": "tech1", "pill": "CRAH"})
     assert resp.status_code == 403, "technician must not rollback KB"
 
 
@@ -181,9 +178,9 @@ def test_f2_proposer_cannot_approve_own_proposal(client: TestClient):
     pid = queue[-1]["proposal_id"]
     assert queue[-1]["submitted_by"] == "steward1"
 
-    own = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1"})
+    own = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward1", "rationale": "reviewed against the transcript"})
     assert own.status_code == 403
-    other = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    other = client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert other.status_code == 200
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from technical_services_pill.app import app, PILL_OWNERS
+from technical_services_pill.app import PILL_OWNERS, app
 
 
 @pytest.fixture()
@@ -29,12 +29,14 @@ def test_pills_lists_all_four_asset_types(client: TestClient):
         assert p["knowledge_count"] >= 0
 
 
-def test_pills_share_one_kb_version(client: TestClient):
-    """All four pills currently share one LearningStore -- the version
-    label must be identical across rows, not independently tracked."""
-    resp = client.get("/pills", params={"user": "tech1"})
-    labels = {p["kb_version_label"] for p in resp.json()["pills"]}
-    assert len(labels) == 1
+def test_each_pill_has_its_own_kb_version(client: TestClient):
+    """Each pill versions its own knowledge: the label names the pill, and
+    approving Pump knowledge moves only the Pump row."""
+    from technical_services_pill.learning import STORE as LSTORE
+    rows = client.get("/pills", params={"user": "tech1"}).json()["pills"]
+    for row in rows:
+        assert row["kb_version_label"] == LSTORE.label_of(row["asset_type"])
+        assert row["kb_version_label"].startswith(f"{row['asset_type']} v")
 
 
 def test_approval_rate_reflects_a_real_approved_proposal(client: TestClient):
@@ -55,7 +57,7 @@ def test_approval_rate_reflects_a_real_approved_proposal(client: TestClient):
     fb = client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"}).json()
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
-    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
     pills = client.get("/pills", params={"user": "tech1"}).json()["pills"]
     crah = next(p for p in pills if p["asset_type"] == "CRAH")

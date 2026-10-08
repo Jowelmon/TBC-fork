@@ -21,29 +21,26 @@ import sys
 from datetime import datetime, timezone
 
 from technical_services_pill import (
-    ESCALATE_CONFIDENCE,
-    MIN_RECO_CONFIDENCE,
+    LEARNING_STORE,
     AgentState,
     AgentStateName,
     CandidateCause,
     Diagnosis,
     EvidenceItem,
+    FeedbackRecord,
     GuardrailContext,
-    GuardrailResult,
     HumanDecision,
     HumanDecisionRecord,
+    LearningStore,
     Observation,
     Outcome,
     OutcomeResult,
     ReadingStatus,
     Recommendation,
     RecommendationAction,
-    sanitize_metadata,
-    FeedbackRecord,
-    LearningStore,
-    LEARNING_STORE,
-    score_confidence,
     evaluate_decision_tree,
+    sanitize_metadata,
+    score_confidence,
 )
 from technical_services_pill.tools import gather_evidence_for_fault
 
@@ -448,7 +445,7 @@ def test_learning_loop():
     proposal = store.record_feedback(fb, confidence=0.55, action_taken="bus_reseat")
     _check("proposal created (pending)", proposal["status"] == "pending")
     # F2: approve the proposal to ingest into the live KB
-    store.approve_proposal(proposal["proposal_id"], decided_by="steward2")
+    store.approve_proposal(proposal["proposal_id"], decided_by="steward2", rationale="reviewed")
     _check("validated case appended", len(store.validated) == base_cases + 1)
     _check("corrected flag False (cause agreed)", proposal["corrected"] is False)
 
@@ -532,10 +529,10 @@ def test_multi_asset_branch_isolation():
     """Each tree resolves the correct branch from distinct evidence sets, and
     unknown fault types yield [] (escalate)."""
     print("\n[test] multi-asset branch isolation")
-    obs = lambda ft, aid="X": Observation(  # noqa: E731
+    obs = lambda ft, aid="X": Observation(
         type=ft, sensor_id="s", detected_at=datetime.now(timezone.utc),
         reading_status=ReadingStatus.ABSENT, asset_id=aid)
-    evi = lambda s, t, p: EvidenceItem(  # noqa: E731
+    evi = lambda s, t, p: EvidenceItem(
         source=s, type=t, payload=p, retrieved_at=datetime.now(timezone.utc),
         tool="t", kb_refs=[])
     # UPS thermal-runaway must fire BEFORE SoH-based EoL (safety-first).

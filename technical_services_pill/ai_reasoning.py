@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .evidence_flags import field_label
 from .guardrails import sanitize_metadata
 from .llm import LLMError, diagnostic_second_opinion
 
@@ -40,6 +41,29 @@ def _fallback(reason: str) -> dict[str, Any]:
     out = dict(_DEFAULT_FALLBACK)
     out["summary"] = f"{out['summary']} ({reason})"
     return out
+
+
+def _value(v: Any) -> str:
+    if v is None:
+        return "no reading"
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, list):
+        return ", ".join(str(x) for x in v) or "none"
+    return str(v)
+
+
+
+
+def evidence_line(source: str, finding: str, payload: Any) -> str:
+    """One readable line per evidence item, e.g.
+    "UPS thermal: Battery temp c: 41.0; Temp rising: yes"."""
+    head = f"{source.upper() if len(source) <= 4 else source.capitalize()} {finding.replace('_', ' ')}"
+    if not isinstance(payload, dict):
+        return f"{head}: {_value(payload)}"
+    parts = [f"{field_label(k)}: {_value(v)}"
+             for k, v in payload.items() if not isinstance(v, (dict,)) and k != "records"]
+    return f"{head}: " + "; ".join(parts)
 
 
 def _norm(text: str) -> str:
@@ -105,11 +129,10 @@ def generate_diagnostic_hypothesis(
 
     evidence_text = [sanitize_metadata(obs_text)]
     for item in evidence:
-        finding = sanitize_metadata(str(item.get("finding") or ""))
-        summary = sanitize_metadata(str(item.get("summary") or ""))
-        source = sanitize_metadata(str(item.get("source") or ""))
+        line = evidence_line(str(item.get("source") or ""), str(item.get("finding") or ""),
+                             item.get("payload"))
         conflict = " [conflict]" if item.get("conflict") is True else ""
-        evidence_text.append(f"{source} {finding}: {summary}{conflict}")
+        evidence_text.append(sanitize_metadata(line) + conflict)
 
     knowledge_text = [
         sanitize_metadata(f"{k.get('cause', '')} -> {k.get('kb_ref', '')}")
@@ -123,6 +146,8 @@ def generate_diagnostic_hypothesis(
             candidate_causes=list(candidate_causes),
             evidence=evidence_text,
             knowledge=knowledge_text,
+            evidence_items=[{"source": e.get("source"), "finding": e.get("finding"),
+                             "payload": e.get("payload")} for e in evidence],
         )
         return _validate(
             raw,
