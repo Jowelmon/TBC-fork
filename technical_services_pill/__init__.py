@@ -12,7 +12,6 @@ Public surface:
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
 from .audit import GENESIS_HASH, canonical_json, compute_hash
-from .capture import capture_expert_knowledge
 from .cause_registry import (
     CAUSE_BATTERY_EOL,
     CAUSE_COMM_BUS_FAILURE,
@@ -72,7 +71,6 @@ __all__ = [
     "GuardrailContext",
     "check_guardrails",
     "sanitize_metadata",
-    "capture_expert_knowledge",
     # ai / cause registry
     "generate_diagnostic_hypothesis",
     "CANONICAL_CAUSE_IDS",

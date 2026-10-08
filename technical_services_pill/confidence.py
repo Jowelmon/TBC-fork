@@ -20,6 +20,8 @@ conservative (you can never be 100% confident from indirect evidence alone).
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from .models import MIN_EVIDENCE_COUNT, EvidenceItem
 
 # --- 【ASSUMPTION】 tunable weights (spec §4.3) -----------------------------
@@ -29,37 +31,119 @@ W3 = 0.25  # kb_match           (similarity to validated past cases via RAG)
 W4 = 0.10  # data_staleness     (penalty: telemetry older than freshness SLA)
 W5 = 0.15  # conflict_penalty   (penalty: contradictions in evidence)
 
+# --- Freshness SLA per evidence source, in minutes (W4) --------------------
+# 【ASSUMPTION】 illustrative; calibrate against real telemetry latency.
+_FRESHNESS_SLA_MINUTES: dict[str, float] = {
+    "sensor": 30.0,
+    "bms": 15.0,
+    "history": 24 * 60.0,
+    "config": 24 * 60.0,
+    "case_memory": 24 * 60.0,
+}
+_DEFAULT_SLA_MINUTES = 60.0
 
-def derive_confidence_signals(evidence: list[EvidenceItem]) -> dict[str, float]:
-    """Derive runtime peer corroboration and penalty signals from evidence.
 
-    This keeps the scoring model from silently assuming perfect corroboration
-    when the live evidence does not support it.
+def peer_agreement_from_registry(asset_id: str, sensor_id: str | None) -> float:
+    """Peer corroboration from real peer sensors / adjacent assets (W2).
+
+    Only applies where ``mock_registry`` actually models individual sensors
+    for the asset (CRAH, today): the fraction of that asset's OTHER sensors
+    currently reporting "ok". With no sensors of its own on the asset, it
+    falls back to sibling assets of the SAME type sharing a parent system;
+    with none of those either, it defaults to 0.5 (no signal either way).
+
+    Equipment types the registry has no sensor-level model for at all
+    (Chiller/UPS/Pump in this demo — they report generic telemetry, not
+    discrete Sensor objects) stay at a neutral 1.0: there is no peer concept
+    to measure, so defaulting them to 0.5 would penalise a registry gap
+    rather than a real disagreement.
     """
-    peer_agreement = 1.0
-    data_staleness = 0.0
-    conflict_penalty = 0.0
+    from .mock_registry import ASSETS, LIVE_READINGS, SENSORS
 
+    asset_sensor_ids = [s["id"] for s in SENSORS.values() if s["asset_id"] == asset_id]
+    if not asset_sensor_ids:
+        return 1.0  # no sensor-level model for this asset type
+
+    peer_ids = [sid for sid in asset_sensor_ids if sid != sensor_id]
+    asset = ASSETS.get(asset_id)
+    if not peer_ids and asset:
+        parent = asset.get("parent_system_id")
+        asset_type = asset.get("type")
+        for other in ASSETS.values():
+            if (
+                other["id"] != asset_id
+                and other.get("parent_system_id") == parent
+                and other.get("type") == asset_type
+            ):
+                peer_ids += [s["id"] for s in SENSORS.values() if s["asset_id"] == other["id"]]
+
+    if not peer_ids:
+        return 0.5  # a real peer slot exists in principle, but none is populated
+
+    statuses = [LIVE_READINGS.get(pid, {}).get("status") for pid in peer_ids]
+    healthy = sum(1 for s in statuses if s == "ok")
+    return healthy / len(statuses)
+
+
+def _staleness_from_age(evidence: list[EvidenceItem], *, now: datetime | None = None) -> float:
+    """W4: how far evidence has drifted past its source's freshness SLA.
+
+    Uses each item's own ``retrieved_at`` against ``now`` — not a payload
+    flag nothing ever sets. In a live request this is ~0 (evidence is
+    gathered moments before scoring); it only bites when older evidence is
+    reused unchanged (e.g. re-scoring a case against today's KB).
+    """
+    now = now or datetime.now(timezone.utc)
+    worst = 0.0
+    for ev in evidence:
+        sla = _FRESHNESS_SLA_MINUTES.get(ev.source, _DEFAULT_SLA_MINUTES)
+        if sla <= 0:
+            continue
+        retrieved = ev.retrieved_at
+        if retrieved.tzinfo is None:
+            retrieved = retrieved.replace(tzinfo=timezone.utc)
+        age_minutes = max(0.0, (now - retrieved).total_seconds() / 60.0)
+        worst = max(worst, min(1.0, age_minutes / sla))
+    return worst
+
+
+def _conflict_from_evidence(evidence: list[EvidenceItem]) -> float:
+    """W5: penalty from genuinely contradictory evidence pairs.
+
+    Flags boolean-valued payload fields that appear under the same key in
+    more than one evidence item but disagree (e.g. one source reporting a
+    bus reachable while another reports it unreachable) — not a payload
+    flag nothing ever sets.
+    """
+    seen: dict[str, bool] = {}
+    conflicts = 0
     for ev in evidence:
         payload = ev.payload or {}
-        if ev.source == "bms" and isinstance(payload, dict):
-            other_tags = payload.get("other_tags_reporting")
-            bus_alive = payload.get("bus_alive")
-            if isinstance(other_tags, bool):
-                peer_agreement = 1.0 if other_tags else 0.0
-            if isinstance(bus_alive, bool) and not bus_alive:
-                peer_agreement = min(peer_agreement, 0.5)
-        if isinstance(payload, dict):
-            stale_minutes = payload.get("stale_minutes")
-            if isinstance(stale_minutes, (int, float)):
-                data_staleness = max(data_staleness, min(1.0, stale_minutes / 180.0))
-            if payload.get("conflict") is True:
-                conflict_penalty = max(conflict_penalty, 0.5)
+        if not isinstance(payload, dict):
+            continue
+        for key, value in payload.items():
+            if not isinstance(value, bool):
+                continue
+            if key in seen:
+                if seen[key] != value:
+                    conflicts += 1
+            else:
+                seen[key] = value
+    return min(1.0, 0.5 * conflicts)
 
+
+def derive_confidence_signals(
+    evidence: list[EvidenceItem], *, asset_id: str, sensor_id: str | None = None,
+) -> dict[str, float]:
+    """Derive runtime peer-corroboration and penalty signals from evidence.
+
+    This keeps the scoring model from silently assuming perfect corroboration
+    or a clean, fresh evidence set when the live data does not support it.
+    """
     return {
-        "peer_agreement": max(0.0, min(1.0, peer_agreement)),
-        "data_staleness": max(0.0, min(1.0, data_staleness)),
-        "conflict_penalty": max(0.0, min(1.0, conflict_penalty)),
+        "peer_agreement": peer_agreement_from_registry(asset_id, sensor_id),
+        "data_staleness": _staleness_from_age(evidence),
+        "conflict_penalty": _conflict_from_evidence(evidence),
     }
 
 

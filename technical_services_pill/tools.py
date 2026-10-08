@@ -399,6 +399,22 @@ def record_outcome_for_state(state: "AgentStateLike", outcome: Outcome) -> None:
     state.record_outcome(outcome)
 
 
+def build_fault_signature(observation_type: str, top_cause_id: str | None, kb_refs: list[str] | None) -> str:
+    """Deterministic, asset-agnostic fault signature for KB retrieval.
+
+    Built from the observation type, resolved cause and grounding kb_refs —
+    the SAME way at diagnosis time (``app._fault_signature``) and at
+    feedback time (``submit_feedback``), so a case validated through
+    feedback actually matches the next identical fault's query signature
+    (Phase 3: confidence the KB can move). A signature built one way and
+    queried another never matches, which silently caps ``kb_match`` no
+    matter how much validated feedback is approved.
+    """
+    parts = [observation_type.replace("_", " "), (top_cause_id or "").replace("_", " ")]
+    parts.extend(r.replace(":", " ").replace("_", " ") for r in (kb_refs or []))
+    return " ".join(parts)
+
+
 def submit_feedback(case_id: str, corrections: dict,
                     *, state=None) -> str:
     """Submit feedback and promote it into the KB via the learning loop.
@@ -423,10 +439,15 @@ def submit_feedback(case_id: str, corrections: dict,
     asset_type = "CRAH"
     confidence = 0.8
     action_taken = ""
+    derived_signature = ""
     if state is not None:
         asset_id = getattr(state, "asset_id", "") or ""
+        asset_type = ASSETS.get(asset_id, {}).get("type") or asset_type
         if getattr(state, "diagnosis", None) is not None:
             proposed_cause = state.diagnosis.top_cause_id or None
+            derived_signature = build_fault_signature(
+                state.observation.type, state.diagnosis.top_cause_id, state.diagnosis.kb_refs,
+            )
         confidence = float(getattr(state, "confidence", 0.8) or 0.8)
         rec = getattr(state, "recommendation", None)
         if rec is not None and rec.actions:
@@ -440,6 +461,10 @@ def submit_feedback(case_id: str, corrections: dict,
             )
     confirmed_cause = corrections.get("confirmed_cause", proposed_cause or "unknown")
     asset_type = corrections.get("asset_type", asset_type)
+    # The caller may override the signature explicitly; otherwise use the
+    # one actually diagnosed, so the validated case this produces matches
+    # the next identical fault's query signature.
+    corrections.setdefault("fault_signature", derived_signature)
     fb = FeedbackRecord(
         feedback_id=fb_id,
         case_id=case_id,

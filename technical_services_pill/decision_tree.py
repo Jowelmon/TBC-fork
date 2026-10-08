@@ -115,7 +115,7 @@ _KB_REF_TREE = "kb:technical_services:causal_tree:v1"
 class DecisionResult(BaseModel):
     """One candidate cause emitted by the decision tree.
 
-    ``action`` is the draft recommendation action (still HITL-gated); it
+    ``action`` is the draft recommendation action (still gated on human approval); it
     always carries the same ``kb_refs`` as the result so the recommendation
     is grounded (spec §4.4 G8).
     """
@@ -182,7 +182,7 @@ def _comm_bus_failure(supporting: list[EvidenceItem]) -> DecisionResult:
         "Communication bus / controller failure",
         "controller_inspection",
         "bms_controller",
-        "Inspect controller + bus; escalate to BMS vendor (likely ESCALATED).",
+        "Inspect controller + bus; escalate to BMS vendor.",
         f"{_KB_REF_TREE}:Q2",
         supporting,
     )
@@ -194,7 +194,7 @@ def _config_drift(supporting: list[EvidenceItem]) -> DecisionResult:
         "Configuration drift (tag missing/renamed)",
         "config_remap",
         "bms_tag_mapping",
-        "Restore/re-map tag (draft work order) -> HITL.",
+        "Restore/re-map tag (draft work order).",
         f"{_KB_REF_TREE}:Q3",
         supporting,
     )
@@ -206,7 +206,7 @@ def _loose_wiring(supporting: list[EvidenceItem]) -> DecisionResult:
         "Loose wiring / connection disturbed during service",
         "onsite_inspection",
         "sensor_wiring",
-        "Onsite re-seat/inspect wiring -> HITL.",
+        "Onsite re-seat/inspect wiring.",
         f"{_KB_REF_TREE}:Q4",
         supporting,
     )
@@ -218,7 +218,7 @@ def _sensor_hardware_failure(supporting: list[EvidenceItem]) -> DecisionResult:
         "Sensor hardware failure (RTD/thermistor dead)",
         "sensor_replacement",
         "sensor",
-        "Replace sensor -> HITL.",
+        "Replace sensor.",
         f"{_KB_REF_TREE}:Q5",
         supporting,
     )
@@ -242,7 +242,7 @@ def _intermittent_fault(supporting: list[EvidenceItem]) -> DecisionResult:
         "Intermittent sensor fault / borderline failure",
         "onsite_diagnostic",
         "sensor",
-        "Onsite diagnostic + monitor -> HITL (lower confidence).",
+        "Onsite diagnostic + monitor (lower confidence).",
         f"{_KB_REF_TREE}:Q6",
         supporting,
     )
@@ -254,7 +254,7 @@ def _sensor_drift(supporting: list[EvidenceItem]) -> DecisionResult:
         "Sensor drift",
         "sensor_recalibration",
         "sensor",
-        "Recalibrate sensor -> HITL.",
+        "Recalibrate sensor.",
         f"{_KB_REF_TREE}:Q7",
         supporting,
     )
@@ -266,7 +266,7 @@ def _sensor_fault_noise(supporting: list[EvidenceItem]) -> DecisionResult:
         "Sensor fault or electrical noise",
         "sensor_inspection",
         "sensor",
-        "Inspect + replace sensor -> HITL; request peer-sensor evidence.",
+        "Inspect + replace sensor; request peer-sensor evidence.",
         f"{_KB_REF_TREE}:Q7",
         supporting,
     )
@@ -405,7 +405,7 @@ def _refrigerant_leak(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_REFRIGERANT_LEAK, "Refrigerant leak (low-pressure safety trip)",
         "leak_inspection_repair", "refrigerant_circuit",
-        "Locate + repair leak, pressure-test, recharge -> HITL.",
+        "Locate + repair leak, pressure-test, recharge.",
         f"{_KB_REF_CHILLER}:Q1", supporting,
     )
 
@@ -414,7 +414,7 @@ def _low_refrigerant_charge(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_LOW_REFRIGERANT_CHARGE, "Low refrigerant charge (chronic undercharge)",
         "refrigerant_topup", "refrigerant_circuit",
-        "Top up charge; verify superheat/subcooling -> HITL.",
+        "Top up charge; verify superheat/subcooling.",
         f"{_KB_REF_CHILLER}:Q1", supporting,
     )
 
@@ -423,7 +423,7 @@ def _condenser_fouling(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_CONDENSER_FOULING, "Condenser fouling (high head pressure)",
         "condenser_cleaning", "condenser",
-        "Chemical clean condenser tubes/coils -> HITL.",
+        "Chemical clean condenser tubes/coils.",
         f"{_KB_REF_CHILLER}:Q2", supporting,
     )
 
@@ -432,7 +432,7 @@ def _compressor_motor_fault(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_COMPRESSOR_MOTOR_FAULT, "Compressor motor fault (overcurrent / winding)",
         "compressor_overhaul", "compressor_motor",
-        "Megger test + motor rewind/replacement -> HITL (high cost).",
+        "Megger test + motor rewind/replacement (high cost).",
         f"{_KB_REF_CHILLER}:Q3", supporting,
     )
 
@@ -441,7 +441,7 @@ def _chiller_electrical_fault(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_CHILLER_ELECTRICAL_FAULT, "Starter / contactor electrical fault",
         "starter_replacement", "compressor_starter",
-        "Inspect + replace starter/contactor -> HITL.",
+        "Inspect + replace starter/contactor.",
         f"{_KB_REF_CHILLER}:Q4", supporting,
     )
 
@@ -524,7 +524,7 @@ def _thermal_runaway_risk(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_THERMAL_RUNAWAY_RISK, "Thermal runaway risk (cell temp high + rising)",
         "thermal_shutdown_inspect", "battery_bank",
-        "Reduce float voltage, force-ventilate, isolate bank -> ESCALATE (safety).",
+        "Reduce float voltage, force-ventilate, isolate bank; safety-critical, do not attempt alone.",
         f"{_KB_REF_UPS}:Q1", supporting,
     )
 
@@ -533,7 +533,7 @@ def _battery_eol(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_BATTERY_EOL, "Battery end-of-life (low SoH / past design life)",
         "battery_replacement", "battery_bank",
-        "Replace battery bank; impedance-test cells -> HITL.",
+        "Replace battery bank; impedance-test cells.",
         f"{_KB_REF_UPS}:Q2", supporting,
     )
 
@@ -542,7 +542,7 @@ def _charger_failure(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_CHARGER_FAILURE, "Charger module failure (no charge current)",
         "charger_repair", "ups_charger",
-        "Inspect/repair charger rectifier module -> HITL.",
+        "Inspect/repair charger rectifier module.",
         f"{_KB_REF_UPS}:Q3", supporting,
     )
 
@@ -551,7 +551,7 @@ def _ground_fault(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_GROUND_FAULT, "Ground fault / insulation breakdown",
         "ground_fault_locate", "battery_bank",
-        "Isolate + megger test battery rack to ground -> HITL.",
+        "Isolate + megger test battery rack to ground.",
         f"{_KB_REF_UPS}:Q4", supporting,
     )
 
@@ -560,7 +560,7 @@ def _inverter_fault(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_INVERTER_FAULT, "Inverter section fault",
         "inverter_repair", "ups_inverter",
-        "Diagnose inverter IGBT/driver board -> HITL.",
+        "Diagnose inverter IGBT/driver board.",
         f"{_KB_REF_UPS}:Q5", supporting,
     )
 
@@ -644,7 +644,7 @@ def _cavitation(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_CAVITATION, "Cavitation (low NPSH / flow instability)",
         "npsh_review_throttle", "suction_sump",
-        "Increase suction head / throttle discharge; inspect impeller pitting -> HITL.",
+        "Increase suction head / throttle discharge; inspect impeller pitting.",
         f"{_KB_REF_PUMP}:Q1", supporting,
     )
 
@@ -653,7 +653,7 @@ def _shaft_misalignment(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_SHAFT_MISALIGNMENT, "Shaft misalignment (2x + high axial)",
         "laser_realign", "coupling",
-        "Laser-align pump-to-motor coupling -> HITL.",
+        "Laser-align pump-to-motor coupling.",
         f"{_KB_REF_PUMP}:Q2", supporting,
     )
 
@@ -662,7 +662,7 @@ def _foundation_looseness(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_FOUNDATION_LOOSENESS, "Foundation looseness / soft foot",
         "grouting_retorque", "pump_base",
-        "Retorque hold-down bolts, fix soft foot, regrout base -> HITL.",
+        "Retorque hold-down bolts, fix soft foot, regrout base.",
         f"{_KB_REF_PUMP}:Q3", supporting,
     )
 
@@ -671,7 +671,7 @@ def _bearing_wear(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_BEARING_WEAR, "Bearing wear (defect freq / high temp)",
         "bearing_replacement", "pump_bearings",
-        "Replace bearings; analyse oil sample -> HITL.",
+        "Replace bearings; analyse oil sample.",
         f"{_KB_REF_PUMP}:Q4", supporting,
     )
 
@@ -680,7 +680,7 @@ def _impeller_imbalance(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_IMPELLER_IMBALANCE, "Impeller imbalance (1x dominant)",
         "impeller_balance_clean", "impeller",
-        "Clean/balance impeller; inspect for erosion -> HITL.",
+        "Clean/balance impeller; inspect for erosion.",
         f"{_KB_REF_PUMP}:Q5", supporting,
     )
 

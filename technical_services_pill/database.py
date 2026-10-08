@@ -15,6 +15,8 @@ from typing import Any
 class SQLiteStore:
     def __init__(self, db_path: str | None = None) -> None:
         if db_path is None:
+            db_path = os.environ.get("TBC_CASE_DB_PATH")
+        if db_path is None:
             root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
             db_path = os.path.join(root, "technical_services_pill.sqlite3")
         self.db_path = db_path

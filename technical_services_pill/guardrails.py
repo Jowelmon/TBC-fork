@@ -1,12 +1,16 @@
 """Deterministic guardrail / policy engine (spec §4, Layer 4).
 
-This engine is INTENTIONALLY independent of the LLM: it is pure Python that
-runs *before* any recommendation reaches a human and *before* any work order
-is created (spec §1 layer 4). It implements rules G1–G8 from spec §4.4.
+``check_guardrails`` (G1-G8) is INTENTIONALLY independent of the LLM: it is
+pure Python that runs *before* any recommendation reaches a human and
+*before* any work order is created (spec §1 layer 4). ``flag_ai_disagreement``
+(G9) is the one exception — it surfaces the advisory AI second opinion
+(``ai_reasoning.py``) to the AOM, but it is still a pure function of its
+inputs, and it never blocks, escalates or requires approval.
 
 Public API
 ----------
 - ``check_guardrails(recommendation, ctx)`` -> ``GuardrailResult``
+- ``flag_ai_disagreement(result, ai_hypothesis, rule_cause)`` -> ``GuardrailResult``
 - ``sanitize_metadata(text)`` -> ``str``  (G7, called before LLM sees metadata)
 
 Rule reference (spec §4.4)
@@ -19,6 +23,8 @@ G5  asset not in registry / unknown asset -> escalate
 G6  any recommended action -> force AWAITING_APPROVAL (no auto-execute)
 G7  sensor-metadata/tag-name contains injection patterns -> sanitize before LLM
 G8  recommendation not grounded in kb_refs/evidence -> reject as ungrounded
+G9  AI second opinion disagrees with the rule-based diagnosis -> non-blocking
+    advisory flag for the AOM; never changes routing
 """
 from __future__ import annotations
 
@@ -191,3 +197,31 @@ def check_guardrails(
                 require_approval=True)
 
     return res
+
+
+def flag_ai_disagreement(
+    result: GuardrailResult,
+    *,
+    ai_hypothesis: dict | None,
+    rule_cause: str | None,
+) -> GuardrailResult:
+    """G9: surface an AI/rules disagreement to the AOM. Advisory only.
+
+    Never sets ``escalate``, ``block`` or ``require_approval`` — the routing
+    decided by G1-G8 above is final by the time this runs. Idempotent: a
+    second call (e.g. a repeated ``/advance``) does not duplicate the flag.
+    """
+    if "G9" in result.rule_ids:
+        return result
+    if not ai_hypothesis or ai_hypothesis.get("status") != "ok":
+        return result
+    if ai_hypothesis.get("agrees_with_rules"):
+        return result
+    hyp_label = ai_hypothesis.get("hypothesis") or "no cause identified"
+    result.add(
+        "G9",
+        f"AI second opinion disagrees with the rule-based diagnosis "
+        f"(AI: {hyp_label}; rules: {rule_cause or 'unresolved'}) — advisory only, "
+        "does not change routing or require action",
+    )
+    return result

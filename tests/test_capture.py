@@ -26,7 +26,8 @@ def test_capture_creates_pending_proposal_not_kb_change(client):
     assert after["expert_heuristics"] == before["expert_heuristics"]
     assert after["kb_version"] == before["kb_version"]
     causes = {h["likely_cause"] for h in r.json()["heuristics"]}
-    assert {"refrigerant_leak", "comm_bus_failure"} <= causes
+    # Stored as canonical IDs, never aliases, so diagnosis matching works.
+    assert {"refrigerant_leak", "communication_bus_controller_failure"} <= causes
 
 
 def test_every_heuristic_quotes_the_transcript(client):
