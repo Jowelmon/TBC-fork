@@ -1,8 +1,10 @@
 // cloud.js - The AI's on-screen presence: a small cloud with a face.
 //
 // It floats over every screen and can be dragged anywhere (mouse, touch or
-// arrow keys); its position is remembered. Its expression shows what the AI
-// is doing, and clicking it says so in words:
+// arrow keys); its position is remembered. Clicking it opens a small
+// assistant panel: the live model status, what the AI does on this screen
+// (and what it may not do), and a few shortcuts. Its expression shows what
+// the AI is doing:
 //   online   smiling            Tencent Cloud ADP is answering
 //   ready    calm, blinking     offline models in use, or ADP not yet called
 //   thinking eyes up, dots      a model call is in progress
@@ -58,13 +60,69 @@ const MESSAGES = {
   offline: 'The AI model is unavailable right now. Diagnosis carries on without me.',
 };
 
-let el, bubble, state = 'ready', base = 'ready', note = '', busy = 0;
+// What the AI does on each screen, and what it may not do.
+const CONTEXT = {
+  dashboard: 'The strip at the top shows where I am used. Every diagnosis here comes from the decision tree, not from me.',
+  diagnosis: 'On this case I give an advisory second opinion (the AI tab). The decision tree\'s diagnosis stands either way.',
+  decision: 'The manager decides here. My opinion and expert knowledge are context only; I cannot approve anything.',
+  outcome: 'People confirm the outcome. It becomes knowledge only after a knowledge steward approves it.',
+  capture: 'I draft heuristics from the interview. Any line not in the expert\'s own words is rejected by the grounding check.',
+  governance: 'Stewards approve knowledge; the sentinel and auditors watch the process. I take no part in approving.',
+};
+const SHORTCUTS = {
+  capture: [['Draft this interview', () => document.getElementById('cap-run')?.click()]],
+  diagnosis: [['Show my second opinion', () => window.__tabs__?.open('diag', 'ai')]],
+};
+
+let el, panel, state = 'ready', base = 'ready', note = '', busy = 0, screen = 'dashboard';
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function render() {
   if (!el) return;
   el.querySelector('.cloud-face').innerHTML = cloudSvg(state, 104);
-  el.setAttribute('aria-label', `AI assistant: ${MESSAGES[state].replace('…', '')} Press Enter for details; arrow keys move me.`);
-  if (!bubble.hidden) bubble.textContent = note && state !== 'thinking' ? `${MESSAGES[state]} ${note}` : MESSAGES[state];
+  el.setAttribute('aria-label', `AI assistant: ${MESSAGES[state].replace('…', '')} Press Enter to open; arrow keys move me.`);
+  el.setAttribute('aria-expanded', String(!panel.hidden));
+  if (!panel.hidden) renderPanel();
+}
+
+function renderPanel() {
+  const status = note && state !== 'thinking' ? `${MESSAGES[state]} ${note}` : MESSAGES[state];
+  const model = document.getElementById('model-chip')?.textContent || '';
+  const shortcuts = [
+    ...(SHORTCUTS[screen] || []),
+    ['Where AI is used', () => { window.__app__?.navigate('dashboard'); setTimeout(() => document.querySelector('.ai-flow')?.scrollIntoView({ behavior: 'smooth' }), 300); }],
+    ['Demo guide', () => document.getElementById('guide-toggle')?.click()],
+  ];
+  panel.innerHTML = `
+    <div class="cp-head"><strong>Cloudy</strong> <span class="cp-sub">AI assistant</span>
+      <button class="cp-close" aria-label="Close">&times;</button></div>
+    <div class="cp-status cp-${state}"><span class="cp-dot" aria-hidden="true"></span><span>${esc(model)}</span></div>
+    <p class="cp-text">${esc(status)}</p>
+    <div class="cp-label">On this screen</div>
+    <p class="cp-text">${esc(CONTEXT[screen] || CONTEXT.dashboard)}</p>
+    <div class="cp-actions">${shortcuts.map((s, i) => `<button class="btn btn-secondary btn-sm" data-i="${i}">${esc(s[0])}</button>`).join('')}</div>
+    <p class="cp-foot">I draft and advise. People decide.</p>`;
+  panel.querySelector('.cp-close').onclick = () => togglePanel(false);
+  panel.querySelectorAll('.cp-actions button').forEach(b => {
+    b.onclick = () => { togglePanel(false); shortcuts[+b.dataset.i][1](); };
+  });
+  positionPanel();
+}
+
+// Beside the cloud, on whichever side has room, kept on screen.
+function positionPanel() {
+  const r = el.getBoundingClientRect();
+  const w = panel.offsetWidth || 320, h = panel.offsetHeight || 260;
+  const right = r.right + 12 + w <= window.innerWidth - 8;
+  const x = right ? r.right + 12 : Math.max(8, r.left - 12 - w);
+  const y = Math.min(Math.max(8, r.bottom - h), window.innerHeight - h - 8);
+  panel.style.left = `${x}px`; panel.style.top = `${y}px`;
+}
+
+// The screen the user is on, for the panel's "On this screen" note.
+export function setCloudScreen(name) {
+  screen = name;
+  if (panel && !panel.hidden) renderPanel();
 }
 
 function place(x, y) {
@@ -75,8 +133,7 @@ function place(x, y) {
   const ny = Math.min(Math.max(top, y), window.innerHeight - h - 8);
   el.style.left = `${nx}px`; el.style.top = `${ny}px`;
   el.style.right = 'auto'; el.style.bottom = 'auto';
-  // On the left half the speech bubble opens to the right, staying on screen.
-  el.classList.toggle('cloud-left', nx + w / 2 < window.innerWidth / 2);
+  if (panel && !panel.hidden) positionPanel();
   return [nx, ny];
 }
 
@@ -89,7 +146,6 @@ function dock() {
   if (!rail || !foot || rail.width < w + 16) {
     el.style.left = el.style.top = '';
     el.style.right = el.style.bottom = '';
-    el.classList.remove('cloud-left');
     return;
   }
   place(rail.left + (rail.width - w) / 2, foot.top - h - 16);
@@ -104,13 +160,17 @@ export function initCloud() {
   el.id = 'ai-cloud';
   el.tabIndex = 0;
   el.setAttribute('role', 'button');
+  el.setAttribute('aria-haspopup', 'dialog');
   el.innerHTML = '<div class="cloud-face"></div>';
-  bubble = document.createElement('div');
-  bubble.className = 'cloud-bubble';
-  bubble.hidden = true;
-  bubble.setAttribute('role', 'status');
-  el.appendChild(bubble);
+  panel = document.createElement('div');
+  panel.className = 'cloud-panel';
+  panel.id = 'cloud-panel';
+  panel.hidden = true;
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Cloudy, the AI assistant');
+  el.setAttribute('aria-controls', 'cloud-panel');
   document.body.appendChild(el);
+  document.body.appendChild(panel);
   render();
 
   let saved = null;
@@ -121,6 +181,8 @@ export function initCloud() {
   // Drag with mouse or touch; a press without movement is a click.
   let start = null;
   el.addEventListener('pointerdown', e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault(); // no text selection or native drag while moving it
     const r = el.getBoundingClientRect();
     start = { x: e.clientX, y: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
     el.setPointerCapture(e.pointerId);
@@ -132,7 +194,7 @@ export function initCloud() {
   });
   el.addEventListener('pointerup', () => {
     if (!start) return;
-    if (start.moved) save(); else toggleBubble();
+    if (start.moved) save(); else togglePanel();
     el.classList.remove('dragging');
     start = null;
   });
@@ -145,9 +207,7 @@ export function initCloud() {
       place(r.left + moves[e.key][0], r.top + moves[e.key][1]);
       save();
     } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault(); toggleBubble();
-    } else if (e.key === 'Escape') {
-      bubble.hidden = true;
+      e.preventDefault(); togglePanel();
     }
   });
   // Keep the cloud on screen when the window changes size: re-dock it unless
@@ -163,10 +223,17 @@ export function initCloud() {
   });
 }
 
-function toggleBubble() {
-  bubble.hidden = !bubble.hidden;
+function togglePanel(open = panel.hidden) {
+  panel.hidden = !open;
   render();
+  if (open) panel.querySelector('.cp-close')?.focus();
+  else el.focus({ preventScroll: true });
 }
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && panel && !panel.hidden) togglePanel(false); });
+document.addEventListener('pointerdown', e => {
+  if (panel && !panel.hidden && !panel.contains(e.target) && !el.contains(e.target)) togglePanel(false);
+});
 
 // Base state from /system/info: online | ready | offline.
 export function setCloudStatus(next, message = '') {

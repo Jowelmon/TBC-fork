@@ -1,7 +1,7 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
 import { api } from './api.js?v=9';
-import { cloudSvg } from './cloud.js?v=5';
+import { cloudSvg } from './cloud.js?v=6';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -22,6 +22,62 @@ function frozenWrap(s, html, esc) {
   return `<div class="banner banner-error"><p><strong>Case frozen:</strong> the audit chain for ${esc(s.case_id)} failed verification, so it can be read but not advanced, decided or closed until an auditor reviews it.</p></div>
     <div class="case-frozen">${html}</div>`;
 }
+
+// Tabs: one card group at a time instead of a long page. Every panel is
+// rendered (screens fill their cards by id); only the chosen one shows, and
+// the choice is remembered per screen for the session.
+function tabbed(key, tabs, first = tabs[0].id) {
+  let active = null;
+  try { active = sessionStorage.getItem(`tbc_tab_${key}`); } catch (_) { /* first tab */ }
+  if (!tabs.some(t => t.id === active)) active = first;
+  return `<div class="tabs" role="tablist" data-tabs="${key}">${tabs.map(t => `<button type="button" role="tab" class="tab" id="tab-${key}-${t.id}"
+      aria-selected="${t.id === active}" aria-controls="tp-${key}-${t.id}" tabindex="${t.id === active ? 0 : -1}"
+      data-key="${key}" data-tab="${t.id}">${t.label}${tabNote(t.note)}</button>`).join('')}</div>`
+    + tabs.map(t => `<div class="tab-panel" role="tabpanel" id="tp-${key}-${t.id}" aria-labelledby="tab-${key}-${t.id}" ${t.id === active ? '' : 'hidden'}>${t.html}</div>`).join('');
+}
+// A count shows as a number in a bubble; anything else as a short word.
+function tabNote(note) {
+  if (note === undefined || note === null || note === '' || note === 0) return '';
+  return /^\d+$/.test(String(note))
+    ? ` <span class="tab-count">${note}</span>`
+    : ` <span class="tab-note">${note}</span>`;
+}
+function openTab(key, id) {
+  const list = document.querySelector(`[data-tabs="${key}"]`);
+  if (!list || !document.getElementById(`tab-${key}-${id}`)) return;
+  list.querySelectorAll('.tab').forEach(b => {
+    const on = b.dataset.tab === id;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+    document.getElementById(b.getAttribute('aria-controls')).hidden = !on;
+  });
+  try { sessionStorage.setItem(`tbc_tab_${key}`, id); } catch (_) { /* not remembered */ }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.tab[data-key]');
+  if (b) openTab(b.dataset.key, b.dataset.tab);
+});
+document.addEventListener('keydown', e => {
+  const b = e.target.closest?.('.tab[data-key]');
+  if (!b || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const all = [...b.parentElement.querySelectorAll('.tab')];
+  const i = all.indexOf(b);
+  const next = e.key === 'Home' ? all[0] : e.key === 'End' ? all.at(-1)
+    : all[(i + (e.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length];
+  e.preventDefault(); openTab(next.dataset.key, next.dataset.tab); next.focus();
+});
+// A tab's small status note ("2 pending", "action needed"), set after load.
+function setTabNote(key, id, text) {
+  const b = document.getElementById(`tab-${key}-${id}`);
+  if (!b) return;
+  b.querySelectorAll('.tab-note, .tab-count').forEach(x => x.remove());
+  if (!text) return;
+  const n = document.createElement('span');
+  n.className = /^\d+$/.test(String(text)) ? 'tab-count' : 'tab-note';
+  n.textContent = text;
+  b.append(' ', n);
+}
+window.__tabs__ = { open: openTab };
 
 const isForbidden = e => e?.status === 403 || /403|lacks capability|forbidden/i.test(e?.message || '');
 const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Role-based access:</strong> ${what} is limited to ${roles}. Switch role in the top bar to see it.</p></div>`;
@@ -212,46 +268,37 @@ export function renderDashboard(el, state, h) {
     <section class="card ai-flow" aria-label="Where AI is used and what governs it">
       <div class="card-body">
         <div class="ai-flow-row">
-          <div class="ai-flow-step ai-flow-ai"><div class="ai-flow-k">AI capability</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts expert knowledge from interviews; gives an advisory second opinion</div></div>
+          <div class="ai-flow-step ai-flow-ai"><div class="ai-flow-k">AI</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts knowledge, second opinion</div></div>
           <div class="ai-flow-arrow" aria-hidden="true">→</div>
-          <div class="ai-flow-step"><div class="ai-flow-k">TBC governance</div><div class="ai-flow-v">Grounding · safety screen · guardrails G1-G9 · RBAC · sentinel</div><div class="ai-flow-d">AI output that is not in the expert's words, or would defeat a protection, never becomes knowledge</div></div>
+          <div class="ai-flow-step"><div class="ai-flow-k">Governance</div><div class="ai-flow-v">Checks every AI output</div><div class="ai-flow-d">Grounding, safety, guardrails, sentinel</div></div>
           <div class="ai-flow-arrow" aria-hidden="true">→</div>
-          <div class="ai-flow-step"><div class="ai-flow-k">Diagnosis</div><div class="ai-flow-v">Deterministic decision tree</div><div class="ai-flow-d">Same evidence, same answer, every time</div></div>
+          <div class="ai-flow-step"><div class="ai-flow-k">Diagnosis</div><div class="ai-flow-v">Decision tree</div><div class="ai-flow-d">Same evidence, same answer</div></div>
           <div class="ai-flow-arrow" aria-hidden="true">→</div>
-          <div class="ai-flow-step ai-flow-human"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing executes without an Asset Ops Manager</div></div>
+          <div class="ai-flow-step ai-flow-human"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing runs without a manager</div></div>
         </div>
       </div>
     </section>
-    <details class="card why-panel">
-      <summary><h3 style="display:inline">Why this exists</h3></summary>
+    <details class="card why-panel about-card">
+      <summary><h3 style="display:inline">About this pill</h3> <span class="muted">why it exists · illustrative value · deployment path</span></summary>
       <div class="card-body">
-        <p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
+      ${tabbed('about', [
+        { id: 'why', label: 'Why this exists', html: `<p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
         <p><strong>Users:</strong> technicians trigger and work cases; Asset Ops Managers approve every recommendation before anything happens; Knowledge Stewards review and govern what the pill learns from interviews and closed cases.</p>
-        <p><strong>Value:</strong> a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). For what that could be worth, use the illustrative calculator below with your own figures.</p>
-      </div>
-    </details>
-    <details class="card why-panel" id="roi-panel">
-      <summary><h3 style="display:inline">Illustrative value</h3> <span class="badge badge-yellow">Illustrative scenario — not Keppel actuals</span></summary>
-      <div class="card-body">
-        <p class="muted" style="margin-bottom:10px">Every number here is an input you set. None is Keppel data; replace each with a measured baseline.</p>
+        <p><strong>Value:</strong> a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). For what that could be worth, use the Illustrative value tab with your own figures.</p>` },
+        { id: 'value', label: 'Illustrative value', note: 'not Keppel actuals', html: `<p class="muted" style="margin-bottom:10px">Your inputs, not Keppel data.</p>
         <div class="roi-grid">
-          <label>Fault cases a year<input id="roi-cases" type="number" min="0" step="10" value="500"></label>
-          <label>Diagnosis time today (minutes)<input id="roi-now" type="number" min="0" step="5" value="60"></label>
-          <label>Diagnosis time with the pill (minutes)<input id="roi-with" type="number" min="0" step="5" value="30"></label>
-          <label>Loaded technician cost (per hour)<input id="roi-rate" type="number" min="0" step="5" value="60"></label>
+          <label>Cases a year<input id="roi-cases" type="number" min="0" step="10" value="500"></label>
+          <label>Minutes per case today<input id="roi-now" type="number" min="0" step="5" value="60"></label>
+          <label>Minutes with TBC<input id="roi-with" type="number" min="0" step="5" value="30"></label>
+          <label>Cost per hour<input id="roi-rate" type="number" min="0" step="5" value="60"></label>
         </div>
-        <div class="roi-out" id="roi-out" aria-live="polite"></div>
-      </div>
-    </details>
-    <details class="card why-panel">
-      <summary><h3 style="display:inline">Deployment path</h3></summary>
-      <div class="card-body">
-        <p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
+        <div class="roi-out" id="roi-out" aria-live="polite"></div>` },
+        { id: 'path', label: 'Deployment path', html: `<p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
         <p><strong>Stage 2 -- Production on Tencent Cloud:</strong> containerised deploy (the repo's own Dockerfile), SQLite swapped for a managed database, secrets moved to Tencent Cloud's secret manager, real CMMS work-order integration.</p>
         <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, the steward roster set per site (it is already configurable with TBC_PILL_OWNERS).</p>
-        <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>
-      </div>
-    </details>
+        <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>` },
+      ])}
+    </div></details>
     <div class="flex justify-between align-center" style="margin-bottom:20px">
       <div></div>
       <div class="flex gap-8">
@@ -314,14 +361,14 @@ export function renderDashboard(el, state, h) {
     try { localStorage.setItem('tbc_roi', JSON.stringify([cases, now, withPill, rate])); } catch (_) { /* not remembered */ }
     setHTML('roi-out', `
       <div class="stat"><div class="stat-val">${saved} min</div><div class="stat-lbl">Saved per case</div></div>
-      <div class="stat stat-green"><div class="stat-val">${Math.round(hours).toLocaleString()} h</div><div class="stat-lbl">Technician hours a year</div></div>
-      <div class="stat stat-blue"><div class="stat-val">${Math.round(hours * rate).toLocaleString()}</div><div class="stat-lbl">Cost a year (same currency as the rate)</div></div>
-      <p class="muted roi-formula">${cases} cases × ${saved} min ÷ 60 = ${Math.round(hours).toLocaleString()} h; × ${rate} per hour. Excludes harder-to-measure value: fewer repeat visits, knowledge kept when experts leave.</p>`);
+      <div class="stat stat-green"><div class="stat-val">${Math.round(hours).toLocaleString()} h</div><div class="stat-lbl">Hours saved a year</div></div>
+      <div class="stat stat-blue"><div class="stat-val">${Math.round(hours * rate).toLocaleString()}</div><div class="stat-lbl">Saved a year</div></div>
+      <p class="muted roi-formula">${cases} × ${saved} min ÷ 60 × ${rate}/h</p>`);
   };
   roiIds.forEach(id => document.getElementById(id).addEventListener('input', roi));
   roi();
   api.get('/system/info').then(info => {
-    setHTML('ai-flow-provider', esc(info.llm_provider === 'adp' ? 'Tencent Cloud ADP' : 'Offline models (Tencent Cloud ADP when configured)'));
+    setHTML('ai-flow-provider', esc(info.llm_provider === 'adp' ? 'Tencent Cloud ADP' : 'Offline models'));
   }).catch(() => {});
 
   document.getElementById('btn-seed').onclick = async () => {
@@ -535,6 +582,7 @@ export function renderDiagnosis(el, state, h) {
         html += `<div class="banner banner-error"><p><strong>Knowledge withdrawn:</strong> ${esc(s.knowledge_withdrawn)}. The confidence below may no longer hold; re-score on AOM Decision before approval.</p></div>`;
       }
 
+      const T = { summary: '', evidence: '', ai: '', expert: '', scoring: '' };
       // Summary first: what the agent concluded and what happens next, so the
       // detail below is there to check, not to read through.
       const evsAll = s.evidence || [];
@@ -549,7 +597,7 @@ export function renderDiagnosis(el, state, h) {
           : hypS.agrees_with_rules ? `agrees (${causeLabel(hypS.hypothesis)})`
           : `disagrees: suggests ${causeLabel(hypS.hypothesis)} (G9, advisory)`;
         const firstAction = s.recommendation && (s.recommendation.actions || [])[0];
-        html += `<div class="card summary-card"><div class="card-body">
+        T.summary += `<div class="card summary-card"><div class="card-body">
           <div class="summary-grid">
             <div><div class="summary-lbl">Likely cause</div><div class="summary-val">${esc(causeLabel(s.diagnosis.top_cause_id))}</div></div>
             <div><div class="summary-lbl">Confidence</div><div class="summary-val"><span class="badge ${cb.cls}">${cb.label}</span></div></div>
@@ -557,13 +605,12 @@ export function renderDiagnosis(el, state, h) {
             <div><div class="summary-lbl">Recommendation</div><div class="summary-val">${firstAction ? esc(firstAction.detail) : '<span class="muted">none: a person decides</span>'}</div></div>
           </div>
           <div class="summary-row"><span class="summary-lbl">Abnormal readings</span> ${abnormalReadings.length ? abnormalReadings.map(r => `<span class="badge badge-red">${esc(r)}</span>`).join(' ') : '<span class="muted">none flagged</span>'}</div>
-          <div class="summary-row"><span class="summary-lbl">Next step</span> ${esc(nextHintText)}</div>
         </div></div>`;
       }
 
       // Two-column: evidence + diagnosis
       const abnormalCount = evsAll.filter(ev => (ev.abnormal || []).length).length;
-      html += `<div class="grid-2">
+      T.evidence += `<div class="grid-2">
         <div class="card"><div class="card-header"><h3>Evidence Timeline</h3><div class="flex align-center gap-8"><span class="muted">${abnormalCount && !_evidenceShowAll ? `${abnormalCount} of ${evsAll.length} abnormal` : `${evsAll.length} items`}</span>${abnormalCount && abnormalCount < evsAll.length ? `<button class="evidence-toggle" id="btn-ev-all">${_evidenceShowAll ? 'Abnormal only' : 'Show all'}</button>` : ''}<button class="evidence-toggle" id="btn-ev-toggle">${_evidenceRawMode ? 'Plain English' : 'Raw JSON'}</button></div></div><div class="card-body">
           <span class="tier-label tier-fact">Tier 1 - Sensor Observations (Facts)</span>
           <div id="ev-body"></div>
@@ -574,7 +621,7 @@ export function renderDiagnosis(el, state, h) {
         </div></div>
       </div>`;
 
-      html += `<div class="card"><div class="card-header">
+      T.ai += `<div class="card"><div class="card-header">
           <div class="flex align-center gap-8">
             <span class="card-cloud" id="ai-avatar"></span>
             <h3>AI Second Opinion</h3>
@@ -583,17 +630,26 @@ export function renderDiagnosis(el, state, h) {
         </div><div class="card-body" id="ai-opinion-body"></div></div>`;
 
       // Recommendation
-      html += `<div class="card"><div class="card-header"><h3>Recommended Action</h3></div><div class="card-body">
+      T.summary += `<div class="card"><div class="card-header"><h3>Recommended Action</h3></div><div class="card-body">
         <span class="tier-label tier-action">Tier 3 - Recommended Action (from approved Intelligence Pill knowledge)</span>
         <div id="rec-body"></div>
       </div></div>`;
 
-      html += `<div class="card"><div class="card-header"><h3>Expert Knowledge Reused</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="expert-knowledge-body"></div></div>`;
+      T.expert += `<div class="card"><div class="card-header"><h3>Expert Knowledge Reused</h3><span class="badge badge-purple">AI HARVEST</span></div><div class="card-body" id="expert-knowledge-body"></div></div>`;
 
-      // The working behind the summary: collapsed, one click away.
+      // The working behind the summary: its own tab.
       const firedCount = ((s.guardrail_result || {}).rule_ids || []).length;
-      html += `<details class="card why-panel"><summary><strong>Confidence breakdown (W1-W5)</strong> <span class="muted">· how ${s.diagnosis ? (s.confidence * 100).toFixed(0) + '%' : 'the score'} was worked out</span></summary><div class="card-body" id="conf-body"></div></details>`;
-      html += `<details class="card why-panel"><summary><strong>Guardrail engine (G1-G9)</strong> <span class="muted">· ${s.guardrail_result ? (firedCount ? `${firedCount} rule(s) fired` : 'no rule fired') : 'not run yet'}</span></summary><div class="card-body" id="gr-body"></div></details>`;
+      T.scoring += `<div class="card"><div class="card-header"><h3>Confidence breakdown (W1-W5)</h3></div><div class="card-body" id="conf-body"></div></div>`;
+      T.scoring += `<div class="card"><div class="card-header"><h3>Guardrail engine (G1-G9)</h3><span class="muted">${s.guardrail_result ? (firedCount ? `${firedCount} rule(s) fired` : 'no rule fired') : 'not run yet'}</span></div><div class="card-body" id="gr-body"></div></div>`;
+
+      const hypT = s.ai_hypothesis || {};
+      html += tabbed('diag', [
+        { id: 'summary', label: 'Summary', html: T.summary || '<div class="banner banner-info"><p>Not yet diagnosed.</p></div>' },
+        { id: 'evidence', label: 'Evidence', note: abnormalCount, html: T.evidence },
+        { id: 'ai', label: 'AI second opinion', note: hypT.status === 'ok' && hypT.hypothesis && !hypT.agrees_with_rules ? 'disagrees' : '', html: T.ai },
+        { id: 'expert', label: 'Expert knowledge', html: T.expert },
+        { id: 'scoring', label: 'Scoring', html: T.scoring },
+      ]);
 
       el.innerHTML = frozenWrap(s, html, esc);
 
@@ -894,7 +950,9 @@ export function renderDecision(el, state, h) {
         : s.current_state === 'MONITORING_OUTCOME'
         ? 'work order raised: record the outcome on the Outcome screen once the work is done.'
         : 'this case has no pending decision right now.';
-      let html = `${nextHint(decisionHint)}<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
+      const head = `${nextHint(decisionHint)}<h2 style="font-size:20px;margin-bottom:16px">AOM Decision - ${esc(cid)}</h2>`;
+      let html = head;
+      let expertTab = '';
 
       // Show recommendation (read-only). A G3-escalated case can carry a
       // bookkeeping Recommendation with no actions (see app.py's
@@ -922,7 +980,7 @@ export function renderDecision(el, state, h) {
             <div><div><strong>Target:</strong> ${esc(plain(a.target))}</div><div><strong>Detail:</strong> ${esc(a.detail)}</div></div>
           </div>
         `).join('');
-        html += expertChecks(ek, esc);
+        expertTab = expertChecks(ek, esc);
         html += `</div></div>`;
       } else if (s.current_state === 'CLOSED' && s.history.some(e => e.from_state === 'ESCALATED' && e.to_state === 'CLOSED')) {
         const res = s.history.find(e => e.from_state === 'ESCALATED' && e.to_state === 'CLOSED');
@@ -1006,6 +1064,12 @@ export function renderDecision(el, state, h) {
         }
       }
 
+      if (expertTab) {
+        html = head + tabbed('decision', [
+          { id: 'decide', label: 'Decision', html: html.slice(head.length) },
+          { id: 'expert', label: 'Expert knowledge to apply', note: (ek.matches || []).length ? String(ek.matches.length) : '', html: expertTab },
+        ]);
+      }
       el.innerHTML = frozenWrap(s, html, esc);
 
       // Wire escalation resolution controls (role-gated: approve_reject_modify)
@@ -1147,14 +1211,15 @@ export function renderOutcome(el, state, h) {
         : 'the outcome is recorded after the AOM approves and a work order is raised.';
       let html = `${nextHint(outcomeHint)}<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
 
-      // Work order
-      html += `<div class="grid-2">
-        <div class="card"><div class="card-header"><h3>Work Order</h3></div><div class="card-body" id="wo-body"></div></div>
-        <div class="card"><div class="card-header"><h3>Outcome Recording</h3></div><div class="card-body" id="oc-body"></div></div>
-      </div>`;
-
-      // Audit timeline
-      html += `<div class="card"><div class="card-header"><h3>Audit Timeline (Hash-Chain)</h3></div><div class="card-body" id="au-body"></div></div>`;
+      // Work and outcome first; the audit trail is a tab away.
+      html += tabbed('outcome', [
+        { id: 'work', label: 'Work order & outcome', html: `<div class="grid-2">
+          <div class="card"><div class="card-header"><h3>Work Order</h3></div><div class="card-body" id="wo-body"></div></div>
+          <div class="card"><div class="card-header"><h3>Outcome Recording</h3></div><div class="card-body" id="oc-body"></div></div>
+        </div>` },
+        { id: 'audit', label: 'Audit trail', note: s.audit_chain_valid === false ? 'failed' : '',
+          html: `<div class="card"><div class="card-header"><h3>Audit Timeline (Hash-Chain)</h3></div><div class="card-body" id="au-body"></div></div>` },
+      ]);
 
       el.innerHTML = frozenWrap(s, html, esc);
 
@@ -1293,20 +1358,26 @@ export function renderGovernance(el, state, h) {
       : api.can('review_audit_integrity')
       ? 'check the sentinel and the ledger; anything stopped or failing waits for your review here.'
       : 'knowledge stewards approve proposals here; everything they decide is in the ledger below.')}
-    <div class="card" id="sentinel-card"><div class="card-header"><h3>Sentinel</h3><span class="muted">independent supervisor, not an AI</span></div><div class="card-body" id="sentinel-body"></div></div>
-    <div class="card" id="integrity-card" hidden><div class="card-header"><h3>Integrity Review</h3><span class="badge badge-red">Action needed</span></div><div class="card-body" id="integrity-body"></div></div>
-    <div class="stats-row" id="gov-stats"></div>
-    <div class="card"><div class="card-header"><h3>Pill Registry</h3></div><div class="card-body" id="pill-registry-body"></div></div>
-    <div class="grid-2">
-      <div class="card"><div class="card-header"><h3>Cause Distribution</h3></div><div class="card-body" id="cause-dist"></div></div>
-      <div class="card"><div class="card-header"><h3>Governance Pipeline</h3></div><div class="card-body" id="pipeline-body"></div></div>
-    </div>
-    <div class="card"><div class="card-header"><h3>Knowledge Approval Queue</h3></div><div class="card-body" id="queue-body"></div></div>
-    <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>
-    <div class="card"><div class="card-header"><h3>Approved Knowledge</h3></div><div class="card-body" id="approved-body"></div></div>
-    <div class="card"><div class="card-header"><h3>Rollback</h3></div><div class="card-body" id="rollback-body"></div></div>
-    <div class="card"><div class="card-header"><h3>Knowledge Governance Ledger</h3><span id="ledger-status"></span></div><div class="card-body" id="ledger-body"></div></div>
-    <div class="card"><div class="card-header"><h3>Case Audit Trace (keyed hash chain)</h3></div><div class="card-body" id="trace-body"></div></div>
+    ${tabbed('gov', [
+      { id: 'overview', label: 'Overview', html: `
+        <div class="stats-row" id="gov-stats"></div>
+        <div class="card"><div class="card-header"><h3>Pill Registry</h3></div><div class="card-body" id="pill-registry-body"></div></div>
+        <div class="grid-2">
+          <div class="card"><div class="card-header"><h3>Cause Distribution</h3></div><div class="card-body" id="cause-dist"></div></div>
+          <div class="card"><div class="card-header"><h3>Governance Pipeline</h3></div><div class="card-body" id="pipeline-body"></div></div>
+        </div>` },
+      { id: 'review', label: 'Approval queue', html: `
+        <div class="card"><div class="card-header"><h3>Knowledge Approval Queue</h3></div><div class="card-body" id="queue-body"></div></div>
+        <div class="card" id="rerun-card" hidden><div class="card-header"><h3>Re-run Diagnosis on Similar Open Cases</h3></div><div class="card-body" id="rerun-body"></div></div>` },
+      { id: 'knowledge', label: 'Approved & versions', html: `
+        <div class="card"><div class="card-header"><h3>Approved Knowledge</h3></div><div class="card-body" id="approved-body"></div></div>
+        <div class="card"><div class="card-header"><h3>Rollback</h3></div><div class="card-body" id="rollback-body"></div></div>` },
+      { id: 'audit', label: 'Audit & sentinel', html: `
+        <div class="card" id="integrity-card" hidden><div class="card-header"><h3>Integrity Review</h3><span class="badge badge-red">Action needed</span></div><div class="card-body" id="integrity-body"></div></div>
+        <div class="card" id="sentinel-card"><div class="card-header"><h3>Sentinel</h3><span class="muted">independent supervisor, not an AI</span></div><div class="card-body" id="sentinel-body"></div></div>
+        <div class="card"><div class="card-header"><h3>Knowledge Governance Ledger</h3><span id="ledger-status"></span></div><div class="card-body" id="ledger-body"></div></div>
+        <div class="card"><div class="card-header"><h3>Case Audit Trace (keyed hash chain)</h3></div><div class="card-body" id="trace-body"></div></div>` },
+    ], api.role() === 'knowledge_steward' ? 'review' : api.can('review_audit_integrity') ? 'audit' : 'overview')}
   `;
 
   // Rollback -- admin only, one pill at a time. Lets anyone see the
@@ -1450,6 +1521,9 @@ export function renderGovernance(el, state, h) {
   // An auditor records a disposition for each chain that fails verification:
   // accept it as genuine (re-signed, with the review on the chain and in the
   // ledger) or, for a case, quarantine it (closed; redo the work as a new case).
+  const auditNeeds = { integrity: false, sentinel: false };
+  const noteAudit = () => setTabNote('gov', 'audit', auditNeeds.integrity || auditNeeds.sentinel ? 'action needed' : '');
+
   async function loadIntegrity() {
     const card = document.getElementById('integrity-card');
     const body = document.getElementById('integrity-body');
@@ -1463,6 +1537,7 @@ export function renderGovernance(el, state, h) {
         ...(st.tool_log_valid ? [] : [{ target: 'tool_log', label: 'Tool log: entries were changed or removed.' }]),
       ];
       card.hidden = !items.length;
+      auditNeeds.integrity = items.length > 0; noteAudit();
       if (!items.length) return;
       if (!api.can('review_audit_integrity')) {
         body.innerHTML = `<p>${items.map(i => esc(i.label)).join('<br>')}</p><p class="muted">An auditor (auditor1) reviews these and records a decision.</p>`;
@@ -1501,6 +1576,7 @@ export function renderGovernance(el, state, h) {
     if (!body) return;
     try {
       const sen = await api.get('/sentinel');
+      auditNeeds.sentinel = sen.held.length > 0; noteAudit();
       const canReview = api.can('review_audit_integrity');
       body.innerHTML = `
         <p style="margin-bottom:8px">Watching <strong>${sen.watching}</strong> case(s). After every write it re-checks: ${sen.checks.map(esc).join(' · ')}. On a violation it stops the case, records why on the case's audit trail, keeps what it saw, and alerts everyone.</p>
@@ -1544,15 +1620,11 @@ export function renderGovernance(el, state, h) {
   // Pipeline visual
   setHTML('pipeline-body', `
     <div class="pipeline">
-      <div class="pipeline-step"><div class="pipeline-circle">1</div><div class="pipeline-label">Expert or Outcome Proposes</div><div class="pipeline-desc">AI-drafted interviews and confirmed outcomes become pending proposals</div></div>
-      <div class="pipeline-arrow">-></div>
-      <div class="pipeline-step"><div class="pipeline-circle">2</div><div class="pipeline-label">Second Steward Reviews</div><div class="pipeline-desc">Proposer can never approve their own change</div></div>
-      <div class="pipeline-arrow">-></div>
-      <div class="pipeline-step"><div class="pipeline-circle">3</div><div class="pipeline-label">Validated</div><div class="pipeline-desc">Written to KB</div></div>
-      <div class="pipeline-arrow">-></div>
-      <div class="pipeline-step"><div class="pipeline-circle">4</div><div class="pipeline-label">Version Bump</div><div class="pipeline-desc" id="pipe-version">Each approval bumps the KB version</div></div>
+      <div class="pipeline-step"><div class="pipeline-circle">1</div><div class="pipeline-label">Proposed</div><div class="pipeline-desc">Interview or outcome</div></div>
+      <div class="pipeline-step"><div class="pipeline-circle">2</div><div class="pipeline-label">Reviewed</div><div class="pipeline-desc">By a different steward</div></div>
+      <div class="pipeline-step"><div class="pipeline-circle">3</div><div class="pipeline-label">Live</div><div class="pipeline-desc">Added to knowledge</div></div>
+      <div class="pipeline-step"><div class="pipeline-circle">4</div><div class="pipeline-label">Versioned</div><div class="pipeline-desc" id="pipe-version">Reversible</div></div>
     </div>
-    <div class="banner banner-info mt-16"><p>A candidate must <strong>never</strong> appear as already-approved knowledge.</p></div>
   `);
 
   // Knowledge queue — load real pending proposals
@@ -1562,6 +1634,7 @@ export function renderGovernance(el, state, h) {
     try {
       const data = await api.get('/kb/queue');
       const queue = data.queue || [];
+      setTabNote('gov', 'review', queue.length ? String(queue.length) : '');
       if (!queue.length) {
         qb.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[ ]</div><div class="empty-state-title">No pending proposals</div><div class="empty-state-desc">Expert interviews from the Capture screen and feedback on closed cases appear here for review by a second steward.</div></div>`;
         return;
@@ -1730,12 +1803,17 @@ export function renderGovernance(el, state, h) {
       const _causeCount = _c.length;
       const _treeCount = new Set(_c.map(c => c.asset_type)).size;
       const pillLabels = Object.values(stats.kb_version_labels || {});
-      setHTML('pipe-version', 'Each approval bumps the version of the pill(s) it files knowledge under');
+      // One line, not four: "v1.3.0" when every pill matches, else the range.
+      const nums = pillLabels.map(l => l.replace(/^.* v/, 'v'));
+      const same = nums.length && nums.every(n => n === nums[0]);
+      const sorted = [...nums].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+      const kbHeadline = !nums.length ? 'n/a' : same ? esc(nums[0]) : `${esc(sorted[0])}–${esc(sorted.at(-1))}`;
+      const kbSub = same ? 'Knowledge, all pills' : 'Knowledge versions (hover for each pill)';
       setHTML('gov-stats', `
         <div class="stat"><div class="stat-val">${stats.total_validated_cases ?? 0}</div><div class="stat-lbl">Validated Cases</div></div>
         <div class="stat stat-purple"><div class="stat-val">${stats.feedback_added ?? 0}</div><div class="stat-lbl">Feedback Added</div></div>
         <div class="stat stat-yellow"><div class="stat-val">${stats.pending_proposals ?? 0}</div><div class="stat-lbl">Pending Proposals</div></div>
-        <div class="stat stat-green"><div class="stat-val" style="font-size:0.95rem;line-height:1.5">${pillLabels.length ? pillLabels.map(esc).join('<br>') : 'n/a'}</div><div class="stat-lbl">KB Version per pill</div></div>
+        <div class="stat stat-green" title="${esc(pillLabels.join(' · '))}"><div class="stat-val">${kbHeadline}</div><div class="stat-lbl">${kbSub}</div></div>
         <div class="stat stat-blue"><div class="stat-val">${_treeCount} / ${_causeCount}</div><div class="stat-lbl">Asset trees / Causes</div></div>
       `);
       const dist = stats.cause_distribution || stats.causes || {};
@@ -1752,7 +1830,7 @@ export function renderGovernance(el, state, h) {
         const max = Math.max(...entries.map(([, v]) => v));
         cdEl.innerHTML = entries.map(([cause, count]) => {
           const pct = (count / max * 100).toFixed(0);
-          return `<div class="cause-bar"><div class="cause-bar-label">${esc(causeLabel(cause))}</div><div class="cause-bar-track"><div class="cause-bar-fill" style="width:${pct}%"></div></div><div class="cause-bar-count">${count}</div></div>`;
+          return `<div class="cause-bar"><div class="cause-bar-label" title="${esc(causeLabel(cause))}">${esc(causeLabel(cause))}</div><div class="cause-bar-track"><div class="cause-bar-fill" style="width:${pct}%"></div></div><div class="cause-bar-count">${count}</div></div>`;
         }).join('');
       }
     } catch (e) {

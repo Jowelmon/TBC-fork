@@ -36,7 +36,7 @@ exist for anyone else."
 **Do:** On the Dashboard, point at the strip across the top: Tencent
 Cloud ADP supplies the AI, TBC governs what that AI may do (grounding,
 safety screen, guardrails, RBAC, sentinel), the decision tree diagnoses,
-and a person approves. Open **Illustrative value** and change the numbers.
+and a person approves. Open **About this pill** → **Illustrative value** and change the numbers.
 It is labelled "Illustrative scenario — not Keppel actuals": every figure
 is an input, and the formula is shown.
 
@@ -72,7 +72,7 @@ their words being reused) and click **Send for steward approval**.
 
 **Say:** "Whoever captured it can't be the one who approves it."
 
-**Do:** Switch role to **steward1** (the capturer), go to **Governance**.
+**Do:** Switch role to **steward1** (the capturer), go to **Governance** → **Approval queue**.
 Find the new proposal — its **Approve** button is disabled, with a note
 explaining why.
 
@@ -102,11 +102,11 @@ it automatically."
 
 **Do:** Switch role to **tech1**. Click **New Case**, keep CRAH-DC1-01,
 **Create Case**, then **Advance** (sensor hardware failure, the cause just
-approved). Open **Diagnosis**: the summary card at the top gives the
-cause, confidence, AI view, recommendation, abnormal readings and next
-step in one place (the confidence breakdown and guardrail grid are folded
-underneath for anyone who wants the working). Scroll to
-**Expert Knowledge Reused** — point out it names the expert, quotes
+approved). Open **Diagnosis**: each case screen shows one group of cards
+at a time, in tabs. **Summary** gives the cause, confidence, AI view,
+recommendation and abnormal readings; **Evidence**, **AI second opinion**,
+**Expert knowledge** and **Scoring** hold the detail. Open the **Expert
+knowledge** tab — point out it names the expert, quotes
 them verbatim, and that the deterministic tree stays authoritative
 either way.
 
@@ -115,16 +115,18 @@ either way.
 **Say:** "A second, independent read on this diagnosis — it never
 decides anything."
 
-**Do:** On the same Diagnosis screen, scroll to **AI Second Opinion**.
+**Do:** On the same Diagnosis screen, open the **AI second opinion** tab.
 Point at the "Advisory only — does not affect routing" tag, the
 agree/disagree badge, and that it's grounded only in evidence actually
 shown above it. Then open the seeded **UPS-DC1-02** case: the rules say
 battery end of life, the AI flags thermal runaway risk (41°C and rising),
 and G9 records the disagreement. The case still goes to the AOM for
-approval: the AI informs the decision, it never makes or blocks it. The
-cloud in the corner shows the AI's state on every screen: it is worried on
-this case, smiles when Tencent Cloud ADP is answering, and can be dragged
-out of the way.
+approval: the AI informs the decision, it never makes or blocks it.
+Cloudy, the cloud in the navigation rail, shows the AI's state on every
+screen (worried on this case, smiling when Tencent Cloud ADP is
+answering). Click it for the assistant panel: the live model, what the AI
+does on this screen and what it may not do, and shortcuts. Drag it
+anywhere.
 
 ## 8. The AOM approves (45s)
 
@@ -158,7 +160,7 @@ the stewards' queue as an *Escalation resolution* proposal.
 **Say:** "If approved knowledge turns out wrong, it's reversible — not
 a one-way door."
 
-**Do:** Switch to **admin1**. On **Governance**, the **Rollback** panel
+**Do:** Switch to **admin1**. On **Governance** → **Approved & versions**, the **Rollback** panel
 works one pill at a time: pick **CRAH** and it shows every CRAH version
 (current, live and rolled back). Rolling CRAH back leaves the Chiller, UPS
 and Pump knowledge exactly as it was; the footer shows each pill's version. Show **Approved Knowledge**: any single proposal can be revoked with a
@@ -175,7 +177,7 @@ reused.
 **Say:** "Every step, and every knowledge decision, is in a keyed,
 tamper-evident hash chain."
 
-**Do:** On Governance, point at **Ledger verified** and the **Case Audit
+**Do:** On Governance → **Audit & sentinel**, point at **Ledger verified** and the **Case Audit
 Trace**. Changing any past entry breaks every hash after it, and
 re-hashing the whole chain does not help without the audit key
 (`tests/test_governance_integrity.py`). A case whose chain fails is frozen,
