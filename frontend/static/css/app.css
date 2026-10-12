@@ -817,11 +817,9 @@ code { font-size: max(0.9em, 14px); }
 @media (max-width: 768px) { #ai-cloud { transform-origin: bottom right; scale: .8; right: 12px; bottom: 12px; } }
 
 /* ── Dashboard: where AI is used and what governs it ─────────────────── */
-.ai-flow .card-body { padding: 14px 16px; }
+.ai-flow-row.ai-flow { margin-bottom: 16px; }
 .ai-flow-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
 .ai-flow-step { flex: 1 1 180px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-input); }
-.ai-flow-ai { border-color: var(--purple, #7C3AED); }
-.ai-flow-human { border-color: var(--green); }
 .ai-flow-k { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
 .ai-flow-v { font-size: 16px; font-weight: 600; color: var(--text-bright); margin: 2px 0 4px; }
 .ai-flow-d { font-size: 14px; color: var(--text-dim); line-height: 1.4; }
@@ -891,3 +889,43 @@ select::-ms-expand { display: none; }
 .tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 7px;
   margin-left: 6px; border-radius: 999px; background: var(--yellow-bg); color: var(--yellow-text); font-size: 14px; font-weight: 700; line-height: 1; }
 .tab[aria-selected="true"] .tab-count { background: var(--blue-bg); color: var(--blue-text); }
+
+/* ── Hideable menu ──────────────────────────────────────────────────── */
+.nav-hidden #nav-rail { display: none; }
+#nav-toggle { flex: none; font-size: 18px; line-height: 1; padding: 6px 10px; align-self: flex-start; margin-top: 2px; }
+
+/* ── Header: title and breadcrumb each stay on one line; "Acting as" and
+   its dropdown move to the next row together, never split. ───────────── */
+/* The title never shrinks: when there isn't room for both, the controls
+   wrap to a second row instead of cutting the title short. */
+#topbar { justify-content: flex-start; flex-wrap: wrap; row-gap: 8px; }
+#topbar > #title-block { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; max-width: calc(100% - 60px); min-width: 0; }
+#topbar h1 { overflow: visible; }
+.breadcrumb { white-space: nowrap; min-width: 0; }
+.breadcrumb-current { overflow: hidden; text-overflow: ellipsis; }
+#role-switcher { flex: 0 1 auto; margin-left: auto; min-width: 0; }
+.acting-as { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+@media (max-width: 1400px) {
+  #topbar > #title-block { flex: 0 0 auto; }
+  #role-switcher { flex: 0 1 auto; justify-content: flex-end; }
+}
+
+/* ── Dashboard: stat cards filter the table, headers sort it ─────────── */
+button.stat { font: inherit; color: inherit; text-align: left; cursor: pointer; transition: background .15s, border-color .15s; }
+button.stat:hover { background: var(--bg-card-hover); }
+/* A filter is shown by fading the other cards, not by another outline. */
+.stats-row.filtering button.stat[aria-pressed="false"] { opacity: .5; }
+.stats-row.filtering button.stat[aria-pressed="false"]:hover { opacity: .85; }
+.stats-row.filtering button.stat[aria-pressed="true"] { background: var(--bg-card-hover); }
+.th-sort { background: none; border: none; padding: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.th-sort:hover { color: var(--text-bright); }
+.th-sort .sort-arrow { font-size: 14px; opacity: .6; }
+th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { opacity: 1; color: var(--blue-text); }
+.table-filter-note { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-dim); margin: -8px 0 12px; }
+.table-filter-note[hidden] { display: none; }
+
+/* ── Dashboard: the case list is the focus ─────────────────────────── */
+.dash-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.dash-toolbar .next-hint { margin-bottom: 0; }
+#how-it-works { margin-top: 20px; }
+#cases-table td:nth-child(1), #cases-table td:nth-child(2) { white-space: nowrap; }

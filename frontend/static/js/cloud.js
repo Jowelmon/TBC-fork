@@ -62,7 +62,7 @@ const MESSAGES = {
 
 // What the AI does on each screen, and what it may not do.
 const CONTEXT = {
-  dashboard: 'The strip at the top shows where I am used. Every diagnosis here comes from the decision tree, not from me.',
+  dashboard: 'Open How this pill works to see where I am used. Every diagnosis here comes from the decision tree, not from me.',
   diagnosis: 'On this case I give an advisory second opinion (the AI tab). The decision tree\'s diagnosis stands either way.',
   decision: 'The manager decides here. My opinion and expert knowledge are context only; I cannot approve anything.',
   outcome: 'People confirm the outcome. It becomes knowledge only after a knowledge steward approves it.',
@@ -90,7 +90,7 @@ function renderPanel() {
   const model = document.getElementById('model-chip')?.textContent || '';
   const shortcuts = [
     ...(SHORTCUTS[screen] || []),
-    ['Where AI is used', () => { window.__app__?.navigate('dashboard'); setTimeout(() => document.querySelector('.ai-flow')?.scrollIntoView({ behavior: 'smooth' }), 300); }],
+    ['Where AI is used', () => { window.__app__?.navigate('dashboard'); setTimeout(() => { const d = document.getElementById('how-it-works'); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth' }); } }, 300); }],
     ['Demo guide', () => document.getElementById('guide-toggle')?.click()],
   ];
   panel.innerHTML = `

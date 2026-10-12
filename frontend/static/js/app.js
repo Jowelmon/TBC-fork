@@ -2,8 +2,8 @@
 
 import { api } from './api.js?v=9';
 import { initGuide } from './guide.js?v=14';
-import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=6';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=37';
+import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=7';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=38';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -199,6 +199,20 @@ themeToggle.addEventListener('click', () => {
   }
   localStorage.setItem('tbc_theme', next);
   applyThemeButtonLabel();
+});
+
+// ── Hideable menu (remembered per browser) ──────────────────
+const navToggle = document.getElementById('nav-toggle');
+function applyNavToggle() {
+  const hidden = document.documentElement.classList.contains('nav-hidden');
+  navToggle.setAttribute('aria-expanded', String(!hidden));
+  navToggle.title = hidden ? 'Show the menu' : 'Hide the menu';
+}
+applyNavToggle();
+navToggle.addEventListener('click', () => {
+  const hidden = document.documentElement.classList.toggle('nav-hidden');
+  try { localStorage.setItem('tbc_nav_hidden', hidden ? '1' : '0'); } catch (_) {}
+  applyNavToggle();
 });
 
 // ── Role switcher ──────────────────────────────────────────

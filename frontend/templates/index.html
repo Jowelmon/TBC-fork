@@ -10,11 +10,17 @@
     // a flash of the light default. Light stays the default for everyone
     // else -- a presenter's OS dark-mode setting must not silently change
     // what's on the projector.
-    if (localStorage.getItem('tbc_theme') === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
+    try {
+      if (localStorage.getItem('tbc_theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+      // Same for a hidden menu: no flash of the nav rail before app.js runs.
+      if (localStorage.getItem('tbc_nav_hidden') === '1') {
+        document.documentElement.classList.add('nav-hidden');
+      }
+    } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/static/css/app.css?v=29">
+  <link rel="stylesheet" href="/static/css/app.css?v=30">
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to main content</a>
@@ -60,7 +66,8 @@
     <!-- Main content -->
     <main id="main">
       <header id="topbar">
-        <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="btn btn-secondary btn-sm" id="nav-toggle" aria-controls="nav-rail" aria-expanded="true" title="Hide the menu">&#9776;<span class="sr-only"> Menu</span></button>
+        <div id="title-block">
           <h1 id="screen-title">Asset and Fault Dashboard</h1>
           <div class="breadcrumb" id="breadcrumb">
             <a href="#" onclick="event.preventDefault(); window.__app__.navigate('dashboard')">Home</a>
@@ -73,12 +80,14 @@
           <button class="btn btn-secondary btn-sm" id="theme-toggle" aria-pressed="false" title="Switch between light and dark theme">Dark theme</button>
           <button class="btn btn-secondary btn-sm" id="guide-toggle" aria-expanded="false" aria-controls="guide-panel">Demo guide</button>
           <span class="role-badge" id="role-badge">mgr1</span>
-          <label for="role-select" class="role-label">Acting as</label>
-          <select id="role-select" aria-label="Select acting role">
-            {% for u in users %}
-            <option value="{{ u.id }}">{{ u.id }} ({{ u.role|replace('_', ' ') }})</option>
-            {% endfor %}
-          </select>
+          <span class="acting-as">
+            <label for="role-select" class="role-label">Acting as</label>
+            <select id="role-select" aria-label="Select acting role">
+              {% for u in users %}
+              <option value="{{ u.id }}">{{ u.id }} ({{ u.role|replace('_', ' ') }})</option>
+              {% endfor %}
+            </select>
+          </span>
         </div>
       </header>
       <div id="insecure-banner" class="banner banner-warn" hidden role="alert" style="margin:12px 24px 0">
@@ -117,6 +126,6 @@
       {% endfor %}
     ];
   </script>
-  <script type="module" src="/static/js/app.js?v=40"></script>
+  <script type="module" src="/static/js/app.js?v=41"></script>
 </body>
 </html>

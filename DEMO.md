@@ -33,10 +33,10 @@ Every beat below is something you click, not something you claim.
 is tribal knowledge. When they're unavailable, that knowledge doesn't
 exist for anyone else."
 
-**Do:** On the Dashboard, point at the strip across the top: Tencent
-Cloud ADP supplies the AI, TBC governs what that AI may do (grounding,
+**Do:** On the Dashboard, open **How this pill works** below the case table and point
+at the strip: Tencent Cloud ADP supplies the AI, TBC governs what that AI may do (grounding,
 safety screen, guardrails, RBAC, sentinel), the decision tree diagnoses,
-and a person approves. Open **About this pill** → **Illustrative value** and change the numbers.
+and a person approves. In the same card, open **Illustrative value** and change the numbers.
 It is labelled "Illustrative scenario — not Keppel actuals": every figure
 is an input, and the formula is shown.
 

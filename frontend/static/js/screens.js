@@ -1,7 +1,7 @@
 // screens.js - Renderers for all 5 screens + demo case seeder
 
 import { api } from './api.js?v=9';
-import { cloudSvg } from './cloud.js?v=6';
+import { cloudSvg } from './cloud.js?v=7';
 
 // Async loaders can resolve after the user has navigated away; never crash.
 function setHTML(id, html) {
@@ -258,62 +258,49 @@ function renderEvidencePlain(payload, abnormalKeys = [], labels = {}) {
 // ═══════════════════════════════════════════════════════════
 // Screen 1: Dashboard
 // ═══════════════════════════════════════════════════════════
+// The stat cards double as filters. Each count and its filter use the
+// same test, so the number on a card is always the number of rows shown.
+const STAT_FILTERS = [
+  { id: 'all',       label: 'Total Cases',       cls: '',            match: () => true },
+  { id: 'approval',  label: 'Awaiting Approval', cls: 'stat-yellow', match: c => c.current_state === 'AWAITING_APPROVAL' },
+  { id: 'escalated', label: 'Escalated',         cls: 'stat-red',    match: c => c.current_state === 'ESCALATED' },
+  { id: 'resolved',  label: 'Resolved',          cls: 'stat-green',  match: c => c.current_state === 'CLOSED' },
+];
+
+// Status sorts in lifecycle order, not alphabetically; an undiagnosed
+// case sorts below every diagnosed one on confidence.
+const STATE_ORDER = ['TRIGGERED', 'GATHERING_EVIDENCE', 'DIAGNOSING', 'RECOMMENDING', 'AWAITING_APPROVAL',
+  'EXECUTING', 'MONITORING_OUTCOME', 'RECORDING_OUTCOME', 'FEEDBACK_QUEUED', 'ESCALATED', 'CLOSED'];
+const CASE_COLUMNS = [
+  { id: 'case',       label: 'Case ID',    key: c => c.case_id || '' },
+  { id: 'asset',      label: 'Asset',      key: c => c.asset_id || '' },
+  { id: 'fault',      label: 'Fault',      key: c => (c.observation || {}).type || '' },
+  { id: 'sensor',     label: 'Sensor',     key: c => (c.observation || {}).sensor_id || '' },
+  { id: 'reading',    label: 'Reading',    key: c => (c.observation || {}).reading_status || '' },
+  { id: 'status',     label: 'Status',     key: c => { const i = STATE_ORDER.indexOf(c.current_state); return i < 0 ? STATE_ORDER.length : i; } },
+  { id: 'confidence', label: 'Confidence', key: c => (c.diagnosis ? Number(c.confidence) || 0 : -1) },
+];
+const dashView = { filter: 'all', sortKey: null, sortDir: 'asc' };
+
 export function renderDashboard(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
   const isAdmin = api.role() === 'admin';
 
   el.innerHTML = `
-    ${nextHint('click a case to see its diagnosis, or create a new one to get started.')}
     <div id="integrity-banner"></div>
-    <section class="card ai-flow" aria-label="Where AI is used and what governs it">
-      <div class="card-body">
-        <div class="ai-flow-row">
-          <div class="ai-flow-step ai-flow-ai"><div class="ai-flow-k">AI</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts knowledge, second opinion</div></div>
-          <div class="ai-flow-arrow" aria-hidden="true">→</div>
-          <div class="ai-flow-step"><div class="ai-flow-k">Governance</div><div class="ai-flow-v">Checks every AI output</div><div class="ai-flow-d">Grounding, safety, guardrails, sentinel</div></div>
-          <div class="ai-flow-arrow" aria-hidden="true">→</div>
-          <div class="ai-flow-step"><div class="ai-flow-k">Diagnosis</div><div class="ai-flow-v">Decision tree</div><div class="ai-flow-d">Same evidence, same answer</div></div>
-          <div class="ai-flow-arrow" aria-hidden="true">→</div>
-          <div class="ai-flow-step ai-flow-human"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing runs without a manager</div></div>
-        </div>
-      </div>
-    </section>
-    <details class="card why-panel about-card">
-      <summary><h3 style="display:inline">About this pill</h3> <span class="muted">why it exists · illustrative value · deployment path</span></summary>
-      <div class="card-body">
-      ${tabbed('about', [
-        { id: 'why', label: 'Why this exists', html: `<p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
-        <p><strong>Users:</strong> technicians trigger and work cases; Asset Ops Managers approve every recommendation before anything happens; Knowledge Stewards review and govern what the pill learns from interviews and closed cases.</p>
-        <p><strong>Value:</strong> a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). For what that could be worth, use the Illustrative value tab with your own figures.</p>` },
-        { id: 'value', label: 'Illustrative value', note: 'not Keppel actuals', html: `<p class="muted" style="margin-bottom:10px">Your inputs, not Keppel data.</p>
-        <div class="roi-grid">
-          <label>Cases a year<input id="roi-cases" type="number" min="0" step="10" value="500"></label>
-          <label>Minutes per case today<input id="roi-now" type="number" min="0" step="5" value="60"></label>
-          <label>Minutes with TBC<input id="roi-with" type="number" min="0" step="5" value="30"></label>
-          <label>Cost per hour<input id="roi-rate" type="number" min="0" step="5" value="60"></label>
-        </div>
-        <div class="roi-out" id="roi-out" aria-live="polite"></div>` },
-        { id: 'path', label: 'Deployment path', html: `<p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
-        <p><strong>Stage 2 -- Production on Tencent Cloud:</strong> containerised deploy (the repo's own Dockerfile), SQLite swapped for a managed database, secrets moved to Tencent Cloud's secret manager, real CMMS work-order integration.</p>
-        <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, the steward roster set per site (it is already configurable with TBC_PILL_OWNERS).</p>
-        <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>` },
-      ])}
-    </div></details>
-    <div class="flex justify-between align-center" style="margin-bottom:20px">
-      <div></div>
+    <div class="dash-toolbar">
+      ${nextHint('click a case to see its diagnosis, or create a new one to get started.')}
       <div class="flex gap-8">
         <button class="btn btn-secondary" id="btn-seed" ${isAdmin ? '' : 'disabled title="Seeding demo cases is limited to the Admin role"'}>Seed Demo Cases</button>
         <button class="btn btn-primary" id="btn-new">New Case</button>
       </div>
     </div>
-    <div class="stats-row" id="stats-row"></div>
+    <div class="stats-row" id="stats-row" role="group" aria-label="Filter cases by status"></div>
+    <div class="table-filter-note" id="cases-filter-note" hidden aria-live="polite"></div>
     <div class="card">
       <div class="table-wrap">
         <table id="cases-table">
-          <thead><tr>
-            <th>Case ID</th><th>Asset</th><th>Fault</th><th>Sensor</th>
-            <th>Reading</th><th>Status</th><th>Confidence</th><th>Action</th>
-          </tr></thead>
+          <thead><tr id="cases-head"></tr></thead>
           <tbody id="cases-tbody"><tr><td colspan="8" class="skeleton-row">
             <div class="skeleton skeleton-line" style="width:80%"></div>
             <div class="skeleton skeleton-line" style="width:60%"></div>
@@ -346,6 +333,36 @@ export function renderDashboard(el, state, h) {
         <button class="btn btn-primary" id="btn-create">Create Case</button>
       </div>
     </div>
+    <details class="card why-panel about-card" id="how-it-works">
+      <summary><h3 style="display:inline">How this pill works</h3> <span class="muted">where AI is used · why it exists · illustrative value · deployment path</span></summary>
+      <div class="card-body">
+        <div class="ai-flow-row ai-flow" role="group" aria-label="Where AI is used and what governs it">
+        <div class="ai-flow-step ai-flow-ai"><div class="ai-flow-k">AI</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts knowledge, second opinion</div></div>
+        <div class="ai-flow-arrow" aria-hidden="true">→</div>
+        <div class="ai-flow-step"><div class="ai-flow-k">Governance</div><div class="ai-flow-v">Checks every AI output</div><div class="ai-flow-d">Grounding, safety, guardrails, sentinel</div></div>
+        <div class="ai-flow-arrow" aria-hidden="true">→</div>
+        <div class="ai-flow-step"><div class="ai-flow-k">Diagnosis</div><div class="ai-flow-v">Decision tree</div><div class="ai-flow-d">Same evidence, same answer</div></div>
+        <div class="ai-flow-arrow" aria-hidden="true">→</div>
+        <div class="ai-flow-step ai-flow-human"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing runs without a manager</div></div>
+      </div>
+            ${tabbed('about', [
+        { id: 'why', label: 'Why this exists', html: `<p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
+        <p><strong>Users:</strong> technicians trigger and work cases; Asset Ops Managers approve every recommendation before anything happens; Knowledge Stewards review and govern what the pill learns from interviews and closed cases.</p>
+        <p><strong>Value:</strong> a rule-based diagnosis plus any matching approved expert knowledge appears in seconds (see the Diagnosis screen), and a validated fix measurably raises confidence on the next identical fault (see Governance, and <code>make demo</code>). For what that could be worth, use the Illustrative value tab with your own figures.</p>` },
+        { id: 'value', label: 'Illustrative value', note: 'not Keppel actuals', html: `<p class="muted" style="margin-bottom:10px">Your inputs, not Keppel data.</p>
+        <div class="roi-grid">
+          <label>Cases a year<input id="roi-cases" type="number" min="0" step="10" value="500"></label>
+          <label>Minutes per case today<input id="roi-now" type="number" min="0" step="5" value="60"></label>
+          <label>Minutes with TBC<input id="roi-with" type="number" min="0" step="5" value="30"></label>
+          <label>Cost per hour<input id="roi-rate" type="number" min="0" step="5" value="60"></label>
+        </div>
+        <div class="roi-out" id="roi-out" aria-live="polite"></div>` },
+        { id: 'path', label: 'Deployment path', html: `<p><strong>Stage 1 -- Pilot:</strong> the decision tree, guardrails, governance loop, audit trail and RBAC in this repo are real and tested today; telemetry is a static mock registry pending a real BMS/SCADA feed.</p>
+        <p><strong>Stage 2 -- Production on Tencent Cloud:</strong> containerised deploy (the repo's own Dockerfile), SQLite swapped for a managed database, secrets moved to Tencent Cloud's secret manager, real CMMS work-order integration.</p>
+        <p><strong>Stage 3 -- Scale:</strong> additional asset types and sites, per-site knowledge-base governance, the steward roster set per site (it is already configurable with TBC_PILL_OWNERS).</p>
+        <p class="muted">Full detail, including exactly what's real versus stubbed at each stage: <code>docs/IMPLEMENTATION_PATH.md</code>.</p>` },
+      ])}
+    </div></details>
   `;
 
   // Illustrative value: simple arithmetic on the viewer's own inputs.
@@ -438,35 +455,87 @@ export function renderDashboard(el, state, h) {
     } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
   };
 
+  let allCases = [];
   async function loadCases() {
     try {
       const data = await api.get('/cases');
       const ids = data.cases || [];
       const snapshots = await Promise.all(ids.map(id => api.get(`/cases/${id}`).catch(() => null)));
-      const cases = snapshots.filter(s => s);
-
-      renderStats(cases);
-      renderTable(cases);
+      allCases = snapshots.filter(s => s);
+      renderView();
     } catch (e) {
       setHTML('cases-tbody', `<tr><td colspan="8" class="muted">Error: ${esc(e.message)}</td></tr>`);
     }
   }
 
+  // The stat cards filter the table and the column headers sort it.
+  // Both survive a refresh and a trip to another screen (dashView).
+  function renderView() {
+    const filter = STAT_FILTERS.find(f => f.id === dashView.filter) || STAT_FILTERS[0];
+    const shown = allCases.filter(filter.match);
+    const col = CASE_COLUMNS.find(c => c.id === dashView.sortKey);
+    if (col) {
+      const dir = dashView.sortDir === 'desc' ? -1 : 1;
+      shown.sort((a, b) => {
+        const x = col.key(a), y = col.key(b);
+        return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'en', { numeric: true })) * dir;
+      });
+    }
+    renderStats(allCases);
+    renderHead();
+    renderTable(shown);
+    const note = document.getElementById('cases-filter-note');
+    if (note) {
+      note.hidden = filter.id === 'all';
+      note.innerHTML = filter.id === 'all' ? '' :
+        `Showing ${shown.length} of ${allCases.length} cases: ${esc(filter.label.toLowerCase())}. <button class="btn btn-secondary btn-sm" id="cases-filter-clear">Show all</button>`;
+      document.getElementById('cases-filter-clear')?.addEventListener('click', () => setFilter('all'));
+    }
+  }
+
+  function setFilter(id) {
+    // Clicking the active card again goes back to all cases.
+    dashView.filter = (id === dashView.filter || id === 'all') ? 'all' : id;
+    renderView();
+    document.querySelector(`#stats-row [data-filter="${dashView.filter}"]`)?.focus();
+  }
+
   function renderStats(cases) {
-    const total = cases.length;
-    const action = cases.filter(c => c.current_state === 'AWAITING_APPROVAL').length;
-    const escalated = cases.filter(c => c.current_state === 'ESCALATED').length;
-    const closed = cases.filter(c => c.current_state === 'CLOSED').length;
-    setHTML('stats-row', `
-      <div class="stat"><div class="stat-val">${total}</div><div class="stat-lbl">Total Cases</div></div>
-      <div class="stat stat-yellow"><div class="stat-val">${action}</div><div class="stat-lbl">Awaiting Approval</div></div>
-      <div class="stat stat-red"><div class="stat-val">${escalated}</div><div class="stat-lbl">Escalated</div></div>
-      <div class="stat stat-green"><div class="stat-val">${closed}</div><div class="stat-lbl">Resolved</div></div>
-    `);
+    setHTML('stats-row', STAT_FILTERS.map(f => {
+      const on = (dashView.filter || 'all') === f.id;
+      return `<button type="button" class="stat ${f.cls}" data-filter="${f.id}" aria-pressed="${on}" title="${on && f.id !== 'all' ? 'Show all cases' : `Show ${esc(f.label.toLowerCase())} only`}">
+        <div class="stat-val">${cases.filter(f.match).length}</div><div class="stat-lbl">${f.label}</div></button>`;
+    }).join(''));
+    document.getElementById('stats-row')?.classList.toggle('filtering', (dashView.filter || 'all') !== 'all');
+    document.querySelectorAll('#stats-row [data-filter]').forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
+  }
+
+  function renderHead() {
+    const head = document.getElementById('cases-head');
+    if (!head) return;
+    head.innerHTML = CASE_COLUMNS.map(c => {
+      const sorted = dashView.sortKey === c.id;
+      const aria = sorted ? (dashView.sortDir === 'desc' ? 'descending' : 'ascending') : 'none';
+      const arrow = sorted ? (dashView.sortDir === 'desc' ? '▼' : '▲') : '↕';
+      return `<th aria-sort="${aria}"><button type="button" class="th-sort" data-sort="${c.id}" title="Sort by ${c.label.toLowerCase()}">${c.label}<span class="sort-arrow" aria-hidden="true">${arrow}</span></button></th>`;
+    }).join('') + '<th>Action</th>';
+    head.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => {
+      // First click sorts ascending, second descending, third back to the server order.
+      const id = b.dataset.sort;
+      if (dashView.sortKey !== id) { dashView.sortKey = id; dashView.sortDir = 'asc'; }
+      else if (dashView.sortDir === 'asc') dashView.sortDir = 'desc';
+      else dashView.sortKey = null;
+      renderView();
+      document.querySelector(`#cases-head [data-sort="${id}"]`)?.focus();
+    }));
   }
 
   function renderTable(cases) {
     const tbody = document.getElementById('cases-tbody');
+    if (!cases.length && allCases.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="muted">No cases match this filter.</td></tr>`;
+      return;
+    }
     if (!cases.length) {
       tbody.innerHTML = `<tr><td colspan="8">
         <div class="empty-state">
