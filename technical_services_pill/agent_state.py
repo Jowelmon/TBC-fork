@@ -25,18 +25,16 @@ Field-name mapping to spec §2 ``AgentState``:
 """
 from __future__ import annotations
 
-from datetime import datetime
-
-from pydantic import ConfigDict, Field, model_validator
+from datetime import datetime, timezone
 
 from .audit import GENESIS_HASH
 from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
 from .models import (
     ESCALATE_CONFIDENCE,
+    MAX_RETRIEVAL_ROUNDS,
     MIN_EVIDENCE_COUNT,
     MIN_RECO_CONFIDENCE,
     AgentStateName,
-    CandidateCause,
     Diagnosis,
     EvidenceItem,
     GuardrailContext,
@@ -89,6 +87,7 @@ class AgentState:
         observation: Observation,
         case_id: str | None = None,
         actor: str = "system",
+        asset_registered: bool = True,
     ) -> None:
         self.asset_id = asset_id
         self.observation = observation
@@ -107,16 +106,21 @@ class AgentState:
         self.work_order_id = None
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
+        self.chain_seal: str | None = None
+        # Set by the sentinel (sentinel.py) when it stops the case.
+        self.sentinel_hold: dict | None = None
 
         self._gathering_loops = 0
         self._retrieval_rounds = 0
 
-        # TRIGGERED -> GATHERING_EVIDENCE immediately (alert validated against
-        # asset registry by the constructor's asset_id presence).
         self._transition(
             AgentStateName.GATHERING_EVIDENCE,
             actor=actor,
-            reason="fault alert validated against asset registry",
+            reason=(
+                "fault alert raised for a registered asset"
+                if asset_registered
+                else f"fault alert raised for {asset_id}, which is NOT in the asset registry"
+            ),
         )
 
     # ------------------------------------------------------------------ #
@@ -160,17 +164,58 @@ class AgentState:
                 f"illegal transition {from_state.value} -> {to_state.value}: "
                 f"{reason} (allowed targets from {from_state.value}: {allowed_targets})"
             )
+        self.current_state = to_state
+        self._append(from_state, to_state, actor=actor, reason=reason)
+
+    def _state_digest(self) -> str:
+        """SHA-256 over every field a reviewer relies on. Recorded in each
+        audit entry, so changing a decision, diagnosis, outcome or evidence
+        afterwards no longer matches the chain."""
+        import hashlib
+
+        from .audit import canonical_json
+
+        def dump(v):
+            return v.model_dump(mode="json") if hasattr(v, "model_dump") else v
+
+        material = {
+            "current_state": self.current_state.value,
+            "confidence_breakdown": self.confidence_breakdown,
+            "asset_id": self.asset_id,
+            "observation": dump(self.observation),
+            "evidence": [dump(e) for e in self.evidence],
+            "diagnosis": dump(self.diagnosis),
+            "confidence": self.confidence,
+            "recommendation": dump(self.recommendation),
+            "guardrail_result": dump(self.guardrail_result),
+            "ai_hypothesis": self.ai_hypothesis,
+            "human_decision": dump(self.human_decision),
+            "outcome": dump(self.outcome),
+            "work_order_id": self.work_order_id,
+            "feedback_id": self.feedback_id,
+        }
+        if self.sentinel_hold:  # only once set, so earlier records keep their digests
+            material["sentinel_hold"] = self.sentinel_hold
+        return hashlib.sha256(canonical_json(material).encode()).hexdigest()
+
+    def _append(self, from_state: AgentStateName, to_state: AgentStateName,
+                *, actor: str, reason: str) -> None:
+        from .audit import compute_hash
+
         prev_hash = self.history[-1].hash if self.history else GENESIS_HASH
         entry = HistoryEntry(
             from_state=from_state,
             to_state=to_state,
-            at=datetime.now(),
+            at=datetime.now(timezone.utc),
             actor=actor,
             reason=reason,
+            state_digest=self._state_digest(),
             prev_hash=prev_hash,
         )
         self.history.append(entry)
-        self.current_state = to_state
+        # Keyed seal over the chain's length and head: dropping the newest
+        # entries leaves a valid-looking prefix, but not a matching seal.
+        self.chain_seal = compute_hash("seal", {"length": len(self.history), "head": entry.hash})
 
     def _record_note(self, *, actor: str, reason: str) -> None:
         """Append a hash-chained audit note that does NOT change state.
@@ -180,16 +225,7 @@ class AgentState:
         self-loop entry (``from_state == to_state``) so the chain still
         proves it happened, and when, without touching routing.
         """
-        prev_hash = self.history[-1].hash if self.history else GENESIS_HASH
-        entry = HistoryEntry(
-            from_state=self.current_state,
-            to_state=self.current_state,
-            at=datetime.now(),
-            actor=actor,
-            reason=reason,
-            prev_hash=prev_hash,
-        )
-        self.history.append(entry)
+        self._append(self.current_state, self.current_state, actor=actor, reason=reason)
 
     def record_ai_second_opinion(self, hypothesis: dict, *, actor: str = "agent") -> None:
         """Store the advisory AI second opinion and log it to the audit chain.
@@ -200,13 +236,15 @@ class AgentState:
         """
         self.ai_hypothesis = hypothesis
         status = hypothesis.get("status", "unknown")
-        self._record_note(
-            actor=actor,
-            reason=(
+        if status == "unavailable":
+            reason = ("AI second opinion unavailable; deterministic diagnosis "
+                      "proceeds unaffected")
+        else:
+            reason = (
                 f"AI second opinion ({status}): hypothesis={hypothesis.get('hypothesis')!r} "
                 f"agrees_with_rules={hypothesis.get('agrees_with_rules')!r} — advisory only"
-            ),
-        )
+            )
+        self._record_note(actor=actor, reason=reason)
 
     # ------------------------------------------------------------------ #
     # Lifecycle helpers (tools/state-machine facade)
@@ -231,7 +269,7 @@ class AgentState:
         """
         ready = (
             len(self.evidence) >= MIN_EVIDENCE_COUNT
-            or self._retrieval_rounds >= 3
+            or self._retrieval_rounds >= MAX_RETRIEVAL_ROUNDS
         )
         if ready or force:
             self._transition(
@@ -245,7 +283,7 @@ class AgentState:
             actor=actor,
             reason=(
                 f"insufficient evidence: {len(self.evidence)} items, "
-                f"{self._retrieval_rounds} rounds (need {MIN_EVIDENCE_COUNT} items or 3 rounds)"
+                f"{self._retrieval_rounds} rounds (need {MIN_EVIDENCE_COUNT} items or {MAX_RETRIEVAL_ROUNDS} rounds)"
             ),
         )
 
@@ -294,8 +332,8 @@ class AgentState:
             self._transition(
                 AgentStateName.ESCALATED,
                 actor=actor,
-                reason=f"confidence {confidence:.2f} < ESCALATE_CONFIDENCE "
-                       f"{ESCALATE_CONFIDENCE:.2f}",
+                reason=f"confidence {confidence:.0%} is below the {ESCALATE_CONFIDENCE:.0%} "
+                       "escalation floor",
             )
             return self.current_state
 
@@ -304,22 +342,22 @@ class AgentState:
                 self._transition(
                     AgentStateName.ESCALATED,
                     actor=actor,
-                    reason="low confidence and max gathering loops (2) exhausted",
+                    reason="confidence still too low after two rounds of gathering evidence",
                 )
                 return self.current_state
             self._gathering_loops += 1
             self._transition(
                 AgentStateName.GATHERING_EVIDENCE,
                 actor=actor,
-                reason=f"confidence {confidence:.2f} < MIN_RECO_CONFIDENCE; "
-                       f"request more evidence (loop {self._gathering_loops}/2)",
+                reason=f"confidence {confidence:.0%} is below the {MIN_RECO_CONFIDENCE:.0%} "
+                       f"needed to recommend; gathering more evidence (round {self._gathering_loops} of 2)",
             )
             return self.current_state
 
         self._transition(
             AgentStateName.RECOMMENDING,
             actor=actor,
-            reason=f"confidence {confidence:.2f} >= MIN_RECO_CONFIDENCE",
+            reason=f"confidence {confidence:.0%} meets the {MIN_RECO_CONFIDENCE:.0%} needed to recommend",
         )
         return self.current_state
 
@@ -403,7 +441,7 @@ class AgentState:
                 decision.original_actions = list(self.recommendation.actions)
             reason = f"modified by {decision.decided_by}: {decision.rationale}"
         else:
-            reason = f"approved by {decision.decided_by}"
+            reason = f"approved by {decision.decided_by}: {decision.rationale}"
 
         self._transition(AgentStateName.EXECUTING, actor=act, reason=reason)
         return self.current_state
@@ -452,6 +490,31 @@ class AgentState:
             reason=f"feedback {feedback_id} accepted into governance queue",
         )
 
+    def rescore(self, confidence: float, breakdown: dict, *, actor: str, reason: str) -> AgentStateName:
+        """Re-score an AWAITING_APPROVAL case against the current KB.
+
+        Used when knowledge it was scored with has been withdrawn. If the new
+        confidence no longer clears the recommendation threshold, the case
+        leaves the approval queue and escalates to a human.
+        """
+        if self.current_state != AgentStateName.AWAITING_APPROVAL:
+            raise ValueError("re-scoring is only valid while awaiting approval")
+        self.confidence = confidence
+        self.confidence_breakdown = breakdown
+        if confidence < MIN_RECO_CONFIDENCE:
+            gr = self.guardrail_result or GuardrailResult()
+            gr.add("G4", f"re-scored at {confidence:.2f} after knowledge was withdrawn; "
+                         f"below the {MIN_RECO_CONFIDENCE:.2f} recommendation threshold",
+                   escalate=True)
+            self.guardrail_result = gr
+            # An escalated case carries no actionable recommendation.
+            self.recommendation = None
+            self._transition(AgentStateName.ESCALATED, actor=actor,
+                             reason=f"{reason}; confidence {confidence:.2f} now below threshold")
+        else:
+            self._record_note(actor=actor, reason=f"{reason}; confidence {confidence:.2f} still clears the threshold")
+        return self.current_state
+
     def close_escalation(self, *, actor: str, reason: str) -> None:
         """ESCALATED -> CLOSED by an expert."""
         if self.current_state != AgentStateName.ESCALATED:
@@ -476,19 +539,53 @@ class AgentState:
     # ------------------------------------------------------------------ #
     # Audit / observability
     # ------------------------------------------------------------------ #
+    def review_broken_chain(self, *, actor: str, reason: str, quarantine: bool) -> None:
+        """An auditor's disposition of a case whose chain failed verification.
+
+        The history is re-signed as it now stands and an entry records who
+        reviewed it, why, and the head hash that had failed, so the review
+        itself is on the chain. ``quarantine`` also closes the case: its
+        record is not trusted, and the work must be redone as a new case.
+        """
+        from .audit import compute_hash
+
+        if self.verify_audit_chain():
+            raise ValueError(f"case {self.case_id} audit chain verifies; there is nothing to review")
+        old_head = self.history[-1].hash if self.history else GENESIS_HASH
+        prev = GENESIS_HASH
+        rebuilt = []
+        for entry in self.history:
+            fields = entry.model_dump(exclude={"hash", "prev_hash"})
+            rebuilt.append(HistoryEntry(**fields, prev_hash=prev))
+            prev = rebuilt[-1].hash
+        self.history = rebuilt
+        self.chain_seal = compute_hash("seal", {"length": len(self.history), "head": prev})
+        verdict = "quarantined: record not trusted, case closed" if quarantine else "accepted after review"
+        note = f"audit review by {actor}: {verdict} (failed head {old_head[:12]}); {reason}"
+        if quarantine:
+            from_state = self.current_state
+            self.current_state = AgentStateName.CLOSED
+            self._append(from_state, AgentStateName.CLOSED, actor=actor, reason=note)
+        else:
+            self._record_note(actor=actor, reason=note)
+
     def verify_audit_chain(self) -> bool:
         """Recompute every history hash from genesis; True iff chain is intact."""
         from .audit import compute_hash
 
         prev = GENESIS_HASH
-        for i, entry in enumerate(self.history):
+        for entry in self.history:
             if entry.prev_hash != prev:
                 return False
             expected = compute_hash(prev, entry._payload_for_hash())
             if entry.hash != expected:
                 return False
             prev = entry.hash
-        return True
+        if not self.history:
+            return False
+        if self.history[-1].state_digest != self._state_digest():
+            return False
+        return self.chain_seal == compute_hash("seal", {"length": len(self.history), "head": prev})
 
     def snapshot(self) -> dict:
         """Serialise the state for the HITL UI / API (brief: "Transparent")."""
@@ -521,5 +618,7 @@ class AgentState:
             "outcome": self.outcome.model_dump(mode="json") if self.outcome else None,
             "feedback_id": self.feedback_id,
             "history": [h.model_dump(mode="json") for h in self.history],
+            "chain_seal": self.chain_seal,
+            "sentinel_hold": self.sentinel_hold,
             "audit_chain_valid": self.verify_audit_chain(),
         }

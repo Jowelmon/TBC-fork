@@ -12,7 +12,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from technical_services_pill.app import app
-from technical_services_pill.store import STORE
 
 
 @pytest.fixture()

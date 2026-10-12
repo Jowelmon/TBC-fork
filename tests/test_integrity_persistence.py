@@ -12,7 +12,7 @@ Two complementary mechanisms:
 """
 from __future__ import annotations
 
-import pickle
+import json
 import sqlite3
 from datetime import datetime
 
@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 
 from technical_services_pill import learning, persistence, store, tools
 from technical_services_pill.app import app
-from technical_services_pill.database import SQLiteStore
 
 NEW_CASE = {
     "user": "tech1",
@@ -48,9 +47,6 @@ def fresh_state():
 def isolated_store(monkeypatch, tmp_path):
     # The engine singletons are process-wide; make each test a clean slate so
     # older tests' cases can't leak into this test's snapshot file.
-    monkeypatch.setattr(
-        store.STORE, "_db", SQLiteStore(str(tmp_path / "cases.sqlite"))
-    )
     store.STORE._cases.clear()
     learning.STORE.__init__()
     tools.TOOL_AUDIT_LOG[:] = []
@@ -64,17 +60,17 @@ def _tamper_cases_blob(db):
     (blob,) = conn.execute(
         "SELECT blob FROM snapshots WHERE key='cases'"
     ).fetchone()
-    data = pickle.loads(blob)
+    data = json.loads(blob)
     mutated = False
-    for cid, st in data.items():
-        if getattr(st, "history", None):
-            st.history[-1].reason += " [TAMPERED-EDIT]"
+    for rec in data.values():
+        if rec.get("history"):
+            rec["history"][-1]["reason"] += " [TAMPERED-EDIT]"
             mutated = True
             break
     assert mutated, "no case history found to tamper"
     conn.execute(
         "INSERT OR REPLACE INTO snapshots (key, blob, saved_at) VALUES (?, ?, ?)",
-        ("cases", pickle.dumps(data), datetime.now().isoformat()),
+        ("cases", json.dumps(data), datetime.now().isoformat()),
     )
     conn.commit()
     conn.close()

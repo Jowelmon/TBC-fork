@@ -23,9 +23,10 @@ import re
 from typing import Any
 
 from . import llm
-from .decision_tree import KNOWN_CAUSE_IDS
 from .cause_registry import canonicalize_cause_id, cause_asset_type, cause_label
+from .decision_tree import KNOWN_CAUSE_IDS
 from .guardrails import sanitize_metadata
+from .safety import defeats_safety, said_as_prohibition, touches_protection
 
 MAX_TRANSCRIPT_CHARS = 20_000
 _LIST_FIELDS = ("checks", "do_not", "escalate_when")
@@ -42,11 +43,103 @@ def _norm(text: str) -> str:
 def _clean_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(v).strip() for v in value if str(v).strip()][:8]
+    return [str(v).strip() for v in value
+            if str(v).strip() and "[REDACTED" not in str(v)][:8]
+
+
+_TURNS = re.compile(r"\n\s*\n|\n(?=\s*[A-Z][^:\n]{0,60}:)")
+_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+
+
+def _paragraph_of(sanitized: str, quote: str) -> str:
+    """The expert answer the quote is from: its paragraph or speaker turn.
+    A transcript with neither (one long block) falls back to the quote's
+    sentence and the three after it, so a line cannot be borrowed from
+    elsewhere in the interview."""
+    q = _norm(quote)
+    turns = [t for t in _TURNS.split(sanitized) if t.strip()]
+    answer = next((t for t in turns if q in _norm(t)), sanitized)
+    if len(turns) > 1:
+        return answer
+    sentences = [x for x in _SENTENCES.split(answer) if x.strip()]
+    start = next((i for i, x in enumerate(sentences) if q[:30] in _norm(x)), 0)
+    return " ".join(sentences[start:start + 4])
+
+
+def _closest_sentence(symptom: str, quote: str) -> str:
+    """The sentence of the expert's quote that shares most words with a
+    reworded symptom (the first, if none do), so the WHEN text stays in the
+    expert's words without repeating the whole quote."""
+    from .learning import _terms
+
+    sentences = [x.strip() for x in _SENTENCES.split(quote) if x.strip()]
+    if len(sentences) <= 1:
+        return quote
+    wanted = _terms(symptom or "")
+    best = max(sentences, key=lambda x: len(wanted & _terms(x)))
+    return best if not defeats_safety(best) else sentences[0]
+
+
+def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
+                  warnings: list[str], rejected: list[dict[str, Any]]) -> list[str]:
+    """Keep a check / never / escalate-when line only if the expert said it,
+    word for word, in the same answer as the quote, and it does not tell
+    anyone to defeat a safety device."""
+    kept = []
+    for line in lines:
+        if _norm(line) not in _norm(answer):
+            article = "an" if field[0] in "aeiou" else "a"
+            warnings.append(f"Item {idx}: dropped {article} {field} line the expert did not say in this answer.")
+            rejected.append({"item": idx, "field": field, "text": line,
+                             "reason": "not in the expert's answer: no source found in the transcript"})
+        elif field == "never" and not said_as_prohibition(line, answer):
+            # Shown under "Never", but the expert did not say it as one:
+            # it could be read as an instruction, so screen it like one.
+            if defeats_safety(line):
+                warnings.append(f"Item {idx}: dropped a never line that reads as an instruction "
+                                "to defeat a safety device.")
+                rejected.append({"item": idx, "field": field, "text": line,
+                                 "reason": "reads as an instruction to defeat a safety device"})
+            else:
+                kept.append(line)
+        elif field != "never" and defeats_safety(line):
+            article = "an" if field[0] in "aeiou" else "a"
+            warnings.append(f"Item {idx}: dropped {article} {field} line that would defeat a safety device.")
+            rejected.append({"item": idx, "field": field, "text": line,
+                             "reason": "would defeat a safety device"})
+        else:
+            kept.append(line)
+    return kept
+
+
+_GENERIC = {"failure", "fault", "hardware", "drop", "risk", "or", "of", "after", "gateway"}
+
+
+def _cause_terms(cause: str) -> tuple[str, ...]:
+    """Words of the cause's label plus its tell-tale phrases."""
+    words = {w for w in re.findall(r"[a-z]+", cause_label(cause).lower()) if w not in _GENERIC}
+    keywords = next((k for c, k in llm._CAUSE_KEYWORDS if c == cause), ())
+    return (*words, *keywords)
+
+
+def _rules_out(quote: str, cause: str) -> bool:
+    """True if the expert's own words deny the cause the item is filed
+    under, e.g. "it's almost never the sensor" filed as a sensor failure."""
+    low = quote.lower()
+    return any(llm._denied(low, pos)
+               for term in _cause_terms(cause) for pos in llm._keyword_spans(term, low))
+
+
+def _mentions_cause(text: str, cause: str) -> bool:
+    """Whether the expert's words name the cause (or its tell-tale signs)
+    the heuristic is filed under."""
+    low = text.lower()
+    return any(llm._keyword_spans(term, low) for term in _cause_terms(cause))
 
 
 def _validate_items(
     sanitized: str, items: list[Any], asset_type: str,
+    rejected: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Grounding + cause checks shared by the AI draft and the reviewed submit.
 
@@ -58,16 +151,35 @@ def _validate_items(
     haystack = _norm(sanitized)
     kept: list[dict[str, Any]] = []
     warnings: list[str] = []
+    # What the draft said that did not survive, and why: shown to the
+    # capturer so an AI's invention is visible, not silently discarded.
+    rejected = rejected if rejected is not None else []
     for idx, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             warnings.append(f"Item {idx} was not a heuristic object and was dropped.")
+            rejected.append({"item": idx, "field": "heuristic", "text": str(item)[:200],
+                             "reason": "not a heuristic"})
             continue
+        notes_from = len(warnings)
         quote = str(item.get("evidence_quote", "")).strip()
+        if "[REDACTED" in quote or "[REDACTED" in str(item.get("symptom_pattern", "")):
+            warnings.append(f"Item {idx} was dropped: it contains text redacted as an injection attempt.")
+            rejected.append({"item": idx, "field": "heuristic", "text": quote[:200],
+                             "reason": "contains text redacted as an injection attempt (G7)"})
+            continue
         if not quote or _norm(quote) not in haystack:
             warnings.append(
                 f"Item {idx} was dropped as ungrounded: its supporting quote is "
                 "not in the transcript word for word."
             )
+            rejected.append({"item": idx, "field": "heuristic",
+                             "text": quote or str(item.get("symptom_pattern", ""))[:200],
+                             "reason": "the quoted words are not in the transcript: no source found"})
+            continue
+        if defeats_safety(quote):
+            warnings.append(f"Item {idx} was dropped: the expert's words would defeat a safety device.")
+            rejected.append({"item": idx, "field": "heuristic", "text": quote,
+                             "reason": "would defeat a safety device"})
             continue
 
         cause_raw = str(item.get("likely_cause", "")).strip()
@@ -86,13 +198,56 @@ def _validate_items(
                 f"filed under {owner}, not {asset_type}."
             )
 
+        check_cause = not is_new and _rules_out(quote, cause)
+        if check_cause:
+            warnings.append(
+                f"Item {idx}: the expert's words may rule out \"{cause_label(cause)}\"; "
+                "check the cause before sending."
+            )
+        answer = _paragraph_of(sanitized, quote)
+        symptom = str(item.get("symptom_pattern", "")).strip()
+        if (not symptom or len(symptom) > 600 or _norm(symptom) not in _norm(answer)
+                or defeats_safety(symptom)):
+            # The expert's own words, never a paraphrase: the sentence of the
+            # quote closest to what the draft meant.
+            fallback = _closest_sentence(symptom, quote)
+            if symptom and _norm(symptom) != _norm(fallback):
+                warnings.append(f"Item {idx}: the WHEN text was reworded, so the expert's own sentence "
+                                f"is used: \"{fallback}\"")
+            symptom = fallback
+        off_topic = not is_new and not _mentions_cause(f"{quote} {answer}", cause)
+        if off_topic:
+            warnings.append(
+                f"Item {idx}: nothing in the expert's answer names \"{cause_label(cause)}\" "
+                "or its usual signs; check it is filed under the right cause."
+            )
+        names = {"checks": "check", "do_not": "never", "escalate_when": "escalate-when"}
+        lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings, rejected)
+                 for f in _LIST_FIELDS}
+        # Deny by default: any line naming a protective device or its
+        # monitoring is held for the approving steward's safety review.
+        safety_review = [t for t in (quote, symptom, *lists["checks"], *lists["escalate_when"])
+                         if touches_protection(t)]
+        safety_review += [t for t in lists["do_not"]
+                          if not said_as_prohibition(t, answer) and touches_protection(t)]
+        safety_review = list(dict.fromkeys(safety_review))
+        if safety_review:
+            warnings.append(
+                f"Item {idx} names a protective device or work on equipment (alarm, trip, contactor, "
+                "probe, hand mode...). The approving steward must confirm a safety review, and it is "
+                "shown as guidance only: it never raises confidence.")
         kept.append({
-            "symptom_pattern": str(item.get("symptom_pattern", "")).strip()[:300],
+            "check_cause": check_cause,
+            "safety_review": safety_review,
+            # This item's own warnings, so the review card can show them in place.
+            "notes": warnings[notes_from:],
+            "off_topic": off_topic,
+            "symptom_pattern": symptom,
             "likely_cause": cause,
             "cause_label": cause_label(cause),
             "asset_type": owner,
             "new_cause": is_new,
-            **{f: _clean_list(item.get(f)) for f in _LIST_FIELDS},
+            **lists,
             "evidence_quote": quote,
         })
     return kept, warnings
@@ -104,6 +259,9 @@ def _sanitize(transcript: str) -> tuple[str, list[str]]:
     if len(transcript) > MAX_TRANSCRIPT_CHARS:
         raise CaptureError(f"transcript exceeds {MAX_TRANSCRIPT_CHARS} characters")
     sanitized = sanitize_metadata(transcript)
+    # Redact the whole sentence around an injection attempt, not only the
+    # matched phrase, so no fragment of it can be quoted into knowledge.
+    sanitized = re.sub(r"[^.!?\n]*\[REDACTED[^\]]*\][^.!?\n]*[.!?]?", " [REDACTED-INJECTION].", sanitized)
     warnings = []
     if sanitized != transcript:
         warnings.append(
@@ -121,7 +279,8 @@ def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
     if not isinstance(items, list):
         raise CaptureError("model output has no 'heuristics' list")
 
-    kept, item_warnings = _validate_items(sanitized, items, asset_type)
+    rejected: list[dict[str, Any]] = []
+    kept, item_warnings = _validate_items(sanitized, items, asset_type, rejected)
     warnings += item_warnings
     if not kept:
         raise CaptureError(
@@ -133,7 +292,17 @@ def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
         "heuristics": kept,
         "warnings": warnings,
         "dropped": len(items) - len(kept),
+        "rejected": rejected,
     }
+
+
+def check_draft(transcript: str, asset_type: str, heuristics: list[Any]) -> dict[str, Any]:
+    """Run the grounding and safety checks on a draft without queuing it:
+    what would be kept, and every line that would be rejected with why."""
+    sanitized, warnings = _sanitize(transcript)
+    rejected: list[dict[str, Any]] = []
+    kept, item_warnings = _validate_items(sanitized, heuristics, asset_type, rejected)
+    return {"heuristics": kept, "rejected": rejected, "warnings": warnings + item_warnings}
 
 
 def reviewed_draft(
@@ -154,7 +323,7 @@ def reviewed_draft(
             "reviewed draft failed grounding: " + "; ".join(item_warnings)
         )
     return {
-        "provider": provider if provider in ("adp", "mock") else llm.provider_name(),
+        "provider": provider if provider in ("adp", "mock", "manual") else llm.provider_name(),
         "heuristics": kept,
         "warnings": warnings + item_warnings,
         "dropped": 0,
@@ -173,5 +342,9 @@ Interviewer: And chillers?
 Senior technician: With a chiller tripping on low pressure, I check the refrigerant charge before anything else. If the charge is down and there's an oil stain near the joints, that's a refrigerant leak until proven otherwise. Never top up the gas and walk away, it'll just leak out again and you've vented refrigerant. I get the safety officer involved for any leak, that's a regulatory thing.
 
 If the approach temperature keeps creeping up week by week, look at the condenser first. A fouled condenser is the usual story there, especially after the dry season.
+
+Interviewer: What about the chilled water pumps?
+
+Senior technician: If the axial vibration is high and the 2x peak dominates, that's misalignment at the coupling. Check the alignment with the laser kit before you touch anything else. Never just tighten the base bolts and hope, the vibration comes straight back.
 """
 

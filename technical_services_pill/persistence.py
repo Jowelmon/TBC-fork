@@ -1,35 +1,30 @@
 """SQLite persistence for cases, knowledge proposals and KB versions.
 
 The engine keeps its working state in two in-process singletons:
-``store.STORE`` (cases, each with its hash-chained audit trail) and
-``learning.STORE`` (validated knowledge, pending/approved proposals, KB
-version). This module snapshots both into a local SQLite file after every
-state-changing request and restores them on startup, so a server restart
-loses nothing: not cases, not pending proposals, not version history.
+``store.STORE`` (cases, each with its keyed audit chain) and
+``learning.STORE`` (validated knowledge, proposals, versions and the
+governance ledger). This module snapshots both into a local SQLite file as
+JSON after every state-changing request and restores them on startup, so a
+server restart loses nothing.
 
-Integrity on restore: every case's SHA-256 audit chain is re-verified after
-loading. A case whose chain no longer validates is reported in
-``load_state()``'s result rather than silently trusted.
+Snapshots are plain JSON, never pickle: loading a snapshot can only ever
+produce data, not run code. Integrity on restore: every case's audit chain
+and the governance ledger are re-verified after loading, and failures are
+reported rather than silently trusted.
 
-Tamper evidence survives clean restarts: a snapshot whose on-disk bytes
-changed while the process was NOT looking (an external edit between saves, or
-a fresh edit after a graceful shutdown would have autosaved over it) is
-archived to ``tbc.tampered.<timestamp>.sqlite`` and logged in the ``snapshots``
-database's ``integrity_events`` table *before* the clean state overwrites it --
-so the FAIL badge a later restart shows is backed by preserved evidence, not
-memory.
-
-Scope note: snapshots use ``pickle`` and must only ever be loaded from a
-file this service wrote itself (the default ``data/`` path is gitignored).
-A production deployment would move to a relational schema in Postgres; the
-store interfaces (``CaseStore``, ``LearningStore``) are the seam for that.
+Tamper evidence survives clean restarts: a snapshot whose on-disk contents
+changed while the process was not looking (an external edit between saves, or
+an edit made after a graceful shutdown) is archived to
+``tbc.tampered.<timestamp>.sqlite`` and logged in the ``integrity_events``
+table *before* the clean state overwrites it, so the FAIL badge a later
+restart shows is backed by preserved evidence, not memory.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
-import pickle
 import shutil
 import sqlite3
 from datetime import datetime, timezone
@@ -37,13 +32,14 @@ from pathlib import Path
 from typing import Any
 
 from . import learning, store, tools
+from .models import ValidatedCase
 
 DEFAULT_DB_PATH = Path("data") / "tbc.sqlite"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
     key       TEXT PRIMARY KEY,
-    blob      BLOB NOT NULL,
+    blob      TEXT NOT NULL,
     saved_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS integrity_events (
@@ -61,15 +57,20 @@ _log = logging.getLogger("tbc.persistence")
 # this table into memory so the UI keeps showing what the service has seen).
 _INTEGRITY_EVENTS: list[dict[str, Any]] = []
 
-# keyed by (str(db_path), snapshot_key) -> the exact bytes we last loaded or
+# keyed by (str(db_path), snapshot_key) -> the exact text we last loaded or
 # wrote. save_state() compares the on-disk blob against this before
 # overwriting: if they differ the disk was modified outside this process, and
 # that evidence is archived instead of silently replaced.
-_last_written: dict[tuple[str, str], bytes] = {}
+_last_written: dict[tuple[str, str], str] = {}
 
-# (str(db_path), snapshot_key, sha256(disk_blob)) already archived/logged, so
-# the same tampered bytes are never archived twice.
-_reported: set[tuple[str, str, str]] = set()
+# Tampering already archived and logged, so the same edit is never reported twice.
+_reported: set[tuple] = set()
+
+# _cause_stats is not saved: it is rebuilt from the validated cases on load.
+_LEARNING_FIELDS = (
+    "_proposals", "_kb_version", "_version_seq", "_versions",
+    "ledger", "ledger_seal", "_revocations", "expert_heuristics",
+)
 
 
 def db_path() -> Path:
@@ -84,11 +85,24 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _case_record(state) -> dict[str, Any]:
+    snap = state.snapshot()
+    snap.pop("audit_chain_valid", None)
+    snap["_gathering_loops"] = state._gathering_loops
+    snap["_retrieval_rounds"] = state._retrieval_rounds
+    return snap
+
+
 def _state() -> dict[str, Any]:
+    ls = learning.STORE
     return {
-        "cases": store.STORE._cases,
-        "learning": learning.STORE.__dict__,
+        "cases": {cid: _case_record(st) for cid, st in store.STORE._cases.items()},
+        "learning": {
+            "validated": [vc.model_dump(mode="json") for vc in ls.validated],
+            **{f: getattr(ls, f) for f in _LEARNING_FIELDS},
+        },
         "tool_audit_log": tools.TOOL_AUDIT_LOG,
+        "seals": {"registry": store.STORE.registry_seal, "tool_log": tools.TOOL_LOG_SEAL["seal"]},
     }
 
 
@@ -124,20 +138,15 @@ def _record_event(
         "archived_path": archived_path,
     }
     _INTEGRITY_EVENTS.append(row)
+    sql = ("INSERT INTO integrity_events (at, event, detail, archived_path)"
+           " VALUES (?, ?, ?, ?)")
+    args = (row["at"], row["event"], row["detail"], row["archived_path"])
     try:
         if conn is None:
             with _connect(path) as own:
-                own.execute(
-                    "INSERT INTO integrity_events (at, event, detail, archived_path)"
-                    " VALUES (?, ?, ?, ?)",
-                    (row["at"], row["event"], row["detail"], row["archived_path"]),
-                )
+                own.execute(sql, args)
         else:
-            conn.execute(
-                "INSERT INTO integrity_events (at, event, detail, archived_path)"
-                " VALUES (?, ?, ?, ?)",
-                (row["at"], row["event"], row["detail"], row["archived_path"]),
-            )
+            conn.execute(sql, args)
     except sqlite3.Error:
         # The event still shows for this session even if persisting it failed.
         _log.exception("could not persist integrity event %r", event)
@@ -147,15 +156,11 @@ def _load_events(conn: sqlite3.Connection) -> None:
     _INTEGRITY_EVENTS.clear()
     try:
         for at, event, detail, archived in conn.execute(
-            "SELECT at, event, detail, archived_path FROM integrity_events"
-            " ORDER BY id"
+            "SELECT at, event, detail, archived_path FROM integrity_events ORDER BY id"
         ):
-            _INTEGRITY_EVENTS.append({
-                "at": at,
-                "event": event,
-                "detail": detail,
-                "archived_path": archived,
-            })
+            _INTEGRITY_EVENTS.append(
+                {"at": at, "event": event, "detail": detail, "archived_path": archived}
+            )
     except sqlite3.Error:
         _log.exception("could not read integrity_events from %s", db_path())
 
@@ -164,44 +169,39 @@ def save_state(path: Path | None = None) -> None:
     """Write the current engine state to SQLite in one transaction.
 
     Before overwriting a snapshot that we previously wrote or loaded, its
-    on-disk bytes are compared against what we last saw. A mismatch means the
-    file was edited outside this process since our last write: the tampered
-    copy is archived and an integrity event is recorded. The write then goes
-    ahead, but the tamper stays provable forever (archive + logged event), so
-    a graceful shutdown can never make the evidence silently disappear.
+    on-disk contents are compared against what we last saw. A mismatch means
+    the file was edited outside this process since our last write: the
+    tampered copy is archived and an integrity event is recorded. The write
+    then goes ahead, but the tamper stays provable (archive + logged event),
+    so a graceful shutdown can never make the evidence silently disappear.
     """
     path = path or db_path()
     now = datetime.now(timezone.utc).isoformat()
     keyed = str(path)
 
     with _connect(path) as conn:
-        state = _state()
+        state = {k: json.dumps(v, default=str) for k, v in _state().items()}
 
         # Pass 1: detect disk edits we never made, before writing anything.
         for key in state:
-            row = conn.execute(
-                "SELECT blob FROM snapshots WHERE key = ?", (key,)
-            ).fetchone()
+            row = conn.execute("SELECT blob FROM snapshots WHERE key = ?", (key,)).fetchone()
             disk = row[0] if row else None
             prev = _last_written.get((keyed, key))
             if prev is not None and disk is not None and disk != prev:
-                digest = hashlib.sha256(disk).hexdigest()
-                marker = (keyed, key, digest)
+                marker = (keyed, key, hashlib.sha256(str(disk).encode()).hexdigest())
                 if marker not in _reported:
                     _reported.add(marker)
-                    archived = _archive(path)
                     _record_event(
                         path,
                         "snapshot_modified_between_saves",
                         f"snapshot {key!r} changed on disk since this process "
                         "wrote it; tampered copy preserved",
-                        archived,
+                        _archive(path),
                         conn=conn,
                     )
 
         # Pass 2: write the snapshots and remember exactly what we wrote.
-        for key, value in state.items():
-            blob = pickle.dumps(value)
+        for key, blob in state.items():
             conn.execute(
                 "INSERT OR REPLACE INTO snapshots (key, blob, saved_at) VALUES (?, ?, ?)",
                 (key, blob, now),
@@ -212,11 +212,11 @@ def save_state(path: Path | None = None) -> None:
 def load_state(path: Path | None = None) -> dict[str, Any]:
     """Restore engine state from SQLite into the live singletons.
 
-    Returns a summary including any cases whose audit chain failed
-    re-verification. A missing database is not an error: the engine simply
-    starts from seed data.
+    A missing or empty database is not an error: the engine starts from
+    seed data. A snapshot in an older, non-JSON format is ignored (run
+    ``make reset``) rather than deserialised.
 
-    Integrity: the snapshot a case was restored from is archived to a
+    Integrity: if any case's audit chain fails, the database is archived to a
     ``tbc.tampered.<timestamp>.sqlite`` file and logged as an integrity event
     *before* anything can overwrite it, so a clean restart later cannot make
     the tamper evidence disappear.
@@ -231,46 +231,56 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
         _load_events(conn)
     if not rows:
         return {"restored": False, "reason": "database empty", "path": str(path)}
+    try:
+        data = {k: json.loads(v) for k, v in rows.items()}
+    except (TypeError, ValueError):
+        return {"restored": False, "reason": "snapshot is not JSON (older format); run make reset",
+                "path": str(path)}
 
     # A snapshot we just loaded is the baseline for in-session edit detection.
     for key, blob in rows.items():
         _last_written[(keyed, key)] = blob
 
-    if "cases" in rows:
+    if "cases" in data:
         store.STORE._cases.clear()
-        store.STORE._cases.update(pickle.loads(rows["cases"]))
-    if "learning" in rows:
-        learning.STORE.__dict__.clear()
-        learning.STORE.__dict__.update(pickle.loads(rows["learning"]))
-    if "tool_audit_log" in rows:
-        tools.TOOL_AUDIT_LOG[:] = pickle.loads(rows["tool_audit_log"])
+        for cid, rec in data["cases"].items():
+            store.STORE._cases[cid] = store.STORE._restore_from_snapshot(rec)
+    if "learning" in data:
+        ls = learning.STORE
+        rec = data["learning"]
+        ls.validated = [ValidatedCase.model_validate(v) for v in rec["validated"]]
+        for f in _LEARNING_FIELDS:
+            setattr(ls, f, rec[f])
+        ls.rebuild_stats()
+    if "tool_audit_log" in data:
+        tools.TOOL_AUDIT_LOG[:] = data["tool_audit_log"]
+    if "seals" in data:
+        store.STORE.registry_seal = data["seals"]["registry"]
+        tools.TOOL_LOG_SEAL["seal"] = data["seals"]["tool_log"]
 
-    broken = [
-        cid for cid, st in store.STORE._cases.items() if not st.verify_audit_chain()
-    ]
+    broken = [cid for cid, st in store.STORE._cases.items() if not st.verify_audit_chain()]
     if broken:
-        # One incident per broken case set, not one per byte pattern: the
-        # re-pickled copy of a restored snapshot is not byte-identical to the
-        # tampered file, so a digest key would double-report after each clean
-        # restart. A genuinely NEW tamper (a different affected case) gets a
-        # new marker and is reported again.
+        # One incident per broken case set: a NEW tamper (a different affected
+        # case) gets a new marker and is reported again.
         marker = (keyed, "audit_chain_failure", frozenset(broken))
         if marker not in _reported:
             _reported.add(marker)
-            archived = _archive(path)
             _record_event(
                 path,
                 "audit_chain_failure_on_load",
                 "audit chain failed for " + ", ".join(broken) + "; "
                 "tampered snapshot preserved before any later save",
-                archived,
+                _archive(path),
             )
     return {
         "restored": True,
         "path": str(path),
         "cases": len(store.STORE._cases),
-        "kb_version": learning.STORE.get_kb_version_label(),
+        "kb_versions": learning.STORE.labels(),
         "pending_proposals": len(learning.STORE.list_pending_proposals()),
         "audit_chain_failures": broken,
+        "ledger_valid": learning.STORE.verify_ledger(),
+        "registry_valid": store.STORE.verify_registry(),
+        "tool_log_valid": tools.verify_tool_log(),
         "integrity_events": list(_INTEGRITY_EVENTS),
     }

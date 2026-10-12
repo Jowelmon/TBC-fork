@@ -102,7 +102,7 @@ all hash-chained and rollback-able.
 | **Human-supervised** | G6 forces `AWAITING_APPROVAL` for *every* action; AOM is the only role with `approve_reject_modify`; AI second opinion is advisory-only (G9 never routes). |
 | **Transparent** | Every card is layer-labelled: `DETERMINISTIC`, `AI hypothesis`, `Deterministic guardrails`, `HUMAN DECISION`; confidence W1–W5 factor bars; knowledge reuse shows the expert's verbatim quote. |
 | **Accountable** | 5-role RBAC, named demo users, session-cookie identity (spoofing tested), every state transition recorded with actor + timestamp in the audit chain. |
-| **Reliable** | 143 pytest + 13 acceptance evals; deterministic diagnosis (same input → same output); confidence thresholds are named constants, not magic numbers. |
+| **Reliable** | 342 pytest + 13 acceptance evals; deterministic diagnosis (same input → same output); confidence thresholds are named constants, not magic numbers. |
 | **Reusable** | Validated cases stored as KB knowledge, retrieved by similarity on the next matching fault — reuse is shown on screen, not claimed. |
 | **Scalable** | 4 asset types already behind one dispatcher; Pill Registry for per-pill ownership; documented multi-site path. |
 | **Governed** | Proposal → second-steward approval → version bump → rollback; self-approval returns 403 server-side. |

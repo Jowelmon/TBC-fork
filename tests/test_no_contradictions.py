@@ -101,4 +101,4 @@ def test_kb_version_label_matches_across_endpoints(client: TestClient):
     snap = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()
 
     stats = client.get("/kb/stats", params={"user": "tech1"}).json()
-    assert snap["confidence_breakdown"]["kb_version_label"] == stats["kb_version_label"]
+    assert snap["confidence_breakdown"]["kb_version_label"] == stats["kb_version_labels"]["CRAH"]

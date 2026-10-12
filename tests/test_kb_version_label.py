@@ -13,4 +13,5 @@ def test_label_mapping():
 def test_stats_exposes_label_matching_counter():
     client = TestClient(app)
     stats = client.get("/kb/stats", params={"user": "mgr1"}).json()
-    assert stats["kb_version_label"] == kb_version_label(stats["kb_version"])
+    for pill, version in stats["kb_versions"].items():
+        assert stats["kb_version_labels"][pill] == f"{pill} v{kb_version_label(version)}"

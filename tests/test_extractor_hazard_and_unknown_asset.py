@@ -37,14 +37,15 @@ def test_mock_extractor_does_not_draft_a_heuristic_for_a_denied_cause():
     assert len(result["heuristics"]) == 1, result["heuristics"]
 
 
-def test_mock_extractor_still_drafts_the_sample_interviews_four_heuristics():
+def test_mock_extractor_still_drafts_the_sample_interviews_heuristics():
     from technical_services_pill.capture import SAMPLE_INTERVIEW
     result = llm._mock_extract(SAMPLE_INTERVIEW)
     causes = {h["likely_cause"] for h in result["heuristics"]}
     assert causes == {
-        "refrigerant_leak", "condenser_fouling", "comm_bus_failure", "sensor_hardware_failure",
+        "refrigerant_leak", "condenser_fouling", "communication_bus_controller_failure",
+        "sensor_hardware_failure", "shaft_misalignment",
     }
-    assert len(result["heuristics"]) == 4
+    assert len(result["heuristics"]) == len(causes)  # one draft per cause, no duplicates
 
 
 def test_g2b_hazard_is_named_in_the_guardrail_result_the_decision_screen_reads(client: TestClient):

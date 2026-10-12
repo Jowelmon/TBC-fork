@@ -42,6 +42,7 @@ _ALL_CAPABILITIES: frozenset[str] = frozenset(
         "rollback_knowledge_version",
         "read_audit_trail",
         "capture_expert_knowledge",
+        "review_audit_integrity",
     }
 )
 
@@ -66,7 +67,7 @@ PERMISSIONS: dict[Role, frozenset[str]] = {
             "capture_expert_knowledge",
         }
     ),
-    Role.AUDITOR: frozenset({"view_case", "read_audit_trail"}),
+    Role.AUDITOR: frozenset({"view_case", "read_audit_trail", "review_audit_integrity"}),
     Role.ADMIN: _ALL_CAPABILITIES,
 }
 

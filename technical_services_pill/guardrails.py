@@ -141,8 +141,8 @@ def check_guardrails(
 
     # G4 — confidence below escalate floor: must NOT recommend.
     if confidence < ESCALATE_CONFIDENCE:
-        res.add("G4", f"confidence {confidence:.2f} < ESCALATE_CONFIDENCE "
-                       f"{ESCALATE_CONFIDENCE:.2f}; escalate, do not recommend",
+        res.add("G4", f"confidence {confidence:.0%} is below the {ESCALATE_CONFIDENCE:.0%} "
+                       "escalation floor; escalate, do not recommend",
                  escalate=True, block=True)
 
     # G1 — banned physical/safety actions: block + escalate.
@@ -215,13 +215,17 @@ def flag_ai_disagreement(
         return result
     if not ai_hypothesis or ai_hypothesis.get("status") != "ok":
         return result
-    if ai_hypothesis.get("agrees_with_rules"):
+    if ai_hypothesis.get("agrees_with_rules") or not ai_hypothesis.get("hypothesis"):
+        # Agreement, or no opinion at all: neither is a disagreement.
         return result
-    hyp_label = ai_hypothesis.get("hypothesis") or "no cause identified"
+    from .cause_registry import cause_label
+
+    hyp = ai_hypothesis.get("hypothesis")
+    hyp_label = cause_label(hyp) if hyp else "no cause identified"
     result.add(
         "G9",
         f"AI second opinion disagrees with the rule-based diagnosis "
-        f"(AI: {hyp_label}; rules: {rule_cause or 'unresolved'}) — advisory only, "
-        "does not change routing or require action",
+        f"(AI: {hyp_label}; rules: {cause_label(rule_cause) if rule_cause else 'unresolved'}) "
+        "— advisory only, does not change routing or require action",
     )
     return result

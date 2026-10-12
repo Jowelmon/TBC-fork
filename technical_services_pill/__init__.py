@@ -13,18 +13,19 @@ from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
 from .audit import GENESIS_HASH, canonical_json, compute_hash
 from .cause_registry import (
+    CANONICAL_CAUSE_IDS,
     CAUSE_BATTERY_EOL,
     CAUSE_COMM_BUS_FAILURE,
     CAUSE_COMMUNICATION_BUS_CONTROLLER_FAILURE,
     CAUSE_CONFIG_DRIFT,
     CAUSE_SENSOR_HARDWARE_FAILURE,
-    CANONICAL_CAUSE_IDS,
     canonicalize_cause_id,
 )
-from .confidence import score_confidence, evidence_coverage_score
-from .decision_tree import evaluate_decision_tree, DecisionResult
+from .confidence import evidence_coverage_score, score_confidence
+from .decision_tree import DecisionResult, evaluate_decision_tree
 from .guardrails import check_guardrails, sanitize_metadata
-from .learning import LearningStore, STORE as LEARNING_STORE
+from .learning import STORE as LEARNING_STORE
+from .learning import LearningStore
 from .models import (
     ESCALATE_CONFIDENCE,
     MAX_GATHERING_LOOPS,

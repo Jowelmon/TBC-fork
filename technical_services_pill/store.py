@@ -1,18 +1,15 @@
-"""Case store with a SQLite-backed persistence layer and a memory cache.
+"""In-memory store of cases (``AgentState`` by case id).
 
-The repository originally used a process-local in-memory store. This version
-adds persisted storage without breaking the existing public API: the app still
-works with ``CaseStore().create(...)``, ``get()``, ``list()``, and
-``snapshot()`` semantics, but state survives a restart.
+Persistence lives in one place, ``persistence.py``, which snapshots this
+store and the knowledge base together after every state-changing request
+and restores them on startup.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
 from .agent_state import AgentState
-from .database import SQLiteStore
 from .models import (
     AgentStateName,
     Diagnosis,
@@ -27,15 +24,24 @@ from .models import (
 
 
 class CaseStore:
-    """Persistent store of ``AgentState`` by case id."""
+    """Store of ``AgentState`` by case id."""
 
-    def __init__(self, db_path: str | None = None) -> None:
-        self._db = SQLiteStore(db_path)
+    def __init__(self) -> None:
         self._cases: dict[str, AgentState] = {}
-        for case_id in self._db.list_case_ids():
-            data = self._db.get_case_state(case_id)
-            if data is not None:
-                self._cases[case_id] = self._restore_from_snapshot(data)
+        self.registry_seal: str | None = None
+        self.reseal()
+
+    def reseal(self) -> None:
+        """Keyed seal over the set of case ids: deleting or inserting a case
+        outside the API no longer passes verification."""
+        from .audit import compute_hash
+
+        self.registry_seal = compute_hash("registry", {"cases": sorted(self._cases)})
+
+    def verify_registry(self) -> bool:
+        from .audit import compute_hash
+
+        return self.registry_seal == compute_hash("registry", {"cases": sorted(self._cases)})
 
     def _restore_from_snapshot(self, data: dict[str, Any]) -> AgentState:
         obs = Observation.model_validate(data["observation"])
@@ -52,6 +58,8 @@ class CaseStore:
         state.work_order_id = data.get("work_order_id")
         state.feedback_id = data.get("feedback_id")
         state.history = [HistoryEntry.model_validate(item) for item in data.get("history", [])]
+        state.chain_seal = data.get("chain_seal")
+        state.sentinel_hold = data.get("sentinel_hold")
         state.current_state = AgentStateName(data.get("current_state", state.current_state.value))
         state._gathering_loops = int(data.get("_gathering_loops", 0))
         state._retrieval_rounds = int(data.get("_retrieval_rounds", 0))
@@ -61,36 +69,18 @@ class CaseStore:
         case_id = state.case_id or f"CASE-{uuid.uuid4().hex[:8]}"
         state.case_id = case_id
         self._cases[case_id] = state
-        self._db.save_case_state(case_id, state.snapshot())
+        self.reseal()
         return case_id
 
     def get(self, case_id: str) -> AgentState | None:
-        state = self._cases.get(case_id)
-        if state is None:
-            data = self._db.get_case_state(case_id)
-            if data is None:
-                return None
-            state = self._restore_from_snapshot(data)
-            self._cases[case_id] = state
-        return state
+        return self._cases.get(case_id)
 
     def list(self) -> list[str]:
         return list(self._cases.keys())
 
     def snapshot(self, case_id: str) -> dict | None:
         state = self.get(case_id)
-        if state is None:
-            return None
-        snap = state.snapshot()
-        self._db.save_case_state(case_id, snap)
-        return snap
-
-    def audit_trace(self, case_id: str) -> list[dict]:
-        state = self.get(case_id)
-        if state is None:
-            return []
-        chain_valid = state.verify_audit_chain()
-        return [{**entry.model_dump(mode="json"), "chain_valid": chain_valid} for entry in state.history]
+        return state.snapshot() if state is not None else None
 
     def all_audit_traces(self, *, actor: str | None = None, case_id: str | None = None) -> list[dict]:
         out: list[dict] = []
@@ -111,4 +101,4 @@ class CaseStore:
 
 STORE = CaseStore()
 
-__all__ = ["CaseStore", "STORE"]
+__all__ = ["STORE", "CaseStore"]

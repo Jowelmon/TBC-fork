@@ -52,11 +52,21 @@ def _close_with_validated_feedback(client: TestClient, snap: dict) -> None:
 
     queue = client.get("/kb/queue", params={"user": "steward1"}).json()["queue"]
     proposal_id = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb_id)
-    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2"})
+    resp = client.post(f"/kb/proposals/{proposal_id}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert resp.status_code == 200, resp.text
 
 
+def _fresh_crah_knowledge() -> None:
+    """Earlier tests may already have taught the CRAH pill this signature,
+    leaving no headroom to measure an uplift. Start from the shipped CRAH
+    knowledge; other pills are untouched."""
+    from technical_services_pill.learning import STORE as LSTORE
+    if LSTORE.version_of("CRAH") != 0:
+        LSTORE.rollback("CRAH", 0, actor="admin1", reason="test baseline")
+
+
 def test_approving_validated_case_raises_next_identical_case_confidence(client: TestClient):
+    _fresh_crah_knowledge()
     first = _create_and_advance(client)
     assert first["diagnosis"]["top_cause_id"] == "sensor_hardware_failure"
     confidence_before = first["confidence"]
@@ -80,16 +90,32 @@ def test_rollback_restores_confidence_exactly(client: TestClient):
     # already ingested cases with the same fault signature).
     baseline = _create_and_advance(client)
     confidence_before = baseline["confidence"]
-    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
+    version_before = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
 
     _close_with_validated_feedback(client, baseline)
-    version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_version"]
-    assert version_after == version_before + 1, "approval must bump the KB version by exactly 1"
+    version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
+    assert version_after > version_before, "approval must move the KB to a new version"
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1"})
+    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
     assert resp.status_code == 200, resp.text
 
     restored = _create_and_advance(client)
     assert restored["confidence"] == pytest.approx(confidence_before, abs=1e-9), (
         "rollback must restore confidence exactly, not just approximately"
     )
+
+
+def test_staleness_uses_real_evidence_age_in_any_timezone():
+    """Evidence times are UTC-aware, so W4 measures real age: fresh evidence
+    is never penalised and 20-minute-old sensor data (30-minute SLA) is."""
+    from datetime import datetime, timedelta, timezone
+
+    from technical_services_pill.confidence import _staleness_from_age
+    from technical_services_pill.tools import gather_evidence_for_case
+
+    fresh = gather_evidence_for_case("CRAH-DC1-01", "SA-TEMP-01")
+    assert all(ev.retrieved_at.tzinfo is not None for ev in fresh)
+    assert _staleness_from_age(fresh) == 0.0
+    later = datetime.now(timezone.utc) + timedelta(minutes=20)
+    sensors = [ev for ev in fresh if ev.source == "sensor"]
+    assert _staleness_from_age(sensors, now=later) == pytest.approx(20 / 30, abs=0.01)

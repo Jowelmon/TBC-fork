@@ -50,7 +50,7 @@ def test_exoneration_rules_a_cause_out_without_a_negation_word():
         "Technician: Every one of the two hundred tags on that bus was "
         "reporting fine, with no alarms outstanding."
     )
-    assert "comm_bus_failure" not in out, out
+    assert "communication_bus_controller_failure" not in out, out
     assert out == set(), out
 
 
@@ -61,7 +61,7 @@ def test_exonerated_terminal_does_not_draft_loose_wiring():
         "Technician: The wiring was not loose either, we pulled the terminal "
         "and it was seated properly, no moisture under the boot."
     )
-    assert "loose_wiring" not in out, out
+    assert "loose_wiring_after_service" not in out, out
 
 
 def test_keyword_sets_are_disjoint_across_causes():

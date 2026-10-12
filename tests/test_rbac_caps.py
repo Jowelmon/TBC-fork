@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from technical_services_pill.rbac import PERMISSIONS, _ALL_CAPABILITIES  # noqa: E402
+from technical_services_pill.rbac import _ALL_CAPABILITIES, PERMISSIONS
 
 # Matches _need(user, "capability_id") in app.py.
 _NEED_RE = re.compile(r'_need\(\s*\w+\s*,\s*"([a-z_]+)"\s*\)')
@@ -86,20 +86,22 @@ if __name__ == "__main__":
     print(f"phantom (declared, no endpoint): {sorted(phantom)}")
     sys.exit(0)
 
-def test_ui_capability_map_matches_the_rbac_matrix():
-    """The Governance screen checks roles before calling restricted endpoints;
-    its user lists must match the server's RBAC matrix exactly."""
-    import re
-
-    from technical_services_pill.rbac import DEMO_USERS, can
-
-    src = open("frontend/static/js/screens.js", encoding="utf-8").read()
-    block = re.search(r"const CAN = \{(.*?)\};", src, re.S).group(1)
-    ui = {
-        cap: set(re.findall(r"'(\w+)'", users))
-        for cap, users in re.findall(r"(\w+): \[([^\]]*)\]", block)
-    }
-    assert set(ui) == {"approve_knowledge_version", "read_audit_trail"}
-    for cap, users in ui.items():
-        expected = {u for u, d in DEMO_USERS.items() if can(d.role, cap)}
-        assert users == expected, (cap, users, expected)
+def test_governance_screen_checks_the_server_capability_before_each_request():
+    """The Governance screen skips requests the signed-in role would only get
+    a 403 for. Each guard must test the same capability the endpoint enforces;
+    the server still enforces it either way."""
+    app_src = (ROOT / "technical_services_pill" / "app.py").read_text(encoding="utf-8")
+    ui = (ROOT / "frontend" / "static" / "js" / "screens.js").read_text(encoding="utf-8")
+    for path, call_text in (
+        ("/kb/queue", "/kb/queue'"),
+        ("/kb/proposals", "/kb/proposals?status=approved'"),
+        ("/kb/ledger", "/kb/ledger'"),
+        ("/audit/trace", "/audit/trace'"),
+        ("/system/integrity", "/system/integrity'"),
+    ):
+        server_cap = re.search(
+            rf'@app\.get\("{re.escape(path)}"\).*?_need\(user, "(\w+)"\)', app_src, re.S
+        ).group(1)
+        call = ui.index(f"api.get('{call_text})")
+        loader = ui.rindex("async function ", 0, call)
+        assert f"if (!api.can('{server_cap}'))" in ui[loader:call], (path, server_cap)
