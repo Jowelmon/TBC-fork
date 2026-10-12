@@ -1,4 +1,4 @@
-"""Technical Services Fault Diagnosis — Intelligence Pill.
+"""Technical Services Intelligence Pill.
 
 Public surface:
     AgentState              — the deterministic, audit-chained agent state

@@ -1,8 +1,4 @@
-# Technical Services Fault Diagnosis Intelligence Pill
-
-A deterministic, audit-ready agent for diagnosing technical-services faults on
-critical data-center assets (CRAH units, chillers, pumps, UPS). Built for the
-Keppel **AI HARVEST** hackathon.
+# Technical Services Intelligence Pill
 
 > **The pitch:** Data-centre faults are diagnosed by a handful of senior
 > technicians — when they retire, that judgement retires with them. TBC turns
@@ -11,6 +7,20 @@ Keppel **AI HARVEST** hackathon.
 > and every later diagnosis reuses that knowledge with the expert's name and
 > verbatim quote attached — under deterministic guardrails, a tamper-evident
 > audit trail, and human-only approval of every action.
+
+**Run it in under two minutes** (Python 3.11+, no keys needed — the AI runs
+as an offline mock by default):
+
+```bash
+make install     # pip install -r requirements.txt
+make serve       # starts the app on :8000
+# open http://localhost:8000/ui
+```
+
+Then follow the 6-minute click-through in [`DEMO.md`](DEMO.md), or press
+**Demo guide** in the top bar. Built by team TBC for the Keppel **AI HARVEST**
+challenge: a deterministic, audit-ready agent for diagnosing faults on
+data-centre assets (CRAH units, chillers, pumps, UPS).
 
 > **Design principle: AI in the harvest, determinism in the execution.**
 > An LLM turns expert interviews into draft knowledge (see *Expert Knowledge
@@ -27,13 +37,13 @@ Keppel **AI HARVEST** hackathon.
 
 | Metric | Value |
 |---|---|
-| Test suite | **133 pytest**, all passing, zero configuration |
+| Test suite | **142 pytest**, all passing, zero configuration |
 | Acceptance evals | **13/13** labelled evals (`make eval`) |
 | Asset classes / fault trees | **4** (CRAH temperature, chiller compressor trip, UPS battery, pump vibration) |
 | Canonical causes | **24** IDs (23 decision-tree causes + 1 `unresolvable` sentinel), one registry |
 | Guardrails | **9** (G1–G9), deterministic, running before any recommendation or work order |
-| Agent lifecycle | **11 states / 16 transitions**, every transition hash-chained (SHA-256) |
-| RBAC | **5 roles, 6 demo users, 33 API endpoints**, enforcement tested server-side |
+| Agent lifecycle | **11 states / 17 transitions**, every transition hash-chained (SHA-256) |
+| RBAC | **5 roles, 6 demo users, 34 API endpoints**, enforcement tested server-side |
 | Knowledge governance | **0** knowledge items can go live without a second steward's approval; every KB version rollback-able |
 | Demo tour | **8-step** in-app guided tour + **6-minute** scripted run (`DEMO.md`) |
 
@@ -44,7 +54,7 @@ Keppel **AI HARVEST** hackathon.
 | Manual triage without captured knowledge | *assumption:* ≈90 minutes per fault (baseline to be replaced with a measured Keppel figure) |
 | Diagnosis with this pill | seconds, deterministic, with any matching approved expert knowledge shown alongside |
 | Knowledge retention on expert departure | interviews remain as steward-approved, versioned knowledge instead of leaving with the expert |
-| Learning effect, demonstrated | one approved feedback cycle lifts `kb_match` 0.73 → 1.00 and confidence 0.43 → 0.50 on the next identical case (`make demo`, CASE 3; exact numbers depend on mock peer sensors) |
+| Learning effect, demonstrated | one approved feedback cycle lifts `kb_match` 0.73 → 1.00 and confidence 0.43 → 0.50 on the next identical case (`make demo`, CASE 3; the exact values come from the mock peer sensors and are identical on every run) |
 
 ---
 
@@ -62,7 +72,7 @@ Keppel **AI HARVEST** hackathon.
 │  AgentState     │◀────────▶│   Tool Layer        │      │   CaseStore      │
 │  (state machine │          │  gather_evidence    │      │  (in-memory +    │
 │   11 states,    │          │  diagnose_asset     │      │   hash-chain     │
-│   16 transitions│          │  check_guardrails   │      │   audit log)     │
+│   17 transitions│          │  check_guardrails   │      │   audit log)     │
 │   hash-chain    │          │  propose_recommend  │      └──────────────────┘
 │   audit history)│          │  create_work_order  │
 └────────┬────────┘          │  submit_feedback    │
@@ -539,7 +549,7 @@ make test        # = PYTHONPATH=. python -m pytest -q tests
 make eval         # = PYTHONPATH=. python3 tests/evals/run_evals.py
 ```
 
-**133 tests** (verified with `make test`; this count is a snapshot — run the
+**142 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases,
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:

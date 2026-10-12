@@ -1,4 +1,4 @@
-"""Pydantic v2 domain models for the Technical Services Fault Diagnosis pill.
+"""Pydantic v2 domain models for the Technical Services Intelligence Pill.
 
 Field names follow the product-owner-confirmed contract (8 required core
 fields + optional spec §2 operational companions). See ``agent_state.py`` for

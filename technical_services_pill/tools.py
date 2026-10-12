@@ -1,4 +1,4 @@
-"""Agent function-calling tools for the Technical Services Fault Diagnosis pill.
+"""Agent function-calling tools for the Technical Services Intelligence Pill.
 
 Implements spec §3. Tools fall into four groups:
 

@@ -1,4 +1,4 @@
-"""FastAPI app for the Technical Services Fault Diagnosis pill (spec §5).
+"""FastAPI app for the Technical Services Intelligence Pill (spec §5).
 
 Endpoints:
     POST   /cases                         create a case (trigger diagnosis)
@@ -65,7 +65,7 @@ async def _lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Technical Services Fault Diagnosis Pill",
+    title="Technical Services Intelligence Pill",
     version="1.0.0",
     lifespan=_lifespan,
 )

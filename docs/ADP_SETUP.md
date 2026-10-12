@@ -1,4 +1,4 @@
-# Tencent ADP setup for Technical Services Fault Diagnosis
+# Tencent ADP setup for the Technical Services Intelligence Pill
 
 ## Agent configuration
 

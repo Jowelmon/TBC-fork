@@ -1,4 +1,4 @@
-# 6-minute demo script
+# Technical Services Intelligence Pill: 6-minute demo script
 
 Before you start: `make reset && make serve`, open http://localhost:8000/ui.
 The app opens as `mgr1 (Asset Ops Manager)`; switch roles with the "Acting
@@ -115,7 +115,7 @@ restarts and can't be erased by an autosave.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 133
+**If asked "is any of this real?"** — `make test` (pytest, currently 142
 tests), `make eval` (13 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires
