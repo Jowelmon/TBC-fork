@@ -39,6 +39,14 @@ function causeLabel(id) {
   const c = (_causes || []).find(x => x.id === (ALIASES[id] || id));
   return c ? c.label : id.replace(/_/g, ' ');
 }
+// Replace any canonical cause ID inside server-written text with its label.
+function labelCauses(text) {
+  let out = String(text || '');
+  // Longest IDs first, so an ID that prefixes another is not replaced inside it.
+  [...(_causes || [])].sort((a, b) => b.id.length - a.id.length)
+    .forEach(c => { out = out.split(c.id).join(c.label); });
+  return out;
+}
 // <option>s grouped by asset type; `selected` is pre-selected.
 function causeOptions(causes, selected = '') {
   const groups = {};
@@ -458,14 +466,13 @@ export function renderDiagnosis(el, state, h) {
           const top = c.id === diag.top_cause_id;
           const evRefs = (c.evidence_refs || []).map(r => `<code>${esc(r)}</code>`).join(' ') || '—';
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;${top ? 'border-color:var(--green);background:var(--green-bg);' : ''}">
-            ${top ? '<span class="badge badge-green">Top</span> ' : ''}<code>${esc(c.id)}</code>
-            <strong>${esc(c.label)}</strong>
+            ${top ? '<span class="badge badge-green">Top</span> ' : ''}<strong>${esc(c.label)}</strong>
             <span class="muted" style="margin-left:auto;font-size:12px">Evidence: ${evRefs}</span>
           </div>`;
         }).join('');
         diagBody.innerHTML = `
-          <div style="font-size:16px;margin-bottom:8px"><span class="muted">Root Cause:</span> <strong style="color:var(--blue)">${esc(diag.top_cause_id || '-')}</strong></div>
-          <div class="muted" style="margin-bottom:8px">${esc(diag.reasoning_trace || '')}</div>
+          <div style="font-size:16px;margin-bottom:8px"><span class="muted">Root Cause:</span> <strong style="color:var(--blue)">${diag.top_cause_id ? esc(causeLabel(diag.top_cause_id)) : '-'}</strong></div>
+          <div class="muted" style="margin-bottom:8px">${esc(labelCauses(diag.reasoning_trace))}</div>
           ${diag.kb_refs && diag.kb_refs.length ? `<div class="muted" style="margin-bottom:8px">KB: ${diag.kb_refs.map(r => `<code>${esc(r)}</code>`).join(' ')}</div>` : ''}
           <h4 style="margin:14px 0 8px">Candidate Causes</h4>
           ${causes}
@@ -507,7 +514,7 @@ export function renderDiagnosis(el, state, h) {
       if (!s.diagnosis) {
         expertBody.innerHTML = `<div class="banner banner-info"><p>Approved expert heuristics will appear here when they match the diagnosed cause and asset type.</p></div>`;
       } else if (!expertKnowledge.matches.length) {
-        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the decision-tree cause <code>${esc(expertKnowledge.cause_id || 'unresolved')}</code>.</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
+        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the decision-tree cause <strong>${esc(expertKnowledge.cause_id ? causeLabel(expertKnowledge.cause_id) : 'unresolved')}</strong>.</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
       } else {
         expertBody.innerHTML = `
           <p class="muted expert-reuse-intro">Supporting knowledge from a steward-approved expert interview. Match basis: ${esc(expertKnowledge.match_basis)}. The decision tree remains authoritative.</p>
@@ -763,7 +770,7 @@ export function renderDecision(el, state, h) {
       } else if (s.current_state === 'AWAITING_APPROVAL') {
         // Show decision controls
         if (!canApprove) {
-          html += `<div class="banner banner-error"><p><strong>Approval Blocked</strong></p><p>Role "${esc(role)}" does not have the approve_reject_modify capability.</p><p>Switch to Asset Operations Manager (mgr1) to approve, reject, or modify.</p></div>`;
+          html += `<div class="banner banner-error"><p><strong>Approval Blocked</strong></p><p>Role "${esc(role)}" is not allowed to approve, reject or modify a recommendation.</p><p>Switch to Asset Operations Manager (mgr1) to approve, reject, or modify.</p></div>`;
         } else {
           html += `<div class="card"><div class="card-header"><h3>Decision Controls</h3></div><div class="card-body">
             <div class="flex gap-8" style="margin-bottom:16px">
@@ -881,7 +888,7 @@ export function renderOutcome(el, state, h) {
 
   async function load() {
     try {
-      const s = await api.get(`/cases/${cid}`);
+      const [s] = await Promise.all([api.get(`/cases/${cid}`), loadCauses()]);
       // Feedback submission closes the case immediately (the PROPOSAL stays
       // pending for a steward separately) -- so "submit feedback" must stop
       // showing the moment current_state is CLOSED, not stay pinned on
@@ -931,7 +938,7 @@ export function renderOutcome(el, state, h) {
         const cls = s.outcome.result === 'resolved' ? 'badge-green' : 'badge-red';
         ocBody.innerHTML = `<div class="banner banner-success">
           <p><span class="badge ${cls}">${esc(s.outcome.result)}</span></p>
-          ${s.outcome.root_cause_confirmed ? `<p><strong>Root Cause:</strong> <code>${esc(s.outcome.root_cause_confirmed)}</code></p>` : ''}
+          ${s.outcome.root_cause_confirmed ? `<p><strong>Root Cause:</strong> ${esc(causeLabel(s.outcome.root_cause_confirmed))}</p>` : ''}
           ${s.outcome.verified_by ? `<p><strong>Verified by:</strong> ${esc(s.outcome.verified_by)}</p>` : ''}
           ${s.outcome.notes ? `<p><strong>Notes:</strong> ${esc(s.outcome.notes)}</p>` : ''}
         </div>`;

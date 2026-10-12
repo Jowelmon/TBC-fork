@@ -33,7 +33,7 @@ data-centre assets (CRAH units, chillers, pumps, UPS).
 
 ## Quantifiable metrics
 
-**Measured in this repo** (reproduce with `make test` / `make eval` / `GET /kb/stats`):
+**Measured in this repo** (reproduce with `make test` / `make eval` / `GET /kb/stats` as any signed-in user):
 
 | Metric | Value |
 |---|---|
@@ -130,7 +130,7 @@ docker compose up --build -d
 
 # API available at http://localhost:8000
 # Interactive docs at http://localhost:8000/docs
-# Health check at http://localhost:8000/kb/stats
+# Health check at http://localhost:8000/docs (most API routes need POST /login first)
 
 # Run the end-to-end demo, including the AI HARVEST loop, inside a container
 docker compose run --rm demo
