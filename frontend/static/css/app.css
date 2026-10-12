@@ -919,9 +919,10 @@ select::-ms-expand { display: none; }
 /* ── Dashboard: stat cards filter the table, headers sort it ─────────── */
 button.stat { font: inherit; color: inherit; text-align: left; cursor: pointer; transition: background .15s, border-color .15s; }
 button.stat:hover { background: var(--bg-card-hover); }
-/* A filter is shown by fading the other cards, not by another outline. */
-.stats-row.filtering button.stat[aria-pressed="false"] { opacity: .5; }
-.stats-row.filtering button.stat[aria-pressed="false"]:hover { opacity: .85; }
+/* While filtering, the other cards lose their colour stripe and their
+   number dims; the text keeps full contrast and no outline is added. */
+.stats-row.filtering button.stat[aria-pressed="false"] { border-left-color: var(--border); }
+.stats-row.filtering button.stat[aria-pressed="false"] .stat-val { color: var(--text-dim); }
 .stats-row.filtering button.stat[aria-pressed="true"] { background: var(--bg-card-hover); }
 .th-sort { background: none; border: none; padding: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .th-sort:hover { color: var(--text-bright); }

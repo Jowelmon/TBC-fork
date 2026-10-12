@@ -337,13 +337,13 @@ export function renderDashboard(el, state, h) {
       <summary><h3 style="display:inline">How this pill works</h3> <span class="muted">where AI is used · why it exists · illustrative value · deployment path</span></summary>
       <div class="card-body">
         <div class="ai-flow-row ai-flow" role="group" aria-label="Where AI is used and what governs it">
-        <div class="ai-flow-step ai-flow-ai"><div class="ai-flow-k">AI</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts knowledge, second opinion</div></div>
+        <div class="ai-flow-step"><div class="ai-flow-k">AI</div><div class="ai-flow-v" id="ai-flow-provider">Tencent Cloud ADP</div><div class="ai-flow-d">Drafts knowledge, second opinion</div></div>
         <div class="ai-flow-arrow" aria-hidden="true">→</div>
         <div class="ai-flow-step"><div class="ai-flow-k">Governance</div><div class="ai-flow-v">Checks every AI output</div><div class="ai-flow-d">Grounding, safety, guardrails, sentinel</div></div>
         <div class="ai-flow-arrow" aria-hidden="true">→</div>
         <div class="ai-flow-step"><div class="ai-flow-k">Diagnosis</div><div class="ai-flow-v">Decision tree</div><div class="ai-flow-d">Same evidence, same answer</div></div>
         <div class="ai-flow-arrow" aria-hidden="true">→</div>
-        <div class="ai-flow-step ai-flow-human"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing runs without a manager</div></div>
+        <div class="ai-flow-step"><div class="ai-flow-k">Decision</div><div class="ai-flow-v">A person approves</div><div class="ai-flow-d">Nothing runs without a manager</div></div>
       </div>
             ${tabbed('about', [
         { id: 'why', label: 'Why this exists', html: `<p><strong>Problem:</strong> fault diagnosis know-how lives in individual technicians' heads. When an experienced tech is unavailable or retires, that judgement isn't captured anywhere a new case can reuse it.</p>
@@ -464,6 +464,7 @@ export function renderDashboard(el, state, h) {
       allCases = snapshots.filter(s => s);
       renderView();
     } catch (e) {
+      renderHead();
       setHTML('cases-tbody', `<tr><td colspan="8" class="muted">Error: ${esc(e.message)}</td></tr>`);
     }
   }
@@ -503,8 +504,8 @@ export function renderDashboard(el, state, h) {
   function renderStats(cases) {
     setHTML('stats-row', STAT_FILTERS.map(f => {
       const on = (dashView.filter || 'all') === f.id;
-      return `<button type="button" class="stat ${f.cls}" data-filter="${f.id}" aria-pressed="${on}" title="${on && f.id !== 'all' ? 'Show all cases' : `Show ${esc(f.label.toLowerCase())} only`}">
-        <div class="stat-val">${cases.filter(f.match).length}</div><div class="stat-lbl">${f.label}</div></button>`;
+      return `<button type="button" class="stat ${f.cls}" data-filter="${f.id}" aria-pressed="${on}" title="${f.id === 'all' || on ? 'Show all cases' : `Show ${esc(f.label.toLowerCase())} only`}">
+        <div class="stat-val">${f.id === 'all' ? cases.length : cases.filter(f.match).length}</div><div class="stat-lbl">${f.label}</div></button>`;
     }).join(''));
     document.getElementById('stats-row')?.classList.toggle('filtering', (dashView.filter || 'all') !== 'all');
     document.querySelectorAll('#stats-row [data-filter]').forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
