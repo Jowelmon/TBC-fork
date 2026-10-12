@@ -202,18 +202,15 @@ themeToggle.addEventListener('click', () => {
 });
 
 // ── Hideable menu (remembered per browser) ──────────────────
-const navToggle = document.getElementById('nav-toggle');
-function applyNavToggle() {
-  const hidden = document.documentElement.classList.contains('nav-hidden');
-  navToggle.setAttribute('aria-expanded', String(!hidden));
-  navToggle.title = hidden ? 'Show the menu' : 'Hide the menu';
-}
-applyNavToggle();
-navToggle.addEventListener('click', () => {
-  const hidden = document.documentElement.classList.toggle('nav-hidden');
+// The ‹ beside the brand hides it; the › at the start of the top bar
+// (only there while it is hidden) brings it back.
+function setNavHidden(hidden) {
+  document.documentElement.classList.toggle('nav-hidden', hidden);
   try { localStorage.setItem('tbc_nav_hidden', hidden ? '1' : '0'); } catch (_) {}
-  applyNavToggle();
-});
+  document.getElementById(hidden ? 'nav-show' : 'nav-hide')?.focus();
+}
+document.getElementById('nav-hide').addEventListener('click', () => setNavHidden(true));
+document.getElementById('nav-show').addEventListener('click', () => setNavHidden(false));
 
 // ── Role switcher ──────────────────────────────────────────
 // Switching role means logging in as that demo user (sets the signed

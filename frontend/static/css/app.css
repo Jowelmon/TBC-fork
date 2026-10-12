@@ -892,7 +892,11 @@ select::-ms-expand { display: none; }
 
 /* ── Hideable menu ──────────────────────────────────────────────────── */
 .nav-hidden #nav-rail { display: none; }
-#nav-toggle { flex: none; font-size: 18px; line-height: 1; padding: 6px 10px; align-self: flex-start; margin-top: 2px; }
+.nav-arrow { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-dim); font-size: 26px; line-height: 1; cursor: pointer; }
+.nav-arrow:hover { background: var(--bg-card); border-color: var(--border); color: var(--text-bright); }
+.nav-brand .nav-arrow { margin-left: auto; }
+#nav-show { display: none; align-self: flex-start; margin-top: 2px; }
+.nav-hidden #nav-show { display: inline-flex; }
 
 /* ── Header: title and breadcrumb each stay on one line; "Acting as" and
    its dropdown move to the next row together, never split. ───────────── */
@@ -903,11 +907,13 @@ select::-ms-expand { display: none; }
 #topbar h1 { overflow: visible; }
 .breadcrumb { white-space: nowrap; min-width: 0; }
 .breadcrumb-current { overflow: hidden; text-overflow: ellipsis; }
-#role-switcher { flex: 0 1 auto; margin-left: auto; min-width: 0; }
+/* Right side: status chips on the first line, "Acting as" under them. */
+#role-switcher { flex: 0 1 auto; margin-left: auto; min-width: 0; flex-direction: column; align-items: flex-end; flex-wrap: nowrap; gap: 6px; }
+.rs-chips { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .acting-as { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 @media (max-width: 1400px) {
   #topbar > #title-block { flex: 0 0 auto; }
-  #role-switcher { flex: 0 1 auto; justify-content: flex-end; }
+  #role-switcher { flex: 0 1 auto; flex-direction: column; align-items: flex-end; }
 }
 
 /* ── Dashboard: stat cards filter the table, headers sort it ─────────── */
@@ -929,3 +935,7 @@ th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { 
 .dash-toolbar .next-hint { margin-bottom: 0; }
 #how-it-works { margin-top: 20px; }
 #cases-table td:nth-child(1), #cases-table td:nth-child(2) { white-space: nowrap; }
+@media (max-width: 768px) { .nav-brand { flex-direction: column; gap: 6px; padding: 12px 8px; } .nav-brand .nav-arrow { margin-left: 0; } }
+.nav-brand { gap: 10px; padding-right: 8px; }
+.nav-title { white-space: nowrap; }
+.nav-brand .nav-arrow { width: 26px; }
