@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis

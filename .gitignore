@@ -18,12 +18,11 @@ env/
 *.swp
 .idea/
 .vscode/
-# Local SQLite state (persistence.py)
-data/
 
 # Secrets
 .env
 
-# Runtime databases (never commit demo state)
-*.sqlite3
+# Runtime databases (never commit demo state):
+# data/ holds persistence.py snapshots, *.sqlite3 the database.py case store
 data/
+*.sqlite3

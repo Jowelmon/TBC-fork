@@ -102,11 +102,11 @@ work order → outcome → feedback → **validated case written back to KB**
 | `auth.py` | Signed session cookie identity (`POST /login`); `?user=` only works as a fallback under `TBC_DEMO_INSECURE=1`. |
 | `tools.py` | Agent tool layer: evidence gatherer, diagnosis orchestrator, guardrail checker, recommendation proposer, work-order creator, feedback submitter. |
 | `rbac.py` | 5-role RBAC matrix (technician, asset_ops_manager, knowledge_steward, auditor, admin). Permission checks via `can()` / `require()`. |
-| `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace. |
+| `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace (per-case rows in `technical_services_pill.sqlite3`). |
 | `learning.py` | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back, proposal workflow. |
 | `audit.py` | `canonical_json`, SHA-256 `compute_hash`, `GENESIS_HASH` for hash-chain integrity. |
 | `mock_registry.py` | Demo data: 7 assets across 4 pills (2 CRAH, 2 chiller, 1 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
-| `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit. |
+| `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit, plus tamper-evidence integrity events (`data/tbc.sqlite`). |
 | `app.py` | FastAPI app: RBAC-enforced routes, identity, persistence lifecycle, the agent-loop driver, and `/pills`. |
 | `demo.py` | End-to-end lifecycle, multi-asset routing, and AI HARVEST capture-to-reuse demo. |
 
@@ -175,7 +175,7 @@ snapshots.
 |---|---|
 | `make install` | Install runtime and test dependencies |
 | `make test` | Run the full pytest suite |
-| `make eval` | Run EVAL-01..12 acceptance evals, print a pass/fail table |
+| `make eval` | Run EVAL-01..13 acceptance evals, print a pass/fail table |
 | `make demo` | Run the end-to-end console demo |
 | `make serve` | Start the API and UI on `localhost:8000` (open `/ui`) |
 | `make reset` | Wipe persisted state for a clean demo |
@@ -189,9 +189,12 @@ snapshots.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| `POST` | `/login` / `/logout` | Set or clear the signed session cookie for a demo user |
 | `POST` | `/cases` | Create a new case from an observation (triggers agent) |
 | `GET` | `/cases` | List all cases |
+| `GET` | `/cases/similar` | Open cases sharing a diagnosed cause (for re-running diagnosis) |
 | `GET` | `/cases/{id}` | Get case snapshot (full agent state) |
+| `GET` | `/cases/{id}/confidence-preview` | Non-destructive re-score of a case's existing evidence against the current KB |
 | `GET` | `/cases/{id}/expert-knowledge` | Show approved interview heuristics matching the diagnosed cause and asset type |
 | `POST` | `/cases/{id}/advance` | Drive the agent loop one transition forward |
 | `GET` | `/cases/{id}/evidence` | Retrieve gathered evidence |
@@ -202,6 +205,13 @@ snapshots.
 | `POST` | `/cases/{id}/work-order` | Create + acknowledge work order (requires prior approval) |
 | `POST` | `/cases/{id}/outcome` | Record observed outcome |
 | `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal |
+| `POST` | `/cases/{id}/escalation/close` | Close an escalated case (manager/expert) |
+| `POST` | `/cases/{id}/escalation/evidence` | Send an escalated case back for more evidence |
+| `GET` | `/causes` | Canonical causes with plain-English labels and owning asset type |
+| `GET` | `/capture/sample` | Sample technician interview for the demo |
+| `POST` | `/capture/draft` | Draft heuristics from an interview for review, queuing nothing |
+| `POST` | `/capture/interview` | Turn a reviewed interview into a pending knowledge proposal |
+| `GET` | `/kb/expert-heuristics` | Approved, live expert heuristics with provenance |
 | `GET` | `/kb/stats` | Knowledge-base statistics (case count, cause priors, pending proposals) |
 | `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
 | `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
@@ -210,6 +220,8 @@ snapshots.
 | `POST` | `/kb/rollback/{version}` | Roll back KB to a target version (admin only) |
 | `GET` | `/pills` | Pill Registry: owner steward, KB version, knowledge count, approval rate per pill |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
+| `GET` | `/system/info` | Which model drafts expert knowledge (never returns secrets) |
+| `GET` | `/system/integrity` | Archived tamper-evidence events (auditor/admin) |
 
 > Interactive Swagger docs at `/docs`, ReDoc at `/redoc` once the server is running.
 
@@ -458,7 +470,7 @@ decision tree and guardrails remain authoritative.
 To use ADP: `cp .env.example .env`, set `TBC_LLM_PROVIDER=adp` and paste your
 AppKey (ADP console: your app > Publish > Service status > API management >
 Copy) into `ADP_APP_KEY`. `.env` is gitignored. The top bar shows which model
-is active.
+is active. Full agent configuration: [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md).
 
 **Demo guide:** the "Demo guide" button in the top bar walks an eight-step
 tour of the whole loop, setting the role and screen for each step.
@@ -552,12 +564,12 @@ checks:
 | `test_extractor_hazard_and_unknown_asset.py`, `test_mock_extractor_precision.py` | Capture extractor ignores causes the expert rules out; G2b hazard reaches the AOM Decision screen; unknown asset escalates via G5 |
 | `test_integrity_persistence.py` | Tamper evidence survives clean restarts and runtime edits; `/system/integrity` is RBAC-gated |
 
-**`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
+**`make eval`** runs 13 labelled acceptance evals (`EVAL-01`..`EVAL-13`) as a
 pass/fail table, independent of the pytest suite: ADP call shape, AI cannot
 bypass approval, AI failure fallback, unknown asset, canonical cause IDs,
 persistence across a simulated restart, feedback governance, RBAC approval,
-rollback, audit tamper detection, the RBAC matrix, and no invented evidence
-in capture. See `tests/evals/run_evals.py`.
+rollback, audit tamper detection, the RBAC matrix, no invented evidence
+in capture, and tamper evidence that survives restarts and runtime edits. See `tests/evals/run_evals.py`.
 
 ## Audit Integrity
 
@@ -571,6 +583,10 @@ record_n.prev_hash = SHA-256(canonical_json(record_{n-1}))
 - `verify_audit_chain()` recomputes the chain and detects any tampering.
 - RBAC ensures only authorized roles can advance states; all actions are
   recorded with actor, timestamp, and transition name.
+- Two local SQLite files hold state: `technical_services_pill.sqlite3` (via
+  `database.py`) keeps one row per case for the `CaseStore`, and `data/tbc.sqlite`
+  (via `persistence.py`) holds the server's restart snapshots of cases, KB,
+  proposals and audit, plus archived tamper evidence. `make reset` deletes both.
 
 ## Project Structure
 
@@ -615,12 +631,15 @@ tests/
 ├── test_kb_versions_and_assets.py  # Rollback UI/label reconciliation, asset fixtures
 ├── test_extractor_hazard_and_unknown_asset.py / test_mock_extractor_precision.py
 ├── test_integrity_persistence.py    # Tamper evidence survives restarts
-└── evals/run_evals.py           # EVAL-01..12, `make eval`
+└── evals/run_evals.py           # EVAL-01..13, `make eval`
 
 docs/
 ├── ADP_SETUP.md             # Tencent ADP agent configuration
 ├── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
 └── SOLUTION_DIAGRAM.md      # Solution diagram and the 8 required points
+
+docs/build-history/       # Historical CodeBuddy implementation brief
+miora/                    # Miora (WorkBuddy) design-agent prompt pack for the UI
 
 DEMO.md                   # 6-minute click-through script
 requirements.txt          # Runtime dependencies
