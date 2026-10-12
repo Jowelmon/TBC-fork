@@ -313,7 +313,8 @@ _CAUSE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("sensor_drift", ("drift", "drifting", "reads slowly off", "offset")),
     ("intermittent_fault", ("intermittent", "comes and goes", "on and off")),
     ("sensor_hardware_failure", ("calibration sticker", "calibration date", "end of life",
-                                 "sensor is dead", "dead sensor", "went dead", "reads nothing")),
+                                 "sensor is dead", "dead sensor", "went dead", "reads nothing",
+                                 "thermistor", "open-circuit", "stuck reading")),
 ]
 _CHECK_WORDS = ("check", "look at", "first thing", "confirm", "measure", "listen", "make sure")
 _DONT_STARTS = ("never ", "don't ", "do not ", "dont ")

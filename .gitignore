@@ -18,15 +18,15 @@ env/
 *.swp
 .idea/
 .vscode/
-# Local SQLite state (persistence.py)
-data/
 
 # Secrets
 .env
 
-# Runtime databases (never commit demo state)
+# Runtime databases (never commit demo state):
+# data/ holds persistence.py snapshots, *.sqlite3 the database.py case store
+data/
 *.sqlite
 *.sqlite3
 
-# Local review material (judge reports, working notes): never part of the submission
+# Local review material and working notes: never part of the submission
 .review/

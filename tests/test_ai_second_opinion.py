@@ -1,4 +1,4 @@
-"""Phase 1: the AI second opinion on diagnosis is wired through llm.py,
+"""The AI second opinion on diagnosis is wired through llm.py,
 is advisory only, and never affects routing.
 
 Covers:
@@ -116,6 +116,16 @@ def test_ai_timeout_falls_back_and_is_audited(client: TestClient, monkeypatch):
     assert notes, "the AI event must be recorded in the audit chain"
     assert "unavailable" in notes[-1]
     assert snap["audit_chain_valid"] is True
+
+
+def test_adp_without_a_key_leaves_diagnosis_unaffected(client: TestClient, monkeypatch):
+    monkeypatch.setenv("TBC_LLM_PROVIDER", "adp")
+    monkeypatch.delenv("ADP_APP_KEY", raising=False)
+    monkeypatch.delenv("TBC_ADP_API_KEY", raising=False)
+    adv = _create_and_advance(client)
+    snap = _snapshot(client, adv["case_id"])
+    assert snap["ai_hypothesis"]["status"] == "unavailable"
+    assert snap["diagnosis"] is not None
 
 
 def test_malformed_reply_falls_back(monkeypatch):

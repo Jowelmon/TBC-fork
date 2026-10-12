@@ -12,7 +12,7 @@ install:  ## Create .venv and install runtime + test dependencies
 test:  ## Run the repository unit test suite
 	PYTHONPATH=. $(PY) -m pytest -q tests
 
-eval:  ## Run EVAL-01..12 acceptance evals and print a pass/fail table
+eval:  ## Run EVAL-01..13 acceptance evals and print a pass/fail table
 	PYTHONPATH=. $(PY) tests/evals/run_evals.py
 
 demo:  ## Run the end-to-end console demo
@@ -26,7 +26,7 @@ reset:  ## Stop a running server, then remove all demo state (cases, proposals, 
 	@# snapshot reappears right after it is deleted.
 	@pkill -f "uvicorn frontend.serve" 2>/dev/null && echo "stopped running server" || true
 	@while pgrep -f "uvicorn frontend.serve" >/dev/null; do sleep 1; done
-	rm -f data/tbc.sqlite technical_services_pill.sqlite3
+	rm -f data/tbc.sqlite data/tbc.tampered.*.sqlite technical_services_pill.sqlite3
 
 docker-up:  ## Build and start the API container
 	docker compose up --build -d

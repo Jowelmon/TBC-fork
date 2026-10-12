@@ -1,4 +1,4 @@
-"""Phase 5: every text/background pair in app.css is >= 4.5:1 (WCAG AA),
+"""Every text/background pair in app.css is >= 4.5:1 (WCAG AA),
 in both the light (default) and dark theme.
 
 Parses the CSS custom-property tokens directly out of app.css rather than
@@ -114,7 +114,7 @@ MIN_RATIO = 4.5
 
 @pytest.fixture(scope="module")
 def css() -> str:
-    return CSS_PATH.read_text()
+    return CSS_PATH.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -174,7 +174,7 @@ def test_no_raw_semantic_color_used_as_text(css: str):
 
 
 def test_body_text_is_at_least_14px():
-    html_css = CSS_PATH.read_text()
+    html_css = CSS_PATH.read_text(encoding="utf-8")
     match = re.search(r"html,\s*body\s*\{([^}]*)\}", html_css, re.DOTALL)
     assert match
     size = re.search(r"font-size:\s*(\d+)px", match.group(1))

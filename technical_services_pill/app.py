@@ -1,4 +1,4 @@
-"""FastAPI app for the Technical Services Fault Diagnosis pill (spec §5).
+"""FastAPI app for the Technical Services Intelligence Pill (spec §5).
 
 Endpoints:
     POST   /cases                         create a case (trigger diagnosis)
@@ -12,6 +12,7 @@ Endpoints:
     POST   /cases/{id}/outcome             record maintenance outcome  (technician)
     POST   /cases/{id}/feedback            submit feedback             (steward)
     GET    /audit/trace                    tamper-evident audit trail   (auditor)
+    GET    /system/integrity               integrity/tamper events     (auditor)
 
 Identity via a signed session cookie set by ``POST /login`` (see ``auth.py``);
 ``?user=<demo_user_id>`` is a fallback only under ``TBC_DEMO_INSECURE=1``.
@@ -81,7 +82,7 @@ async def _lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Technical Services Fault Diagnosis Pill",
+    title="Technical Services Intelligence Pill",
     version="1.0.0",
     lifespan=_lifespan,
 )
@@ -1303,7 +1304,7 @@ def get_kb_stats(user: str = Depends(resolve_user)) -> dict:
 
 @app.get("/kb/queue")
 def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
-    """List pending knowledge proposals awaiting steward approval (F2).
+    """List pending knowledge proposals awaiting steward approval.
 
     Requires ``approve_knowledge_version`` capability (knowledge steward
     or admin). Returns the list of pending proposals with their metadata.
@@ -1318,7 +1319,7 @@ def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
 @app.post("/kb/proposals/{proposal_id}/approve")
 def approve_proposal(proposal_id: str, rationale: str = "", safety_reviewed: bool = False,
                      user: str = Depends(resolve_user)) -> dict:
-    """Approve a pending knowledge proposal and ingest it into the live KB (F2).
+    """Approve a pending knowledge proposal and ingest it into the live KB.
 
     Requires ``approve_knowledge_version`` capability. On approval the KB
     version increments and the proposal's feedback is promoted to a
@@ -1375,7 +1376,7 @@ def _require_intact_ledger() -> None:
 
 @app.post("/kb/proposals/{proposal_id}/reject")
 def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
-    """Reject a pending knowledge proposal (F2).
+    """Reject a pending knowledge proposal.
 
     Requires ``approve_knowledge_version`` capability. The rejected
     proposal is retained in the audit trail but never ingested into the KB.
@@ -1771,6 +1772,15 @@ def get_audit_trace(
 ) -> dict:
     _need(user, "read_audit_trail")
     return {"entries": STORE.all_audit_traces(actor=actor, case_id=case_id)}
+
+
+@app.get("/system/integrity")
+def get_system_integrity(user: str = Depends(resolve_user)) -> dict:
+    """Integrity events (archived tamper evidence) this deployment has seen."""
+    from . import persistence
+
+    _need(user, "read_audit_trail")
+    return {"events": persistence.integrity_events()}
 
 
 # --- helpers ---------------------------------------------------------------

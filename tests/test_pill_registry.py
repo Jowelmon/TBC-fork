@@ -1,4 +1,4 @@
-"""Phase 6: GET /pills backs the Governance screen's Pill Registry.
+"""GET /pills backs the Governance screen's Pill Registry.
 
 Covers the registry shape (all four pills, owner steward, shared KB
 version) and that approval rate moves when a proposal for that pill's

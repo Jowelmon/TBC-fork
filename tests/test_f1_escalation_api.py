@@ -78,3 +78,17 @@ def test_f1_no_hardcoded_confidence(client: TestClient):
     assert 0.0 < conf < 0.8, (
         f"confidence must be real (not hardcoded 0.8); got {conf}"
     )
+
+
+def test_escalated_case_can_be_closed_by_a_manager(client: TestClient):
+    """An escalated case is resolved through /escalation/close, not left open."""
+    adv = _create_and_advance(client)
+    case_id = adv["case_id"]
+    assert adv["current_state"] == "ESCALATED"
+
+    resp = client.post(f"/cases/{case_id}/escalation/close", params={
+        "user": "mgr1", "reason": "known cross-domain fault",
+    })
+    assert resp.status_code == 200, resp.text
+    snap = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()
+    assert snap["current_state"] == "CLOSED"

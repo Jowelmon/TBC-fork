@@ -36,7 +36,7 @@ def _declared_capabilities() -> set[str]:
 
 def _enforced_capabilities() -> set[str]:
     """Capabilities actually required by some app.py endpoint via _need()."""
-    app_src = (ROOT / "technical_services_pill" / "app.py").read_text()
+    app_src = (ROOT / "technical_services_pill" / "app.py").read_text(encoding="utf-8")
     return set(_NEED_RE.findall(app_src))
 
 
@@ -85,3 +85,23 @@ if __name__ == "__main__":
     phantom = _declared_capabilities() - enforced
     print(f"phantom (declared, no endpoint): {sorted(phantom)}")
     sys.exit(0)
+
+def test_governance_screen_checks_the_server_capability_before_each_request():
+    """The Governance screen skips requests the signed-in role would only get
+    a 403 for. Each guard must test the same capability the endpoint enforces;
+    the server still enforces it either way."""
+    app_src = (ROOT / "technical_services_pill" / "app.py").read_text(encoding="utf-8")
+    ui = (ROOT / "frontend" / "static" / "js" / "screens.js").read_text(encoding="utf-8")
+    for path, call_text in (
+        ("/kb/queue", "/kb/queue'"),
+        ("/kb/proposals", "/kb/proposals?status=approved'"),
+        ("/kb/ledger", "/kb/ledger'"),
+        ("/audit/trace", "/audit/trace'"),
+        ("/system/integrity", "/system/integrity'"),
+    ):
+        server_cap = re.search(
+            rf'@app\.get\("{re.escape(path)}"\).*?_need\(user, "(\w+)"\)', app_src, re.S
+        ).group(1)
+        call = ui.index(f"api.get('{call_text})")
+        loader = ui.rindex("async function ", 0, call)
+        assert f"if (!api.can('{server_cap}'))" in ui[loader:call], (path, server_cap)

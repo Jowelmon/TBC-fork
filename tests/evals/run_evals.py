@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EVAL-01 .. EVAL-12: acceptance evals for the submission, run via `make eval`.
+"""EVAL-01 .. EVAL-13: acceptance evals for the submission, run via `make eval`.
 
 Each eval is a self-contained scenario check (not a copy of the pytest
 suite) exercised against a freshly isolated store, printed as a pass/fail
@@ -8,6 +8,7 @@ table. Exits non-zero if anything fails, so it can gate CI the same way
 """
 from __future__ import annotations
 
+import glob
 import os
 import sys
 import tempfile
@@ -284,7 +285,67 @@ def eval_12(client):
     return "ungrounded heuristic dropped with a warning, nothing fabricated survives"
 
 
-EVALS = [eval_01, eval_02, eval_03, eval_04, eval_05, eval_06, eval_07, eval_08, eval_09, eval_10, eval_11, eval_12]
+@eval_("EVAL-13", "Integrity: tamper evidence survives clean restarts AND runtime edits")
+def eval_13(client):
+    import json
+    import sqlite3
+    from datetime import datetime
+
+    db = os.environ["TBC_DB_PATH"]
+    snap = _create_and_advance(client)
+    second = _create_and_advance(client)
+
+    # Runtime edit to data/tbc.sqlite while the process is live: it must not
+    # be swept away by the graceful-shutdown autosave.
+    conn = sqlite3.connect(db)
+    (blob,) = conn.execute("SELECT blob FROM snapshots WHERE key='cases'").fetchone()
+    data = json.loads(blob)
+    edited = False
+    for rec in data.values():
+        if rec.get("history"):
+            rec["history"][-1]["reason"] += " [TAMPERED]"
+            edited = True
+            break
+    assert edited, "expected a case snapshot to tamper"
+    conn.execute(
+        "INSERT OR REPLACE INTO snapshots (key, blob, saved_at) VALUES (?, ?, ?)",
+        ("cases", json.dumps(data), datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+    archives = os.path.join(os.path.dirname(db), "tbc.tampered.*.sqlite")
+    before = set(glob.glob(archives))
+
+    # The next state-changing save on the live process must detect + archive.
+    client.post(f"/cases/{second['case_id']}/advance", params={"user": "tech1"})
+    after = set(glob.glob(archives))
+    assert len(after - before) == 1, "runtime tamper must be archived at the next save"
+
+    events = client.get("/system/integrity", params={"user": "auditor1"}).json()["events"]
+    assert any(
+        e["event"] == "snapshot_modified_between_saves" for e in events
+    ), "runtime tamper must be surfaced as an integrity event"
+
+    # The proof is persisted, not just in-memory: a clean restart (new app
+    # lifecycle over the same DB) still sees the same event.
+    persisted = [
+        row[0] for row in sqlite3.connect(db)
+        .execute("SELECT event FROM integrity_events ORDER BY id").fetchall()
+    ]
+    assert any(
+        "snapshot_modified_between_saves" in e for e in persisted
+    ), "tamper event must be written to the integrity_events table"
+
+    with TestClient(app) as fresh:
+        again = fresh.get("/system/integrity", params={"user": "auditor1"}).json()["events"]
+        assert any(
+            e["event"] == "snapshot_modified_between_saves" for e in again
+        ), "archived tamper evidence must survive a clean restart"
+    return f"runtime tamper archived at next save; {len(after - before)} file kept, event survives restart"
+
+
+EVALS = [eval_01, eval_02, eval_03, eval_04, eval_05, eval_06, eval_07, eval_08, eval_09, eval_10, eval_11, eval_12, eval_13]
 
 
 def main() -> int:

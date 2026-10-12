@@ -197,8 +197,8 @@ it with a reason.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 323
-tests), `make eval` (12 labelled acceptance evals, pass/fail table), and
+**If asked "is any of this real?"** — `make test` (pytest, currently 342
+tests), `make eval` (13 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires
 the Tencent Cloud ADP key; the default `mock` provider runs the same

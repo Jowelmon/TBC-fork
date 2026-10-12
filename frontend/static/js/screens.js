@@ -87,7 +87,7 @@ const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Ro
 // expect next without reading the whole card stack first.
 const nextHint = text => `<p class="next-hint">${_esc(text)}</p>`;
 
-// F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
+// local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -214,7 +214,7 @@ const WEIGHTS = [
   { id: 'W5', val: 0.15, key: 'conflict_penalty', label: 'Conflict Penalty', sign: '-' },
 ];
 
-// F5: Evidence display toggle state (plain English vs raw JSON)
+// Evidence display toggle state (plain English vs raw JSON)
 let _evidenceRawMode = false;
 // The timeline opens on abnormal readings only; "show all" lists every item.
 let _evidenceShowAll = false;
@@ -616,7 +616,7 @@ export function renderDiagnosis(el, state, h) {
           <div id="ev-body"></div>
         </div></div>
         <div class="card"><div class="card-header"><h3>Decision-Tree Diagnosis</h3></div><div class="card-body">
-          <span class="tier-label tier-fact">Rule-based diagnosis (expert decision tree)</span>
+          <span class="tier-label tier-fact">Deterministic — rule-based diagnosis (expert decision tree)</span>
           <div id="diag-body"></div>
         </div></div>
       </div>`;
@@ -717,7 +717,7 @@ export function renderDiagnosis(el, state, h) {
         if (aiAvatar) aiAvatar.innerHTML = cloudSvg(mood, 34);
         if (mood === 'alert') cloudMood('alert');
         aiBody.innerHTML = `
-          <span class="tier-label tier-advisory">Advisory only — does not affect routing</span>
+          <span class="tier-label tier-ai">AI hypothesis — advisory only, does not affect routing</span>
           <div class="flex gap-8 align-center flex-wrap" style="margin:8px 0">
             <span class="badge ${hyp.status === 'unavailable' ? 'badge-red' : 'badge-purple'}">${esc(modelLabel)}</span>
             ${hyp.status === 'ok' ? (hyp.hypothesis
@@ -899,7 +899,7 @@ export function renderDiagnosis(el, state, h) {
       const evAllBtn = document.getElementById('btn-ev-all');
       if (evAllBtn) evAllBtn.onclick = () => { _evidenceShowAll = !_evidenceShowAll; load(); };
 
-      // F5: Wire evidence toggle button
+      // Wire evidence toggle button
       const evToggleBtn = document.getElementById('btn-ev-toggle');
       if (evToggleBtn) {
         evToggleBtn.onclick = () => {
@@ -1193,7 +1193,7 @@ export function renderOutcome(el, state, h) {
 
   async function load() {
     try {
-      const s = await api.get(`/cases/${cid}`);
+      const [s] = await Promise.all([api.get(`/cases/${cid}`), loadCauses()]);
       // Feedback submission closes the case immediately (the PROPOSAL stays
       // pending for a steward separately) -- so "submit feedback" must stop
       // showing the moment current_state is CLOSED, not stay pinned on
@@ -1376,7 +1376,8 @@ export function renderGovernance(el, state, h) {
         <div class="card" id="integrity-card" hidden><div class="card-header"><h3>Integrity Review</h3><span class="badge badge-red">Action needed</span></div><div class="card-body" id="integrity-body"></div></div>
         <div class="card" id="sentinel-card"><div class="card-header"><h3>Sentinel</h3><span class="muted">independent supervisor, not an AI</span></div><div class="card-body" id="sentinel-body"></div></div>
         <div class="card"><div class="card-header"><h3>Knowledge Governance Ledger</h3><span id="ledger-status"></span></div><div class="card-body" id="ledger-body"></div></div>
-        <div class="card"><div class="card-header"><h3>Case Audit Trace (keyed hash chain)</h3></div><div class="card-body" id="trace-body"></div></div>` },
+        <div class="card"><div class="card-header"><h3>Case Audit Trace (keyed hash chain)</h3></div><div class="card-body" id="trace-body"></div></div>
+        <div class="card"><div class="card-header"><h3>Integrity Events</h3><span class="muted">tampered snapshots, archived</span></div><div class="card-body" id="tamper-body"></div></div>` },
     ], api.role() === 'knowledge_steward' ? 'review' : api.can('review_audit_integrity') ? 'audit' : 'overview')}
   `;
 
@@ -1470,6 +1471,10 @@ export function renderGovernance(el, state, h) {
   async function loadApproved() {
     const body = document.getElementById('approved-body');
     if (!body) return;
+    if (!api.can('approve_knowledge_version')) {
+      body.innerHTML = rbacNote('Approved knowledge', 'knowledge stewards and admins');
+      return;
+    }
     try {
       const { proposals } = await api.get('/kb/proposals?status=approved');
       await loadCauses();
@@ -1631,6 +1636,10 @@ export function renderGovernance(el, state, h) {
   async function loadQueue() {
     const qb = document.getElementById('queue-body');
     if (!qb) return;
+    if (!api.can('approve_knowledge_version')) {
+      qb.innerHTML = rbacNote('Reviewing knowledge proposals', 'knowledge stewards (steward1, steward2)');
+      return;
+    }
     try {
       const data = await api.get('/kb/queue');
       const queue = data.queue || [];
@@ -1818,7 +1827,7 @@ export function renderGovernance(el, state, h) {
       `);
       const dist = stats.cause_distribution || stats.causes || {};
       const priors = stats.cause_priors || {};
-      // F6: fall back to cause_priors ({cause: {confirmed, total, rate}})
+      // fall back to cause_priors ({cause: {confirmed, total, rate}})
       // when the API doesn't return a flat cause_distribution dict
       const entries = Object.keys(dist).length
         ? Object.entries(dist)
@@ -1840,6 +1849,10 @@ export function renderGovernance(el, state, h) {
 
   // Load audit trace
   async function loadTrace() {
+    if (!api.can('read_audit_trail')) {
+      setHTML('trace-body', rbacNote('The audit trail', 'auditors, knowledge stewards and admins'));
+      return;
+    }
     try {
       const data = await api.get('/audit/trace');
       const entries = data.entries || [];
@@ -1869,6 +1882,10 @@ export function renderGovernance(el, state, h) {
   }
 
   async function loadLedger() {
+    if (!api.can('read_audit_trail')) {
+      setHTML('ledger-body', rbacNote('The governance ledger', 'auditors, knowledge stewards and admins'));
+      return;
+    }
     try {
       const { entries, chain_valid } = await api.get('/kb/ledger');
       setHTML('ledger-status', chain_valid ? '<span class="badge badge-green">Ledger verified</span>' : '<span class="badge badge-red">Ledger FAILED verification</span>');
@@ -1891,10 +1908,39 @@ export function renderGovernance(el, state, h) {
     }
   }
 
+  const TAMPER_EVENTS = {
+    snapshot_modified_between_saves: 'Snapshot changed on disk between saves',
+    audit_chain_failure_on_load: 'Audit chain failed on restart',
+  };
+  async function loadTamperEvents() {
+    const body = document.getElementById('tamper-body');
+    if (!body) return;
+    if (!api.can('read_audit_trail')) {
+      body.innerHTML = rbacNote('Integrity events', 'auditors, knowledge stewards and admins');
+      return;
+    }
+    try {
+      const data = await api.get('/system/integrity');
+      const events = data.events || [];
+      if (!events.length) {
+        body.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[!]</div><div class="empty-state-title">Clean</div><div class="empty-state-desc">No tamper events detected. Every snapshot written matches what this process last saw, and every audit chain verified on load.</div></div>`;
+        return;
+      }
+      body.innerHTML = `<div class="banner banner-warn" style="margin-bottom:8px"><p><strong>${events.length} integrity event(s) detected</strong> — the tampered snapshot was archived (see paths below) before the clean state overwrote the file, so no restart can erase the evidence.</p></div>
+        <ul style="margin:0 0 0 18px">${events.slice().reverse().map(e => `<li style="margin-bottom:6px"><strong>${esc(TAMPER_EVENTS[e.event] || e.event)}</strong> — ${esc(e.detail)}${e.archived_path ? ' · <code>' + esc(e.archived_path) + '</code>' : ''}<div class="muted" style="font-size:12px">${esc(e.at)}</div></li>`).join('')}</ul>`;
+    } catch (e) {
+      setHTML('tamper-body', isForbidden(e)
+        ? rbacNote('Integrity events', 'auditors, knowledge stewards and admins')
+        : `<p class="muted">Error: ${esc(e.message)}</p>`);
+    }
+  }
+
   loadStats();
   loadQueue();
   loadLedger();
   loadTrace();
+  loadIntegrity();
+  loadTamperEvents();
 }
 
 // ════════════════════════════════════════════════════════════

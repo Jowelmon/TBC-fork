@@ -1,4 +1,4 @@
-"""Role-based access control for the Technical Services Fault Diagnosis pill.
+"""Role-based access control for the Technical Services Intelligence Pill.
 
 Implements the RBAC matrix from spec §6. Roles and capabilities are string
 keys so they cross over cleanly to FastAPI dependency injection and JWT

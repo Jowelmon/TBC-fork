@@ -1,4 +1,4 @@
-# Technical Services Fault Diagnosis Intelligence Pill
+# Technical Services Intelligence Pill
 
 An audit-ready agent that diagnoses faults on critical data-centre assets
 (CRAH units, chillers, UPS, pumps) and captures the know-how of experienced
@@ -42,15 +42,18 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (323 tests) |
-| `make eval` | 12 labelled acceptance evals as a pass/fail table |
+| `make test` | pytest suite (342 tests) |
+| `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
 | `make docker-up` / `make docker-down` | run the app in Docker on `:8000` |
 
 State is saved to `data/tbc.sqlite` after every change and restored on
 start, with every audit chain re-verified on load (`TBC_PERSIST=0` keeps it
-in memory). Swagger docs are at `/docs`.
+in memory). If the file was edited outside the app, the tampered copy is
+archived as `data/tbc.tampered.<time>.sqlite` and logged as an integrity
+event (Governance → Audit & sentinel) before anything overwrites it.
+Swagger docs are at `/docs`.
 
 ## How it works
 
@@ -274,6 +277,8 @@ technical_services_pill/
 frontend/            plain HTML/CSS/JS UI served at /ui (see frontend/README.md)
 tests/               pytest suite and tests/evals/run_evals.py
 docs/                ADP setup; pilot → production path and what is stubbed
+docs/build-history/  the original CodeBuddy implementation brief (historical)
+miora/               UI design prompt and screen field map used to build the UI
 ```
 
 `docs/IMPLEMENTATION_PATH.md` lists what is real and what is simulated (asset

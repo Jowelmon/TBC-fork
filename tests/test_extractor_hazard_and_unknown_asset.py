@@ -1,5 +1,10 @@
-"""Capture ignores causes the expert denies; the safety hazard (G2b) and
-unknown-asset escalation (G5) are reachable from the UI."""
+"""Capture extractor precision, the G2b hazard contract and the G5 path.
+
+1. The mock capture extractor does not draft a heuristic for a cause the
+   expert mentions only to rule it out.
+2. The G2b safety/environmental hazard reaches the AOM Decision screen.
+3. An unknown asset escalates via G5, and the New Case form can submit one.
+"""
 from __future__ import annotations
 
 import pytest
@@ -29,6 +34,7 @@ def test_mock_extractor_does_not_draft_a_heuristic_for_a_denied_cause():
     assert causes == {"sensor_hardware_failure"}, (
         f"denied causes must not be drafted as heuristics, got {causes}"
     )
+    assert len(result["heuristics"]) == 1, result["heuristics"]
 
 
 def test_mock_extractor_still_drafts_the_sample_interviews_heuristics():
@@ -39,6 +45,7 @@ def test_mock_extractor_still_drafts_the_sample_interviews_heuristics():
         "refrigerant_leak", "condenser_fouling", "communication_bus_controller_failure",
         "sensor_hardware_failure", "shaft_misalignment",
     }
+    assert len(result["heuristics"]) == len(causes)  # one draft per cause, no duplicates
 
 
 def test_g2b_hazard_is_named_in_the_guardrail_result_the_decision_screen_reads(client: TestClient):
@@ -59,6 +66,12 @@ def test_g2b_hazard_is_named_in_the_guardrail_result_the_decision_screen_reads(c
     assert any("hazard" in r.lower() or "safety" in r.lower() for r in reasons)
 
 
+def test_aom_decision_screen_renders_the_hazard_as_a_warning_banner():
+    src = open("frontend/static/js/screens.js", encoding="utf-8").read()
+    assert "Safety/environmental hazard" in src
+    assert "banner-warn" in src
+
+
 def test_unknown_asset_still_escalates_via_g5_api(client: TestClient):
     """Backend contract unchanged (the fix is giving the UI a path to call
     this with an arbitrary asset id, not changing the guardrail itself)."""
@@ -71,3 +84,10 @@ def test_unknown_asset_still_escalates_via_g5_api(client: TestClient):
     snap = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()
     assert snap["current_state"] == "ESCALATED"
     assert "G5" in snap["guardrail_result"]["rule_ids"]
+    assert snap["confidence"] == 0.0
+    assert snap["diagnosis"] is None
+
+
+def test_new_case_form_offers_an_unregistered_asset_option():
+    src = open("frontend/static/js/screens.js", encoding="utf-8").read()
+    assert "Other / unregistered asset" in src, "G5 must be reachable from the New Case form"

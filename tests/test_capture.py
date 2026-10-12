@@ -138,6 +138,20 @@ def test_case_surfaces_approved_expert_knowledge_for_matching_diagnosis(client):
     assert match["knowledge_id"].startswith("KB-EXP-")
     assert match["evidence_quote"]
     assert match["kb_version_label"].startswith("CRAH v1.")
+    assert match["expert_name"] == "R. Tan"
+    assert len(match["evidence_quote"]) >= 20
+
+
+def test_no_expert_knowledge_is_shown_before_any_is_approved(client):
+    LSTORE.__init__()
+    created = client.post("/cases", params={
+        "user": "tech1", "asset_id": "CRAH-DC1-01", "sensor_id": "SA-TEMP-01",
+        "reading_status": "absent",
+    })
+    case_id = created.json()["case_id"]
+    client.post(f"/cases/{case_id}/advance", params={"user": "tech1"})
+    result = client.get(f"/cases/{case_id}/expert-knowledge", params={"user": "tech1"}).json()
+    assert result["matches"] == []
 
 
 def test_unconfigured_adp_fails_loudly(client, monkeypatch):

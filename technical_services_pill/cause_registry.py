@@ -1,4 +1,4 @@
-"""Canonical cause IDs for the Technical Services fault-diagnosis pill.
+"""Canonical cause IDs for the Technical Services Intelligence Pill.
 
 This registry centralises IDs so decision-tree output, KB data, learning
 retrieval, and UI labels all use the same semantic keys. Historical aliases are

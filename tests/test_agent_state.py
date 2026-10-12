@@ -444,7 +444,7 @@ def test_learning_loop():
     )
     proposal = store.record_feedback(fb, confidence=0.55, action_taken="bus_reseat")
     _check("proposal created (pending)", proposal["status"] == "pending")
-    # F2: approve the proposal to ingest into the live KB
+    # approve the proposal to ingest into the live KB
     store.approve_proposal(proposal["proposal_id"], decided_by="steward2", rationale="reviewed")
     _check("validated case appended", len(store.validated) == base_cases + 1)
     _check("corrected flag False (cause agreed)", proposal["corrected"] is False)
@@ -490,7 +490,7 @@ def test_learning_loop():
         },
         state=s,
     )
-    # F2: approve the proposal to ingest into the live KB
+    # approve the proposal to ingest into the live KB
     LEARNING_STORE.approve_by_feedback_id(fb_id, decided_by="steward2")
     _check("submit_feedback promoted a validated case",
            len(LEARNING_STORE.validated) == live_before + 1)
@@ -556,6 +556,16 @@ def test_multi_asset_branch_isolation():
     # Unknown fault type -> [] (agent escalates).
     r = evaluate_decision_tree(obs("no_such_fault"), [])
     _check("unknown fault type -> empty (escalate)", r == [])
+
+
+def test_console_demo_passes():
+    """`make demo` end to end: every case in the console demo passes."""
+    import os
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run([sys.executable, "-m", "technical_services_pill.demo"],
+                       capture_output=True, text=True, cwd=root)
+    assert "DEMO PASSED" in (r.stdout or ""), (r.stdout or r.stderr)[-400:]
 
 
 # --- Runner ---------------------------------------------------------------

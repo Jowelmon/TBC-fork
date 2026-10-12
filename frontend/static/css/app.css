@@ -530,6 +530,8 @@ textarea { resize: vertical; min-height: 70px; }
 .tier-human::before   { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 .tier-advisory    { background: var(--purple-bg); color: var(--purple-text); }
 .tier-advisory::before    { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--purple); }
+.tier-guard    { background: var(--red-bg); color: var(--red-text); }
+.tier-guard::before    { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
 
 /* ── AI cloud: the assistant's on-screen presence (cloud.js) ─────────────
    A floating, draggable cloud with a face whose expression follows the
