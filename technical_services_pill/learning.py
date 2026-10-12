@@ -13,7 +13,7 @@ genuinely *self-improving* intelligence pill:
 All assumed thresholds below are tagged ``【ASSUMPTION]`` (spec Appendix A #5):
 tunable, must be validated with Keppel technical-services SMEs.
 
-F2: Feedback governance via proposals. Feedback no longer enters the live KB
+Feedback governance via proposals. Feedback no longer enters the live KB
 directly — it creates a pending proposal that must be approved by a knowledge
 steward before it is ingested. Rejected proposals are recorded for audit.
 Rollback removes all cases added after a target KB version.
@@ -60,7 +60,7 @@ class LearningStore:
     Seeded from the mock registry's pre-validated KB cases so retrieval is
     useful before any feedback is ever submitted.
 
-    F2: Feedback goes through a proposal workflow:
+    Feedback goes through a proposal workflow:
       - ``record_feedback`` creates a *pending proposal* (not ingested).
       - ``approve_proposal`` ingests the proposal into the live KB and
         increments the KB version.
@@ -133,12 +133,12 @@ class LearningStore:
                 del self._cause_stats[vc.confirmed_cause]
 
     # ------------------------------------------------------------------ #
-    # F2: Proposal workflow
+    # Proposal workflow
     # ------------------------------------------------------------------ #
     def record_feedback(self, fb: FeedbackRecord, *, confidence: float, action_taken: str = "") -> dict:
         """Create a pending proposal from feedback (NOT ingested into KB yet).
 
-        F2: Feedback no longer enters the live KB directly. It creates a
+        Feedback no longer enters the live KB directly. It creates a
         proposal with status 'pending' that must be approved by a knowledge
         steward before it is ingested.
         """

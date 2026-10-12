@@ -1,4 +1,4 @@
-"""Phase 3: confidence the KB can move.
+"""Confidence the KB can move.
 
 Approving a validated case's feedback raises kb_match for the next
 identical-signature case, which raises its confidence by at least 0.05;

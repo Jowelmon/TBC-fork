@@ -1,4 +1,4 @@
-"""FastAPI app for the Technical Services Fault Diagnosis pill (spec §5).
+"""FastAPI app for the Technical Services Intelligence Pill (spec §5).
 
 Endpoints:
     POST   /cases                         create a case (trigger diagnosis)
@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 
 from .agent_state import AgentState
 from .ai_reasoning import generate_diagnostic_hypothesis
@@ -65,7 +65,7 @@ async def _lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Technical Services Fault Diagnosis Pill",
+    title="Technical Services Intelligence Pill",
     version="1.0.0",
     lifespan=_lifespan,
 )
@@ -879,7 +879,7 @@ def get_kb_stats(user: str = Depends(resolve_user)) -> dict:
 
 @app.get("/kb/queue")
 def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
-    """List pending knowledge proposals awaiting steward approval (F2).
+    """List pending knowledge proposals awaiting steward approval.
 
     Requires ``approve_knowledge_version`` capability (knowledge steward
     or admin). Returns the list of pending proposals with their metadata.
@@ -892,7 +892,7 @@ def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
 
 @app.post("/kb/proposals/{proposal_id}/approve")
 def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dict:
-    """Approve a pending knowledge proposal and ingest it into the live KB (F2).
+    """Approve a pending knowledge proposal and ingest it into the live KB.
 
     Requires ``approve_knowledge_version`` capability. On approval the KB
     version increments and the proposal's feedback is promoted to a
@@ -913,7 +913,7 @@ def approve_proposal(proposal_id: str, user: str = Depends(resolve_user)) -> dic
 
 @app.post("/kb/proposals/{proposal_id}/reject")
 def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
-    """Reject a pending knowledge proposal (F2).
+    """Reject a pending knowledge proposal.
 
     Requires ``approve_knowledge_version`` capability. The rejected
     proposal is retained in the audit trail but never ingested into the KB.
@@ -949,7 +949,7 @@ def list_kb_versions(user: str = Depends(resolve_user)) -> dict:
 
 @app.post("/kb/rollback/{target_version}")
 def rollback_kb(target_version: int, user: str = Depends(resolve_user)) -> dict:
-    """Roll back the KB to a prior version, removing cases added after it (F2).
+    """Roll back the KB to a prior version, removing cases added after it.
 
     Requires ``rollback_knowledge_version`` capability. Seed cases
     (version 0) are never removed.

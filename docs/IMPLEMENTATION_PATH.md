@@ -1,4 +1,4 @@
-# Implementation path
+# Technical Services Intelligence Pill: Implementation path
 
 Three stages from this repo to a real Keppel deployment. Each stage lists
 what is **real** (implemented, tested, running today) versus **stubbed**

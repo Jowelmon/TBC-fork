@@ -1,3 +1,5 @@
+> Historical CodeBuddy implementation brief (Oct 2026). Superseded by the current code; kept as a record of the build process.
+
 # TBC — CodeBuddy Implementation Task
 ## PR2 Improvement + Tencent ADP AI Integration
 

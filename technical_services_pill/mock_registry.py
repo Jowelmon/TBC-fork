@@ -1,4 +1,4 @@
-"""In-memory demo registry for the Technical Services Fault Diagnosis pill.
+"""In-memory demo registry for the Technical Services Intelligence Pill.
 
 All data here is hackathon demo data (spec §0 ``【ASSUMPTION】`` domain
 specifics). It models the CRAH "temperature measurement missing" scenario:

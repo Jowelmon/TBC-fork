@@ -1,8 +1,4 @@
-# Technical Services Fault Diagnosis Intelligence Pill
-
-A deterministic, audit-ready agent for diagnosing technical-services faults on
-critical data-center assets (CRAH units, chillers, pumps, UPS). Built for the
-Keppel **AI HARVEST** hackathon.
+# Technical Services Intelligence Pill
 
 > **The pitch:** Data-centre faults are diagnosed by a handful of senior
 > technicians — when they retire, that judgement retires with them. TBC turns
@@ -11,6 +7,20 @@ Keppel **AI HARVEST** hackathon.
 > and every later diagnosis reuses that knowledge with the expert's name and
 > verbatim quote attached — under deterministic guardrails, a tamper-evident
 > audit trail, and human-only approval of every action.
+
+**Run it in under two minutes** (Python 3.11+, no keys needed — the AI runs
+as an offline mock by default):
+
+```bash
+make install     # pip install -r requirements.txt
+make serve       # starts the app on :8000
+# open http://localhost:8000/ui
+```
+
+Then follow the 6-minute click-through in [`DEMO.md`](DEMO.md), or press
+**Demo guide** in the top bar. Built by team TBC for the Keppel **AI HARVEST**
+challenge: a deterministic, audit-ready agent for diagnosing faults on
+data-centre assets (CRAH units, chillers, pumps, UPS).
 
 > **Design principle: AI in the harvest, determinism in the execution.**
 > An LLM turns expert interviews into draft knowledge (see *Expert Knowledge
@@ -23,17 +33,17 @@ Keppel **AI HARVEST** hackathon.
 
 ## Quantifiable metrics
 
-**Measured in this repo** (reproduce with `make test` / `make eval` / `GET /kb/stats`):
+**Measured in this repo** (reproduce with `make test` / `make eval` / `GET /kb/stats` as any signed-in user):
 
 | Metric | Value |
 |---|---|
-| Test suite | **133 pytest**, all passing, zero configuration |
+| Test suite | **143 pytest**, all passing, zero configuration |
 | Acceptance evals | **13/13** labelled evals (`make eval`) |
 | Asset classes / fault trees | **4** (CRAH temperature, chiller compressor trip, UPS battery, pump vibration) |
 | Canonical causes | **24** IDs (23 decision-tree causes + 1 `unresolvable` sentinel), one registry |
 | Guardrails | **9** (G1–G9), deterministic, running before any recommendation or work order |
-| Agent lifecycle | **11 states / 16 transitions**, every transition hash-chained (SHA-256) |
-| RBAC | **5 roles, 6 demo users, 33 API endpoints**, enforcement tested server-side |
+| Agent lifecycle | **11 states / 17 transitions**, every transition hash-chained (SHA-256) |
+| RBAC | **5 roles, 6 demo users, 34 API endpoints**, enforcement tested server-side |
 | Knowledge governance | **0** knowledge items can go live without a second steward's approval; every KB version rollback-able |
 | Demo tour | **8-step** in-app guided tour + **6-minute** scripted run (`DEMO.md`) |
 
@@ -44,7 +54,7 @@ Keppel **AI HARVEST** hackathon.
 | Manual triage without captured knowledge | *assumption:* ≈90 minutes per fault (baseline to be replaced with a measured Keppel figure) |
 | Diagnosis with this pill | seconds, deterministic, with any matching approved expert knowledge shown alongside |
 | Knowledge retention on expert departure | interviews remain as steward-approved, versioned knowledge instead of leaving with the expert |
-| Learning effect, demonstrated | one approved feedback cycle lifts `kb_match` 0.73 → 1.00 and confidence 0.43 → 0.50 on the next identical case (`make demo`, CASE 3; exact numbers depend on mock peer sensors) |
+| Learning effect, demonstrated | one approved feedback cycle lifts `kb_match` 0.73 → 1.00 and confidence 0.43 → 0.50 on the next identical case (`make demo`, CASE 3; the exact values come from the mock peer sensors and are identical on every run) |
 
 ---
 
@@ -62,7 +72,7 @@ Keppel **AI HARVEST** hackathon.
 │  AgentState     │◀────────▶│   Tool Layer        │      │   CaseStore      │
 │  (state machine │          │  gather_evidence    │      │  (in-memory +    │
 │   11 states,    │          │  diagnose_asset     │      │   hash-chain     │
-│   16 transitions│          │  check_guardrails   │      │   audit log)     │
+│   17 transitions│          │  check_guardrails   │      │   audit log)     │
 │   hash-chain    │          │  propose_recommend  │      └──────────────────┘
 │   audit history)│          │  create_work_order  │
 └────────┬────────┘          │  submit_feedback    │
@@ -102,11 +112,11 @@ work order → outcome → feedback → **validated case written back to KB**
 | `auth.py` | Signed session cookie identity (`POST /login`); `?user=` only works as a fallback under `TBC_DEMO_INSECURE=1`. |
 | `tools.py` | Agent tool layer: evidence gatherer, diagnosis orchestrator, guardrail checker, recommendation proposer, work-order creator, feedback submitter. |
 | `rbac.py` | 5-role RBAC matrix (technician, asset_ops_manager, knowledge_steward, auditor, admin). Permission checks via `can()` / `require()`. |
-| `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace. |
+| `store.py` / `database.py` | SQLite-backed `CaseStore` with a memory cache and hash-chain audit trace (per-case rows in `technical_services_pill.sqlite3`). |
 | `learning.py` | `LearningStore`: validated-case KB, Jaccard similarity retrieval, `kb_match_score()`, feedback → validated-case write-back, proposal workflow. |
 | `audit.py` | `canonical_json`, SHA-256 `compute_hash`, `GENESIS_HASH` for hash-chain integrity. |
 | `mock_registry.py` | Demo data: 7 assets across 4 pills (2 CRAH, 2 chiller, 1 UPS, 2 pump -- each pill's second asset has a distinct fault signature so more than one captured cause per pill is reachable in a live diagnosis), seed KB, maintenance history, sensor metadata, BMS status. |
-| `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit. |
+| `persistence.py` | FastAPI lifecycle snapshots for cases, KB, proposals, audit, plus tamper-evidence integrity events (`data/tbc.sqlite`). |
 | `app.py` | FastAPI app: RBAC-enforced routes, identity, persistence lifecycle, the agent-loop driver, and `/pills`. |
 | `demo.py` | End-to-end lifecycle, multi-asset routing, and AI HARVEST capture-to-reuse demo. |
 
@@ -120,7 +130,7 @@ docker compose up --build -d
 
 # API available at http://localhost:8000
 # Interactive docs at http://localhost:8000/docs
-# Health check at http://localhost:8000/kb/stats
+# Health check at http://localhost:8000/docs (most API routes need POST /login first)
 
 # Run the end-to-end demo, including the AI HARVEST loop, inside a container
 docker compose run --rm demo
@@ -145,7 +155,7 @@ make demo
 make serve
 ```
 
-### Option C - Frontend Demo UI (what judges should run)
+### Option C: Demo UI (recommended)
 
 ```bash
 pip install -r requirements.txt
@@ -175,7 +185,7 @@ snapshots.
 |---|---|
 | `make install` | Install runtime and test dependencies |
 | `make test` | Run the full pytest suite |
-| `make eval` | Run EVAL-01..12 acceptance evals, print a pass/fail table |
+| `make eval` | Run EVAL-01..13 acceptance evals, print a pass/fail table |
 | `make demo` | Run the end-to-end console demo |
 | `make serve` | Start the API and UI on `localhost:8000` (open `/ui`) |
 | `make reset` | Wipe persisted state for a clean demo |
@@ -189,9 +199,12 @@ snapshots.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| `POST` | `/login` / `/logout` | Set or clear the signed session cookie for a demo user |
 | `POST` | `/cases` | Create a new case from an observation (triggers agent) |
 | `GET` | `/cases` | List all cases |
+| `GET` | `/cases/similar` | Open cases sharing a diagnosed cause (for re-running diagnosis) |
 | `GET` | `/cases/{id}` | Get case snapshot (full agent state) |
+| `GET` | `/cases/{id}/confidence-preview` | Non-destructive re-score of a case's existing evidence against the current KB |
 | `GET` | `/cases/{id}/expert-knowledge` | Show approved interview heuristics matching the diagnosed cause and asset type |
 | `POST` | `/cases/{id}/advance` | Drive the agent loop one transition forward |
 | `GET` | `/cases/{id}/evidence` | Retrieve gathered evidence |
@@ -201,7 +214,14 @@ snapshots.
 | `GET` | `/cases/{id}/work-order` | Retrieve work order status |
 | `POST` | `/cases/{id}/work-order` | Create + acknowledge work order (requires prior approval) |
 | `POST` | `/cases/{id}/outcome` | Record observed outcome |
-| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal (F2) |
+| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal |
+| `POST` | `/cases/{id}/escalation/close` | Close an escalated case (manager/expert) |
+| `POST` | `/cases/{id}/escalation/evidence` | Send an escalated case back for more evidence |
+| `GET` | `/causes` | Canonical causes with plain-English labels and owning asset type |
+| `GET` | `/capture/sample` | Sample technician interview for the demo |
+| `POST` | `/capture/draft` | Draft heuristics from an interview for review, queuing nothing |
+| `POST` | `/capture/interview` | Turn a reviewed interview into a pending knowledge proposal |
+| `GET` | `/kb/expert-heuristics` | Approved, live expert heuristics with provenance |
 | `GET` | `/kb/stats` | Knowledge-base statistics (case count, cause priors, pending proposals) |
 | `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
 | `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
@@ -210,6 +230,8 @@ snapshots.
 | `POST` | `/kb/rollback/{version}` | Roll back KB to a target version (admin only) |
 | `GET` | `/pills` | Pill Registry: owner steward, KB version, knowledge count, approval rate per pill |
 | `GET` | `/audit/trace` | Full hash-chain audit trail with tamper detection |
+| `GET` | `/system/info` | Which model drafts expert knowledge (never returns secrets) |
+| `GET` | `/system/integrity` | Archived tamper-evidence events (auditor/admin) |
 
 > Interactive Swagger docs at `/docs`, ReDoc at `/redoc` once the server is running.
 
@@ -359,10 +381,10 @@ before/after confidence.
 | `MIN_RECO_CONFIDENCE` | 0.55 | `DIAGNOSING → RECOMMENDING` requires `confidence ≥` this |
 | `ESCALATE_CONFIDENCE` | 0.35 | `confidence <` this → `ESCALATED` (no recommendation, G4) |
 
-## Closed-Loop Learning (F2: Proposal Workflow)
+## Closed-Loop Learning: Proposal Workflow
 
 The system improves itself through a **feedback → proposal → steward approval → KB
-write-back** loop (spec §7, enhanced in F2):
+write-back** loop (spec §7):
 
 ```
   diagnosis ──▶ human feedback ──▶ pending proposal ──▶ steward review
@@ -458,7 +480,7 @@ decision tree and guardrails remain authoritative.
 To use ADP: `cp .env.example .env`, set `TBC_LLM_PROVIDER=adp` and paste your
 AppKey (ADP console: your app > Publish > Service status > API management >
 Copy) into `ADP_APP_KEY`. `.env` is gitignored. The top bar shows which model
-is active.
+is active. Full agent configuration: [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md).
 
 **Demo guide:** the "Demo guide" button in the top bar walks an eight-step
 tour of the whole loop, setting the role and screen for each step.
@@ -527,35 +549,37 @@ make test        # = PYTHONPATH=. python -m pytest -q tests
 make eval         # = PYTHONPATH=. python3 tests/evals/run_evals.py
 ```
 
-**133 tests** (verified with `make test`; this count is a snapshot — run the
-command for the current number) across spec acceptance cases, F1-F3
+**143 tests** (verified with `make test`; this count is a snapshot — run the
+command for the current number) across spec acceptance cases,
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
 
 | File | Covers |
 |---|---|
 | `test_agent_state.py` | Core state-machine lifecycle, illegal transitions, guardrails G1/G5/G7/G8, audit tamper detection, multi-asset decision trees |
-| `test_f1_escalation_api.py` | F1: G3 cross-domain escalation via the real API path |
-| `test_f2_proposals.py` | F2: proposal workflow — pending → approve/reject → KB write-back → rollback, self-approval blocked, RBAC |
-| `test_f3_refrigerant_leak.py` | F3: G2b forces `AWAITING_APPROVAL` (not escalate) for a safety-critical-but-actionable cause |
+| `test_f1_escalation_api.py` | G3 cross-domain escalation via the real API path |
+| `test_f2_proposals.py` | Proposal workflow — pending → approve/reject → KB write-back → rollback, self-approval blocked, RBAC |
+| `test_f3_refrigerant_leak.py` | G2b forces `AWAITING_APPROVAL` (not escalate) for a safety-critical-but-actionable cause |
 | `test_rbac_caps.py` | Declared vs. enforced RBAC capabilities |
 | `test_capture.py`, `test_capture_review.py` | Expert capture: grounding, cause filing by owning pill, the four-step review flow |
 | `test_adp_client.py` | ADP v2 SSE client against a simulated event stream |
 | `test_kb_version_label.py`, `test_persistence.py` | KB version display; state survives a restart |
-| `test_ai_second_opinion.py` | Phase 1: AI second opinion agree/disagree (G9), timeout/malformed fallback is audited, injected tag redaction, non-candidate cause rejection |
-| `test_identity.py` | Phase 2: signed cookie beats a spoofed `?user=` (including on writes), tampered cookie rejected, insecure-mode fallback |
-| `test_confidence_uplift.py`, `test_rerun_diagnosis.py` | Phase 3: approving validated feedback raises the next identical case's confidence by ≥0.05, rollback restores it exactly, non-destructive re-run preview |
-| `test_no_contradictions.py` | Phase 4: no developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
-| `test_contrast.py` | Phase 5: every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
-| `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
-| `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
+| `test_ai_second_opinion.py` | AI second opinion agree/disagree (G9), timeout/malformed fallback is audited, injected tag redaction, non-candidate cause rejection |
+| `test_identity.py` | Signed cookie beats a spoofed `?user=` (including on writes), tampered cookie rejected, insecure-mode fallback |
+| `test_confidence_uplift.py`, `test_rerun_diagnosis.py` | Approving validated feedback raises the next identical case's confidence by ≥0.05, rollback restores it exactly, non-destructive re-run preview |
+| `test_no_contradictions.py` | No developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
+| `test_contrast.py` | Every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
+| `test_pill_registry.py` | `/pills` lists all four pills with the right owner and a real approval rate |
+| `test_kb_versions_and_assets.py` | Rollback int/label reconciliation (`/kb/versions`), condenser-fouling/cavitation assets reachable, rollback RBAC |
+| `test_extractor_hazard_and_unknown_asset.py`, `test_mock_extractor_precision.py` | Capture extractor ignores causes the expert rules out; G2b hazard reaches the AOM Decision screen; unknown asset escalates via G5 |
+| `test_integrity_persistence.py` | Tamper evidence survives clean restarts and runtime edits; `/system/integrity` is RBAC-gated |
 
-**`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
+**`make eval`** runs 13 labelled acceptance evals (`EVAL-01`..`EVAL-13`) as a
 pass/fail table, independent of the pytest suite: ADP call shape, AI cannot
 bypass approval, AI failure fallback, unknown asset, canonical cause IDs,
 persistence across a simulated restart, feedback governance, RBAC approval,
-rollback, audit tamper detection, the RBAC matrix, and no invented evidence
-in capture. See `tests/evals/run_evals.py`.
+rollback, audit tamper detection, the RBAC matrix, no invented evidence
+in capture, and tamper evidence that survives restarts and runtime edits. See `tests/evals/run_evals.py`.
 
 ## Audit Integrity
 
@@ -569,6 +593,10 @@ record_n.prev_hash = SHA-256(canonical_json(record_{n-1}))
 - `verify_audit_chain()` recomputes the chain and detects any tampering.
 - RBAC ensures only authorized roles can advance states; all actions are
   recorded with actor, timestamp, and transition name.
+- Two local SQLite files hold state: `technical_services_pill.sqlite3` (via
+  `database.py`) keeps one row per case for the `CaseStore`, and `data/tbc.sqlite`
+  (via `persistence.py`) holds the server's restart snapshots of cases, KB,
+  proposals and audit, plus archived tamper evidence. `make reset` deletes both.
 
 ## Project Structure
 
@@ -597,29 +625,33 @@ technical_services_pill/
 
 tests/
 ├── test_agent_state.py          # Core lifecycle, guardrails, audit tamper detection
-├── test_f1_escalation_api.py    # F1: G3 escalation via real API path
-├── test_f2_proposals.py         # F2: proposal workflow (approve/reject/rollback/RBAC)
-├── test_f3_refrigerant_leak.py  # F3: G2b safety-approval guardrail
+├── test_f1_escalation_api.py    # G3 escalation via real API path
+├── test_f2_proposals.py         # Proposal workflow (approve/reject/rollback/RBAC)
+├── test_f3_refrigerant_leak.py  # G2b safety-approval guardrail
 ├── test_rbac_caps.py            # RBAC capability enforcement
 ├── test_capture.py / test_capture_review.py  # Expert capture grounding + review flow
 ├── test_adp_client.py           # ADP v2 SSE client (simulated stream)
 ├── test_kb_version_label.py / test_persistence.py
-├── test_ai_second_opinion.py    # Phase 1: AI second opinion, G9
-├── test_identity.py             # Phase 2: signed-cookie identity
-├── test_confidence_uplift.py / test_rerun_diagnosis.py  # Phase 3: confidence the KB can move
-├── test_no_contradictions.py    # Phase 4: no on-screen contradictions
-├── test_contrast.py             # Phase 5: WCAG contrast, both themes
-├── test_pill_registry.py        # Phase 6: /pills
-├── test_judge_fixes.py          # Rollback UI/label reconciliation, new asset fixtures
-└── evals/run_evals.py           # EVAL-01..12, `make eval`
+├── test_ai_second_opinion.py    # AI second opinion, G9
+├── test_identity.py             # Signed-cookie identity
+├── test_confidence_uplift.py / test_rerun_diagnosis.py  # Confidence the KB can move
+├── test_no_contradictions.py    # No on-screen contradictions
+├── test_contrast.py             # WCAG contrast, both themes
+├── test_pill_registry.py        # /pills
+├── test_kb_versions_and_assets.py  # Rollback UI/label reconciliation, asset fixtures
+├── test_extractor_hazard_and_unknown_asset.py / test_mock_extractor_precision.py
+├── test_integrity_persistence.py    # Tamper evidence survives restarts
+└── evals/run_evals.py           # EVAL-01..13, `make eval`
 
 docs/
 ├── ADP_SETUP.md             # Tencent ADP agent configuration
 ├── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
-└── JUDGE_REPORT_*.md        # Independent judge regrades (Part C), scores never edited
+└── SOLUTION_DIAGRAM.md      # Solution diagram and the 8 required points
+
+docs/build-history/       # Historical CodeBuddy implementation brief
+miora/                    # Miora (WorkBuddy) design-agent prompt pack for the UI
 
 DEMO.md                   # 6-minute click-through script
-api_preview.html          # Self-contained API explorer (open in browser)
 requirements.txt          # Runtime dependencies
 Dockerfile                # python:3.11-slim, exposes :8000
 docker-compose.yml        # API + demo services

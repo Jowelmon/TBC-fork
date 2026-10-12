@@ -1,4 +1,4 @@
-"""F2 acceptance tests: feedback governance via proposals.
+"""Feedback governance via proposals.
 
 Tests the proposal workflow: feedback creates a pending proposal, the
 steward approves or rejects it, and rollback removes approved cases.
@@ -67,6 +67,27 @@ def _create_closed_case(client: TestClient, asset_id: str = "CRAH-DC1-01", corre
     # Verify proposal is pending
     assert resp.json()["proposal_status"] == "pending"
     return fb_id
+
+
+def test_full_lifecycle_through_the_api_reaches_closed():
+    """Create, approve, work order, outcome, feedback: CLOSED with a valid chain."""
+    client = TestClient(app)
+    resp = client.post("/cases", params={
+        "user": "tech1", "asset_id": "CRAH-DC1-01", "sensor_id": "SA-TEMP-01",
+        "observation_type": "temperature_measurement_missing", "reading_status": "absent",
+    })
+    case_id = resp.json()["case_id"]
+    client.post(f"/cases/{case_id}/advance", params={"user": "tech1"})
+    client.post(f"/cases/{case_id}/approval", params={"user": "mgr1", "decision": "approve", "rationale": "x"})
+    client.post(f"/cases/{case_id}/work-order", params={"user": "mgr1"})
+    client.post(f"/cases/{case_id}/outcome", params={
+        "user": "tech1", "result": "resolved", "root_cause_confirmed": "sensor_hardware_failure",
+    })
+    client.post(f"/cases/{case_id}/feedback", params={"user": "steward1"})
+    snap = client.get(f"/cases/{case_id}", params={"user": "tech1"}).json()
+    assert snap["current_state"] == "CLOSED", snap["current_state"]
+    assert snap["audit_chain_valid"] is True
+    assert len(snap["history"]) >= 7
 
 
 def test_f2_feedback_creates_pending_proposal(client: TestClient):

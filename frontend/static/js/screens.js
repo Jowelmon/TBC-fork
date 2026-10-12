@@ -10,6 +10,14 @@ function setHTML(id, html) {
 }
 
 const isForbidden = e => /403|lacks capability|forbidden/i.test(e?.message || '');
+// Which demo users hold the capabilities the Governance cards need. Mirrors
+// rbac.PERMISSIONS (a test keeps them in step); the server still enforces it.
+// Checking first saves a request that would only come back 403.
+const CAN = {
+  approve_knowledge_version: ['steward1', 'steward2', 'admin1'],
+  read_audit_trail: ['steward1', 'steward2', 'auditor1', 'admin1'],
+};
+const can = (cap) => CAN[cap].includes(api.user());
 const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Role-based access:</strong> ${what} is limited to ${roles}. Switch role in the top bar to see it.</p></div>`;
 
 // A one-line orientation cue at the top of every screen, so someone who
@@ -17,7 +25,7 @@ const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Ro
 // expect next without reading the whole card stack first.
 const nextHint = text => `<p class="next-hint">${_esc(text)}</p>`;
 
-// F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
+// local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -38,6 +46,14 @@ function causeLabel(id) {
   if (id.startsWith('new:')) return 'Proposed new cause: ' + id.slice(4).replace(/_/g, ' ');
   const c = (_causes || []).find(x => x.id === (ALIASES[id] || id));
   return c ? c.label : id.replace(/_/g, ' ');
+}
+// Replace any canonical cause ID inside server-written text with its label.
+function labelCauses(text) {
+  let out = String(text || '');
+  // Longest IDs first, so an ID that prefixes another is not replaced inside it.
+  [...(_causes || [])].sort((a, b) => b.id.length - a.id.length)
+    .forEach(c => { out = out.split(c.id).join(c.label); });
+  return out;
 }
 // <option>s grouped by asset type; `selected` is pre-selected.
 function causeOptions(causes, selected = '') {
@@ -69,10 +85,10 @@ const WEIGHTS = [
   { id: 'W5', val: 0.15, key: 'conflict_penalty', label: 'Conflict Penalty', sign: '-' },
 ];
 
-// F5: Evidence display toggle state (plain English vs raw JSON)
+// Evidence display toggle state (plain English vs raw JSON)
 let _evidenceRawMode = false;
 
-// F5: Keys whose value `true` indicates an abnormal/fault condition
+// Keys whose value `true` indicates an abnormal/fault condition
 const _ABNORMAL_BOOL_KEYS = new Set([
   'low_pressure_switch', 'high_pressure_switch', 'leak_detected',
   'motor_overcurrent', 'temp_rising', 'greasing_overdue',
@@ -80,7 +96,7 @@ const _ABNORMAL_BOOL_KEYS = new Set([
   'balance_ok',
 ]);
 
-// F5: Numeric thresholds for abnormal values { key: { max?, min?, equals?, suffix? } }
+// Numeric thresholds for abnormal values { key: { max?, min?, equals?, suffix? } }
 const _ABNORMAL_THRESHOLDS = {
   charge_pct:       { max: 70, suffix: '%' },
   soh_pct:          { max: 60, suffix: '%' },
@@ -142,7 +158,7 @@ function renderEvidencePlain(payload) {
   }).join('') + `</div>`;
 }
 
-// F7: Track whether auto-seed has already run this session
+// Track whether auto-seed has already run this session
 let _autoSeeded = false;
 
 // ═══════════════════════════════════════════════════════════
@@ -260,7 +276,7 @@ export function renderDashboard(el, state, h) {
       const snapshots = await Promise.all(ids.map(id => api.get(`/cases/${id}`).catch(() => null)));
       const cases = snapshots.filter(s => s);
 
-      // F7: Auto-seed 3 demo cases on first dashboard load if empty
+      // Auto-seed 3 demo cases on first dashboard load if empty
       if (!cases.length && !_autoSeeded) {
         _autoSeeded = true;
         showToast('Auto-seeding demo cases…', 'info');
@@ -458,14 +474,13 @@ export function renderDiagnosis(el, state, h) {
           const top = c.id === diag.top_cause_id;
           const evRefs = (c.evidence_refs || []).map(r => `<code>${esc(r)}</code>`).join(' ') || '—';
           return `<div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;${top ? 'border-color:var(--green);background:var(--green-bg);' : ''}">
-            ${top ? '<span class="badge badge-green">Top</span> ' : ''}<code>${esc(c.id)}</code>
-            <strong>${esc(c.label)}</strong>
+            ${top ? '<span class="badge badge-green">Top</span> ' : ''}<strong>${esc(c.label)}</strong>
             <span class="muted" style="margin-left:auto;font-size:12px">Evidence: ${evRefs}</span>
           </div>`;
         }).join('');
         diagBody.innerHTML = `
-          <div style="font-size:16px;margin-bottom:8px"><span class="muted">Root Cause:</span> <strong style="color:var(--blue)">${esc(diag.top_cause_id || '-')}</strong></div>
-          <div class="muted" style="margin-bottom:8px">${esc(diag.reasoning_trace || '')}</div>
+          <div style="font-size:16px;margin-bottom:8px"><span class="muted">Root Cause:</span> <strong style="color:var(--blue)">${diag.top_cause_id ? esc(causeLabel(diag.top_cause_id)) : '-'}</strong></div>
+          <div class="muted" style="margin-bottom:8px">${esc(labelCauses(diag.reasoning_trace))}</div>
           ${diag.kb_refs && diag.kb_refs.length ? `<div class="muted" style="margin-bottom:8px">KB: ${diag.kb_refs.map(r => `<code>${esc(r)}</code>`).join(' ')}</div>` : ''}
           <h4 style="margin:14px 0 8px">Candidate Causes</h4>
           ${causes}
@@ -507,7 +522,7 @@ export function renderDiagnosis(el, state, h) {
       if (!s.diagnosis) {
         expertBody.innerHTML = `<div class="banner banner-info"><p>Approved expert heuristics will appear here when they match the diagnosed cause and asset type.</p></div>`;
       } else if (!expertKnowledge.matches.length) {
-        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the decision-tree cause <code>${esc(expertKnowledge.cause_id || 'unresolved')}</code>.</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
+        expertBody.innerHTML = `<div class="banner banner-info"><p>No approved expert heuristic matches this asset type and the decision-tree cause <strong>${esc(expertKnowledge.cause_id ? causeLabel(expertKnowledge.cause_id) : 'unresolved')}</strong>.</p><p>The diagnosis and recommendation remain governed by the deterministic decision tree.</p></div>`;
       } else {
         expertBody.innerHTML = `
           <p class="muted expert-reuse-intro">Supporting knowledge from a steward-approved expert interview. Match basis: ${esc(expertKnowledge.match_basis)}. The decision tree remains authoritative.</p>
@@ -649,7 +664,7 @@ export function renderDiagnosis(el, state, h) {
         };
       }
 
-      // F5: Wire evidence toggle button
+      // Wire evidence toggle button
       const evToggleBtn = document.getElementById('btn-ev-toggle');
       if (evToggleBtn) {
         evToggleBtn.onclick = () => {
@@ -763,7 +778,7 @@ export function renderDecision(el, state, h) {
       } else if (s.current_state === 'AWAITING_APPROVAL') {
         // Show decision controls
         if (!canApprove) {
-          html += `<div class="banner banner-error"><p><strong>Approval Blocked</strong></p><p>Role "${esc(role)}" does not have the approve_reject_modify capability.</p><p>Switch to Asset Operations Manager (mgr1) to approve, reject, or modify.</p></div>`;
+          html += `<div class="banner banner-error"><p><strong>Approval Blocked</strong></p><p>Role "${esc(role)}" is not allowed to approve, reject or modify a recommendation.</p><p>Switch to Asset Operations Manager (mgr1) to approve, reject, or modify.</p></div>`;
         } else {
           html += `<div class="card"><div class="card-header"><h3>Decision Controls</h3></div><div class="card-body">
             <div class="flex gap-8" style="margin-bottom:16px">
@@ -881,7 +896,7 @@ export function renderOutcome(el, state, h) {
 
   async function load() {
     try {
-      const s = await api.get(`/cases/${cid}`);
+      const [s] = await Promise.all([api.get(`/cases/${cid}`), loadCauses()]);
       // Feedback submission closes the case immediately (the PROPOSAL stays
       // pending for a steward separately) -- so "submit feedback" must stop
       // showing the moment current_state is CLOSED, not stay pinned on
@@ -931,7 +946,7 @@ export function renderOutcome(el, state, h) {
         const cls = s.outcome.result === 'resolved' ? 'badge-green' : 'badge-red';
         ocBody.innerHTML = `<div class="banner banner-success">
           <p><span class="badge ${cls}">${esc(s.outcome.result)}</span></p>
-          ${s.outcome.root_cause_confirmed ? `<p><strong>Root Cause:</strong> <code>${esc(s.outcome.root_cause_confirmed)}</code></p>` : ''}
+          ${s.outcome.root_cause_confirmed ? `<p><strong>Root Cause:</strong> ${esc(causeLabel(s.outcome.root_cause_confirmed))}</p>` : ''}
           ${s.outcome.verified_by ? `<p><strong>Verified by:</strong> ${esc(s.outcome.verified_by)}</p>` : ''}
           ${s.outcome.notes ? `<p><strong>Notes:</strong> ${esc(s.outcome.notes)}</p>` : ''}
         </div>`;
@@ -1119,6 +1134,10 @@ export function renderGovernance(el, state, h) {
   async function loadQueue() {
     const qb = document.getElementById('queue-body');
     if (!qb) return;
+    if (!can('approve_knowledge_version')) {
+      qb.innerHTML = rbacNote('Reviewing knowledge proposals', 'knowledge stewards (steward1, steward2)');
+      return;
+    }
     try {
       const data = await api.get('/kb/queue');
       const queue = data.queue || [];
@@ -1191,7 +1210,7 @@ export function renderGovernance(el, state, h) {
   }
 
   // Re-run diagnosis on similar still-open cases after a proposal approves
-  // (Phase 3: "confidence the KB can move" — show the before/after, live).
+  // so the before/after confidence is visible live.
   async function loadRerunCandidates(cause, assetType) {
     const card = document.getElementById('rerun-card');
     const body = document.getElementById('rerun-body');
@@ -1254,7 +1273,7 @@ export function renderGovernance(el, state, h) {
       `);
       const dist = stats.cause_distribution || stats.causes || {};
       const priors = stats.cause_priors || {};
-      // F6: fall back to cause_priors ({cause: {confirmed, total, rate}})
+      // fall back to cause_priors ({cause: {confirmed, total, rate}})
       // when the API doesn't return a flat cause_distribution dict
       const entries = Object.keys(dist).length
         ? Object.entries(dist)
@@ -1276,6 +1295,10 @@ export function renderGovernance(el, state, h) {
 
   // Load audit trace
   async function loadTrace() {
+    if (!can('read_audit_trail')) {
+      setHTML('trace-body', rbacNote('The audit trail', 'auditors, knowledge stewards and admins'));
+      return;
+    }
     try {
       const data = await api.get('/audit/trace');
       const entries = data.entries || [];
@@ -1307,6 +1330,10 @@ export function renderGovernance(el, state, h) {
   async function loadIntegrity() {
     const body = document.getElementById('integrity-body');
     if (!body) return;
+    if (!can('read_audit_trail')) {
+      body.innerHTML = rbacNote('Integrity events', 'auditors, knowledge stewards and admins');
+      return;
+    }
     try {
       const data = await api.get('/system/integrity');
       const events = data.events || [];
