@@ -31,7 +31,7 @@ deployment):
 
 On first start the server seeds five scenarios (attributed to `demo-seed`):
 a closed case, a bus fault escalated to the BMS pill, a chiller awaiting
-approval, a UPS where the AI second opinion disagrees with the rules, and a
+approval, a hot UPS battery for the AI second opinion to weigh in on, and a
 pump escalated at 49% that clears the 55% threshold once the sample expert
 interview is approved. Click **Demo guide** in the top bar for a guided tour,
 or follow [`DEMO.md`](DEMO.md) for a 6-minute scripted run.
@@ -194,9 +194,10 @@ diagnosis. Inputs are G7-sanitised; a hypothesis outside the asset's causes
 is rejected and citations not present in the evidence are dropped. It never
 approves, executes or changes the case: a disagreement is recorded as G9 for
 the manager to see, and a timeout falls back to a labelled "AI offline" state
-recorded in the audit trail. Seeded case **UPS-DC1-02** shows a real
-disagreement (the rules say end of life; the second opinion flags thermal
-runaway risk).
+recorded in the audit trail. Seeded case **UPS-DC1-02** (end of life by
+the rules, battery at 41°C) is the one to watch: the offline mock flags
+thermal runaway risk and so raises G9; Tencent Cloud ADP usually agrees
+with the rules. Nothing is staged either way.
 
 Cloudy, the small draggable cloud on every screen, shows the AI's state
 (thinking, offline, worried when it disagrees). Clicking it opens an
