@@ -119,9 +119,11 @@ decides anything."
 Point at the "Advisory only — does not affect routing" tag, the
 agree/disagree badge, and that it's grounded only in evidence actually
 shown above it. Then open the seeded **UPS-DC1-02** case: the rules say
-battery end of life, the AI flags thermal runaway risk (41°C and rising),
-and G9 records the disagreement. The case still goes to the AOM for
-approval: the AI informs the decision, it never makes or blocks it.
+battery end of life, and the battery is at 41°C and rising. Read out what
+the second opinion says. Tencent Cloud ADP usually agrees; the offline mock
+flags thermal runaway risk. Either way the badge shows it, any disagreement
+is recorded as G9, and the case still goes to the AOM for approval: the AI
+informs the decision, it never makes or blocks it.
 Cloudy, the cloud in the navigation rail, shows the AI's state on every
 screen (worried on this case, smiling when Tencent Cloud ADP is
 answering). Click it for the assistant panel: the live model, what the AI

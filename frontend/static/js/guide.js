@@ -6,7 +6,7 @@ const STEPS = [
     title: 'The problem',
     role: 'mgr1', screen: 'dashboard',
     say: 'Data centre cooling faults are diagnosed by a handful of senior technicians. When they leave, the know-how leaves with them. This Intelligence Pill captures that know-how for Technical Services fault diagnosis.',
-    notice: 'Seeded cases: one resolved, a bus fault escalated to the BMS pill, a chiller waiting for the Asset Operations Manager, a UPS where the AI disagrees with the rules, and a pump escalated at 49% because nobody has written down how to read its vibration yet.',
+    notice: 'Seeded cases: one resolved, a bus fault escalated to the BMS pill, a chiller waiting for the Asset Operations Manager, a hot UPS battery where the AI gives a second opinion, and a pump escalated at 49% because nobody has written down how to read its vibration yet.',
   },
   {
     title: 'Harvest tacit knowledge',
