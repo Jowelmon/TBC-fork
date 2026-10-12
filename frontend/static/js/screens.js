@@ -10,6 +10,14 @@ function setHTML(id, html) {
 }
 
 const isForbidden = e => /403|lacks capability|forbidden/i.test(e?.message || '');
+// Which demo users hold the capabilities the Governance cards need. Mirrors
+// rbac.PERMISSIONS (a test keeps them in step); the server still enforces it.
+// Checking first saves a request that would only come back 403.
+const CAN = {
+  approve_knowledge_version: ['steward1', 'steward2', 'admin1'],
+  read_audit_trail: ['steward1', 'steward2', 'auditor1', 'admin1'],
+};
+const can = (cap) => CAN[cap].includes(api.user());
 const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Role-based access:</strong> ${what} is limited to ${roles}. Switch role in the top bar to see it.</p></div>`;
 
 // A one-line orientation cue at the top of every screen, so someone who
@@ -1126,6 +1134,10 @@ export function renderGovernance(el, state, h) {
   async function loadQueue() {
     const qb = document.getElementById('queue-body');
     if (!qb) return;
+    if (!can('approve_knowledge_version')) {
+      qb.innerHTML = rbacNote('Reviewing knowledge proposals', 'knowledge stewards (steward1, steward2)');
+      return;
+    }
     try {
       const data = await api.get('/kb/queue');
       const queue = data.queue || [];
@@ -1283,6 +1295,10 @@ export function renderGovernance(el, state, h) {
 
   // Load audit trace
   async function loadTrace() {
+    if (!can('read_audit_trail')) {
+      setHTML('trace-body', rbacNote('The audit trail', 'auditors, knowledge stewards and admins'));
+      return;
+    }
     try {
       const data = await api.get('/audit/trace');
       const entries = data.entries || [];
@@ -1314,6 +1330,10 @@ export function renderGovernance(el, state, h) {
   async function loadIntegrity() {
     const body = document.getElementById('integrity-body');
     if (!body) return;
+    if (!can('read_audit_trail')) {
+      body.innerHTML = rbacNote('Integrity events', 'auditors, knowledge stewards and admins');
+      return;
+    }
     try {
       const data = await api.get('/system/integrity');
       const events = data.events || [];

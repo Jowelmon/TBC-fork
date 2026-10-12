@@ -85,3 +85,21 @@ if __name__ == "__main__":
     phantom = _declared_capabilities() - enforced
     print(f"phantom (declared, no endpoint): {sorted(phantom)}")
     sys.exit(0)
+
+def test_ui_capability_map_matches_the_rbac_matrix():
+    """The Governance screen checks roles before calling restricted endpoints;
+    its user lists must match the server's RBAC matrix exactly."""
+    import re
+
+    from technical_services_pill.rbac import DEMO_USERS, can
+
+    src = open("frontend/static/js/screens.js", encoding="utf-8").read()
+    block = re.search(r"const CAN = \{(.*?)\};", src, re.S).group(1)
+    ui = {
+        cap: set(re.findall(r"'(\w+)'", users))
+        for cap, users in re.findall(r"(\w+): \[([^\]]*)\]", block)
+    }
+    assert set(ui) == {"approve_knowledge_version", "read_audit_trail"}
+    for cap, users in ui.items():
+        expected = {u for u, d in DEMO_USERS.items() if can(d.role, cap)}
+        assert users == expected, (cap, users, expected)
