@@ -115,7 +115,7 @@ restarts and can't be erased by an autosave.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 142
+**If asked "is any of this real?"** — `make test` (pytest, currently 143
 tests), `make eval` (13 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

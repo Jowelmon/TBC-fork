@@ -37,7 +37,7 @@ data-centre assets (CRAH units, chillers, pumps, UPS).
 
 | Metric | Value |
 |---|---|
-| Test suite | **142 pytest**, all passing, zero configuration |
+| Test suite | **143 pytest**, all passing, zero configuration |
 | Acceptance evals | **13/13** labelled evals (`make eval`) |
 | Asset classes / fault trees | **4** (CRAH temperature, chiller compressor trip, UPS battery, pump vibration) |
 | Canonical causes | **24** IDs (23 decision-tree causes + 1 `unresolvable` sentinel), one registry |
@@ -549,7 +549,7 @@ make test        # = PYTHONPATH=. python -m pytest -q tests
 make eval         # = PYTHONPATH=. python3 tests/evals/run_evals.py
 ```
 
-**142 tests** (verified with `make test`; this count is a snapshot — run the
+**143 tests** (verified with `make test`; this count is a snapshot — run the
 command for the current number) across spec acceptance cases,
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
