@@ -1,4 +1,4 @@
-"""Phase 2: identity is a signed session cookie, not a spoofable ?user=.
+"""Identity is a signed session cookie, not a spoofable ?user=.
 
 Covers:
   1. POST /login sets a cookie; it alone is enough to act as that user.
@@ -76,6 +76,28 @@ def test_cookie_wins_over_spoofed_user_param(secure_client: TestClient):
     assert resp.status_code == 403, (
         "a technician session must not be escalated by a spoofed ?user=admin1"
     )
+    assert "approve_reject_modify" in resp.json()["detail"]
+
+
+def test_steward_session_cannot_self_approve_with_a_spoofed_user(secure_client: TestClient):
+    """steward1's own proposal stays blocked even if ?user= claims steward2."""
+    secure_client.post("/login", params={"user_id": "tech1"})
+    case_id = _create_and_advance(secure_client)
+    secure_client.post("/login", params={"user_id": "mgr1"})
+    secure_client.post(f"/cases/{case_id}/approval", params={"decision": "approve", "rationale": "ok"})
+    secure_client.post(f"/cases/{case_id}/work-order")
+    secure_client.post("/login", params={"user_id": "tech1"})
+    secure_client.post(f"/cases/{case_id}/outcome", params={
+        "result": "resolved", "root_cause_confirmed": "sensor_hardware_failure",
+    })
+    secure_client.post("/login", params={"user_id": "steward1"})
+    fb = secure_client.post(f"/cases/{case_id}/feedback").json()
+    queue = secure_client.get("/kb/queue").json()["queue"]
+    pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
+
+    resp = secure_client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2"})
+    assert resp.status_code == 403, resp.text
+    assert "cannot also approve" in resp.json()["detail"]
 
 
 def test_outcome_verified_by_is_the_cookie_user_not_the_spoofed_param(secure_client: TestClient):

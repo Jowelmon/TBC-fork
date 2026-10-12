@@ -1,4 +1,4 @@
-"""Phase 5: every text/background pair in app.css is >= 4.5:1 (WCAG AA),
+"""Every text/background pair in app.css is >= 4.5:1 (WCAG AA),
 in both the light (default) and dark theme.
 
 Parses the CSS custom-property tokens directly out of app.css rather than

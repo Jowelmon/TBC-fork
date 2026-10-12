@@ -406,7 +406,7 @@ def build_fault_signature(observation_type: str, top_cause_id: str | None, kb_re
     the SAME way at diagnosis time (``app._fault_signature``) and at
     feedback time (``submit_feedback``), so a case validated through
     feedback actually matches the next identical fault's query signature
-    (Phase 3: confidence the KB can move). A signature built one way and
+    (so validated knowledge can move confidence). A signature built one way and
     queried another never matches, which silently caps ``kb_match`` no
     matter how much validated feedback is approved.
     """

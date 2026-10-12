@@ -1,4 +1,4 @@
-"""Phase 3: "Re-run diagnosis on similar open cases" (Governance).
+"""Re-run diagnosis on similar open cases (Governance).
 
 Covers the two new read endpoints behind that button:
   - GET /cases/similar       -- open cases sharing a cause (not CLOSED)

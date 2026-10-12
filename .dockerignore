@@ -11,4 +11,3 @@ tests/
 venv/
 *.egg-info/
 .DS_Store
-api_preview.html

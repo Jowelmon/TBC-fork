@@ -1,10 +1,10 @@
-"""Fixes for the top 3 issues from docs/JUDGE_REPORT_2026-10-07.md:
+"""KB version labels, rollback via /kb/versions, and per-asset fault signatures.
 
-1. Rollback has no UI control (fixed: GET /kb/versions + Governance panel).
-2. Condenser-fouling / cavitation knowledge has nowhere to be reused
-   (fixed: CHILLER-DC1-02, PUMP-DC1-02 with distinct fault signatures).
-3. The rollback int and the displayed semver label have no reconciled
-   mapping (fixed: GET /kb/versions returns both for every version).
+1. GET /kb/versions lists every version with the int /kb/rollback accepts
+   and the semver label shown on screen, so the two always reconcile.
+2. CHILLER-DC1-02 and PUMP-DC1-02 have distinct fault signatures, so
+   condenser-fouling and cavitation knowledge can be reused.
+3. Listing versions needs view_case; rolling back needs an admin.
 """
 from __future__ import annotations
 

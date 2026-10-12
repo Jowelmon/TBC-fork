@@ -1,5 +1,5 @@
-"""Tamper evidence must survive clean restarts (the "graceful shutdown
-autosaves and silently overwrites" gap from JUDGE_REPORT_2026-10-07_round2.md).
+"""Tamper evidence must survive clean restarts: a graceful shutdown's
+autosave must never silently overwrite a tampered snapshot.
 
 Two complementary mechanisms:
   - load_state() archives + logs an ``audit_chain_failure_on_load`` event for
@@ -59,7 +59,7 @@ def isolated_store(monkeypatch, tmp_path):
 
 def _tamper_cases_blob(db):
     """Rewrite the persisted cases snapshot with an edited audit reason,
-    exactly the direct-edit probe the judge performs on ``data/tbc.sqlite``."""
+    as a direct edit of ``data/tbc.sqlite`` would."""
     conn = sqlite3.connect(db)
     (blob,) = conn.execute(
         "SELECT blob FROM snapshots WHERE key='cases'"
@@ -139,7 +139,7 @@ def test_offline_tamper_evidence_survives_clean_restarts(
         client.post(f"/cases/{cid}/advance", params={"user": "tech1"})
     assert _integrity_events(db) == []
 
-    # Intermediate edit with the server down (the judge's kill -9 scenario),
+    # Intermediate edit with the server down (e.g. after a kill -9),
     # but now the NEXT clean shutdown/restart loop must not erase the proof.
     _tamper_cases_blob(db)
 
@@ -188,3 +188,7 @@ def test_integrity_endpoint_is_rbac_gated(
         assert ok.json() == {"events": []}
         denied = client.get("/system/integrity", params={"user": "tech1"})
         assert denied.status_code == 403
+
+def test_integrity_events_card_is_in_the_ui():
+    src = open("frontend/static/js/screens.js", encoding="utf-8").read()
+    assert "Integrity Events" in src and "integrity-body" in src

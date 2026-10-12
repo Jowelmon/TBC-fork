@@ -1,4 +1,4 @@
-"""Phase 4: no on-screen contradictions.
+"""No on-screen contradictions.
 
 Covers both halves of the requirement:
   - rendered-HTML/static-asset checks that developer text and hardcoded

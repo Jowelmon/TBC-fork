@@ -17,7 +17,7 @@ const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Ro
 // expect next without reading the whole card stack first.
 const nextHint = text => `<p class="next-hint">${_esc(text)}</p>`;
 
-// F5: local HTML-escape for module-level helper (render functions receive `esc` via helpers)
+// local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -69,10 +69,10 @@ const WEIGHTS = [
   { id: 'W5', val: 0.15, key: 'conflict_penalty', label: 'Conflict Penalty', sign: '-' },
 ];
 
-// F5: Evidence display toggle state (plain English vs raw JSON)
+// Evidence display toggle state (plain English vs raw JSON)
 let _evidenceRawMode = false;
 
-// F5: Keys whose value `true` indicates an abnormal/fault condition
+// Keys whose value `true` indicates an abnormal/fault condition
 const _ABNORMAL_BOOL_KEYS = new Set([
   'low_pressure_switch', 'high_pressure_switch', 'leak_detected',
   'motor_overcurrent', 'temp_rising', 'greasing_overdue',
@@ -80,7 +80,7 @@ const _ABNORMAL_BOOL_KEYS = new Set([
   'balance_ok',
 ]);
 
-// F5: Numeric thresholds for abnormal values { key: { max?, min?, equals?, suffix? } }
+// Numeric thresholds for abnormal values { key: { max?, min?, equals?, suffix? } }
 const _ABNORMAL_THRESHOLDS = {
   charge_pct:       { max: 70, suffix: '%' },
   soh_pct:          { max: 60, suffix: '%' },
@@ -142,7 +142,7 @@ function renderEvidencePlain(payload) {
   }).join('') + `</div>`;
 }
 
-// F7: Track whether auto-seed has already run this session
+// Track whether auto-seed has already run this session
 let _autoSeeded = false;
 
 // ═══════════════════════════════════════════════════════════
@@ -260,7 +260,7 @@ export function renderDashboard(el, state, h) {
       const snapshots = await Promise.all(ids.map(id => api.get(`/cases/${id}`).catch(() => null)));
       const cases = snapshots.filter(s => s);
 
-      // F7: Auto-seed 3 demo cases on first dashboard load if empty
+      // Auto-seed 3 demo cases on first dashboard load if empty
       if (!cases.length && !_autoSeeded) {
         _autoSeeded = true;
         showToast('Auto-seeding demo cases…', 'info');
@@ -649,7 +649,7 @@ export function renderDiagnosis(el, state, h) {
         };
       }
 
-      // F5: Wire evidence toggle button
+      // Wire evidence toggle button
       const evToggleBtn = document.getElementById('btn-ev-toggle');
       if (evToggleBtn) {
         evToggleBtn.onclick = () => {
@@ -1191,7 +1191,7 @@ export function renderGovernance(el, state, h) {
   }
 
   // Re-run diagnosis on similar still-open cases after a proposal approves
-  // (Phase 3: "confidence the KB can move" — show the before/after, live).
+  // so the before/after confidence is visible live.
   async function loadRerunCandidates(cause, assetType) {
     const card = document.getElementById('rerun-card');
     const body = document.getElementById('rerun-body');
@@ -1254,7 +1254,7 @@ export function renderGovernance(el, state, h) {
       `);
       const dist = stats.cause_distribution || stats.causes || {};
       const priors = stats.cause_priors || {};
-      // F6: fall back to cause_priors ({cause: {confirmed, total, rate}})
+      // fall back to cause_priors ({cause: {confirmed, total, rate}})
       // when the API doesn't return a flat cause_distribution dict
       const entries = Object.keys(dist).length
         ? Object.entries(dist)

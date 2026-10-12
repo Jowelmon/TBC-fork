@@ -1,4 +1,4 @@
-"""Mock extractor precision: the judge's mis-tagging and under-suppression gaps.
+"""Mock extractor precision: no mis-tagged causes, no under-suppressed denials.
 
 Covers the two behaviours that sentence-wide keyword matching cannot get
 right, and that the previous (sentence-scoped) negation fix traded between:

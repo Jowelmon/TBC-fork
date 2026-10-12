@@ -294,9 +294,8 @@ def eval_13(client):
     snap = _create_and_advance(client)
     second = _create_and_advance(client)
 
-    # Runtime edit on disk while the process is live -- exactly what the judge
-    # does to data/tbc.sqlite -- but now it cannot be swept away by the
-    # graceful-shutdown autosave (the round-2 "quietly overwrites" finding).
+    # Runtime edit to data/tbc.sqlite while the process is live: it must not
+    # be swept away by the graceful-shutdown autosave.
     conn = sqlite3.connect(db)
     (blob,) = conn.execute("SELECT blob FROM snapshots WHERE key='cases'").fetchone()
     data = pickle.loads(blob)

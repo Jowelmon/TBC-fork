@@ -145,7 +145,7 @@ make demo
 make serve
 ```
 
-### Option C - Frontend Demo UI (what judges should run)
+### Option C: Demo UI (recommended)
 
 ```bash
 pip install -r requirements.txt
@@ -201,7 +201,7 @@ snapshots.
 | `GET` | `/cases/{id}/work-order` | Retrieve work order status |
 | `POST` | `/cases/{id}/work-order` | Create + acknowledge work order (requires prior approval) |
 | `POST` | `/cases/{id}/outcome` | Record observed outcome |
-| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal (F2) |
+| `POST` | `/cases/{id}/feedback` | Submit feedback → creates pending proposal |
 | `GET` | `/kb/stats` | Knowledge-base statistics (case count, cause priors, pending proposals) |
 | `GET` | `/kb/queue` | List pending knowledge proposals (steward/admin only) |
 | `POST` | `/kb/proposals/{id}/approve` | Approve a proposal → ingests into KB, bumps version (steward/admin) |
@@ -359,10 +359,10 @@ before/after confidence.
 | `MIN_RECO_CONFIDENCE` | 0.55 | `DIAGNOSING → RECOMMENDING` requires `confidence ≥` this |
 | `ESCALATE_CONFIDENCE` | 0.35 | `confidence <` this → `ESCALATED` (no recommendation, G4) |
 
-## Closed-Loop Learning (F2: Proposal Workflow)
+## Closed-Loop Learning: Proposal Workflow
 
 The system improves itself through a **feedback → proposal → steward approval → KB
-write-back** loop (spec §7, enhanced in F2):
+write-back** loop (spec §7):
 
 ```
   diagnosis ──▶ human feedback ──▶ pending proposal ──▶ steward review
@@ -528,27 +528,29 @@ make eval         # = PYTHONPATH=. python3 tests/evals/run_evals.py
 ```
 
 **133 tests** (verified with `make test`; this count is a snapshot — run the
-command for the current number) across spec acceptance cases, F1-F3
+command for the current number) across spec acceptance cases,
 governance, identity, confidence, contrast/accessibility, and no-contradiction
 checks:
 
 | File | Covers |
 |---|---|
 | `test_agent_state.py` | Core state-machine lifecycle, illegal transitions, guardrails G1/G5/G7/G8, audit tamper detection, multi-asset decision trees |
-| `test_f1_escalation_api.py` | F1: G3 cross-domain escalation via the real API path |
-| `test_f2_proposals.py` | F2: proposal workflow — pending → approve/reject → KB write-back → rollback, self-approval blocked, RBAC |
-| `test_f3_refrigerant_leak.py` | F3: G2b forces `AWAITING_APPROVAL` (not escalate) for a safety-critical-but-actionable cause |
+| `test_f1_escalation_api.py` | G3 cross-domain escalation via the real API path |
+| `test_f2_proposals.py` | Proposal workflow — pending → approve/reject → KB write-back → rollback, self-approval blocked, RBAC |
+| `test_f3_refrigerant_leak.py` | G2b forces `AWAITING_APPROVAL` (not escalate) for a safety-critical-but-actionable cause |
 | `test_rbac_caps.py` | Declared vs. enforced RBAC capabilities |
 | `test_capture.py`, `test_capture_review.py` | Expert capture: grounding, cause filing by owning pill, the four-step review flow |
 | `test_adp_client.py` | ADP v2 SSE client against a simulated event stream |
 | `test_kb_version_label.py`, `test_persistence.py` | KB version display; state survives a restart |
-| `test_ai_second_opinion.py` | Phase 1: AI second opinion agree/disagree (G9), timeout/malformed fallback is audited, injected tag redaction, non-candidate cause rejection |
-| `test_identity.py` | Phase 2: signed cookie beats a spoofed `?user=` (including on writes), tampered cookie rejected, insecure-mode fallback |
-| `test_confidence_uplift.py`, `test_rerun_diagnosis.py` | Phase 3: approving validated feedback raises the next identical case's confidence by ≥0.05, rollback restores it exactly, non-destructive re-run preview |
-| `test_no_contradictions.py` | Phase 4: no developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
-| `test_contrast.py` | Phase 5: every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
-| `test_pill_registry.py` | Phase 6: `/pills` lists all four pills with the right owner and a real approval rate |
-| `test_judge_fixes.py` | Rollback int/label reconciliation (`/kb/versions`), new condenser-fouling/cavitation assets reachable, rollback RBAC |
+| `test_ai_second_opinion.py` | AI second opinion agree/disagree (G9), timeout/malformed fallback is audited, injected tag redaction, non-candidate cause rejection |
+| `test_identity.py` | Signed cookie beats a spoofed `?user=` (including on writes), tampered cookie rejected, insecure-mode fallback |
+| `test_confidence_uplift.py`, `test_rerun_diagnosis.py` | Approving validated feedback raises the next identical case's confidence by ≥0.05, rollback restores it exactly, non-destructive re-run preview |
+| `test_no_contradictions.py` | No developer jargon ships, no diagnosis ≠ a confidence band, escalated cases never carry an actionable recommendation |
+| `test_contrast.py` | Every text/background pair ≥ 4.5:1 in both themes, parsed from the actual CSS tokens |
+| `test_pill_registry.py` | `/pills` lists all four pills with the right owner and a real approval rate |
+| `test_kb_versions_and_assets.py` | Rollback int/label reconciliation (`/kb/versions`), condenser-fouling/cavitation assets reachable, rollback RBAC |
+| `test_extractor_hazard_and_unknown_asset.py`, `test_mock_extractor_precision.py` | Capture extractor ignores causes the expert rules out; G2b hazard reaches the AOM Decision screen; unknown asset escalates via G5 |
+| `test_integrity_persistence.py` | Tamper evidence survives clean restarts and runtime edits; `/system/integrity` is RBAC-gated |
 
 **`make eval`** runs 12 labelled acceptance evals (`EVAL-01`..`EVAL-12`) as a
 pass/fail table, independent of the pytest suite: ADP call shape, AI cannot
@@ -597,29 +599,30 @@ technical_services_pill/
 
 tests/
 ├── test_agent_state.py          # Core lifecycle, guardrails, audit tamper detection
-├── test_f1_escalation_api.py    # F1: G3 escalation via real API path
-├── test_f2_proposals.py         # F2: proposal workflow (approve/reject/rollback/RBAC)
-├── test_f3_refrigerant_leak.py  # F3: G2b safety-approval guardrail
+├── test_f1_escalation_api.py    # G3 escalation via real API path
+├── test_f2_proposals.py         # Proposal workflow (approve/reject/rollback/RBAC)
+├── test_f3_refrigerant_leak.py  # G2b safety-approval guardrail
 ├── test_rbac_caps.py            # RBAC capability enforcement
 ├── test_capture.py / test_capture_review.py  # Expert capture grounding + review flow
 ├── test_adp_client.py           # ADP v2 SSE client (simulated stream)
 ├── test_kb_version_label.py / test_persistence.py
-├── test_ai_second_opinion.py    # Phase 1: AI second opinion, G9
-├── test_identity.py             # Phase 2: signed-cookie identity
-├── test_confidence_uplift.py / test_rerun_diagnosis.py  # Phase 3: confidence the KB can move
-├── test_no_contradictions.py    # Phase 4: no on-screen contradictions
-├── test_contrast.py             # Phase 5: WCAG contrast, both themes
-├── test_pill_registry.py        # Phase 6: /pills
-├── test_judge_fixes.py          # Rollback UI/label reconciliation, new asset fixtures
+├── test_ai_second_opinion.py    # AI second opinion, G9
+├── test_identity.py             # Signed-cookie identity
+├── test_confidence_uplift.py / test_rerun_diagnosis.py  # Confidence the KB can move
+├── test_no_contradictions.py    # No on-screen contradictions
+├── test_contrast.py             # WCAG contrast, both themes
+├── test_pill_registry.py        # /pills
+├── test_kb_versions_and_assets.py  # Rollback UI/label reconciliation, asset fixtures
+├── test_extractor_hazard_and_unknown_asset.py / test_mock_extractor_precision.py
+├── test_integrity_persistence.py    # Tamper evidence survives restarts
 └── evals/run_evals.py           # EVAL-01..12, `make eval`
 
 docs/
 ├── ADP_SETUP.md             # Tencent ADP agent configuration
 ├── IMPLEMENTATION_PATH.md   # Pilot / production / scale, what's real vs. stubbed
-└── JUDGE_REPORT_*.md        # Independent judge regrades (Part C), scores never edited
+└── SOLUTION_DIAGRAM.md      # Solution diagram and the 8 required points
 
 DEMO.md                   # 6-minute click-through script
-api_preview.html          # Self-contained API explorer (open in browser)
 requirements.txt          # Runtime dependencies
 Dockerfile                # python:3.11-slim, exposes :8000
 docker-compose.yml        # API + demo services
