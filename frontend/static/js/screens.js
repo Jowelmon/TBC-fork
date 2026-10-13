@@ -1284,12 +1284,15 @@ export function renderDecision(el, state, h) {
         };
       }
 
-      function showModifyForm() {
+      async function showModifyForm() {
+        let types = [];
+        try { types = (await api.get('/actions/types')).action_types; } catch (e) { /* the server still checks */ }
+        const current = ((s.recommendation || {}).actions || [])[0] || {};
         setHTML('decision-form', `
           <div class="form-group"><label for="rat-text">Rationale (required for modify)</label><textarea id="rat-text" placeholder="Explain the modification..."></textarea></div>
-          <p class="muted" style="margin-bottom:8px">Your action is recorded as yours, not as approved knowledge. It is checked like the agent's: no setpoint, interlock or safety change, and nothing that defeats a protection.</p>
+          <p class="muted" style="margin-bottom:8px">Your action is recorded as yours and cites no knowledge. Pick the kind of work from the agent's own list. Anything touching a protection, alarm, setpoint or control setting, or live working, is refused: reject instead and raise it through the site's engineering change process.</p>
           <div class="grid-2">
-            <div class="form-group"><label for="mod-type">Modified Action Type</label><input id="mod-type" type="text" placeholder="e.g. sensor_replacement"></div>
+            <div class="form-group"><label for="mod-type">Modified Action Type</label><select id="mod-type">${types.map(t => `<option value="${esc(t)}"${t === current.type ? ' selected' : ''}>${esc(plain(t))}</option>`).join('')}</select></div>
             <div class="form-group"><label for="mod-target">Modified Action Target</label><input id="mod-target" type="text" placeholder="e.g. CRAH-DC1-01 / SA-TEMP-01"></div>
           </div>
           <div class="form-group"><label for="mod-detail">Modified Action Detail</label><input id="mod-detail" type="text" placeholder="e.g. Replace supply-air RTD sensor"></div>

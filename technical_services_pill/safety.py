@@ -156,7 +156,7 @@ _INSTRUCTION = [
 # Deny by default: anything that names a protective device or the
 # monitoring that feeds one is held for a person to review.
 _PROTECTION = re.compile(
-    r"\b(?:alarm\w*|trip(?:s|ped|ping)?|cut-?outs?|interlocks?|relays?|overloads?|fuses?|"
+    r"\b(?:alarm\w*|trip(?:s|ped|ping)?|cut[- ]?outs?|interlocks?|relays?|overloads?|fuses?|"
     r"breakers?|protect(?:ion|ions|ive)|relief\s+valves?|e-?stops?|emergency\s+stops?|"
     r"(?:pressure|hp|lp|flow|float|level|limit|door|thermal|safety)\s+switch(?:es)?|"
     r"(?:leak|smoke|fire|gas|water)[- ]?detect\w*|set\s?points?|"
@@ -228,3 +228,26 @@ def said_as_prohibition(line: str, answer: str) -> bool:
     # words may sit between the prohibition and the line.
     return at > 0 and bool(re.search(r"\b(?:never|don'?t|do\s+not|must\s+not)(?:\s+[\w']+){0,3}\s*$",
                                      low_answer[:at]))
+
+
+# Words that change how equipment is controlled or protected, or say the
+# work is done live. Knowledge naming them goes to a steward's review; an
+# action a person types into a work order has no reviewer after them, so
+# for that it is a refusal.
+_CONTROL_CHANGE = re.compile(
+    r"\b(?:overrid\w*|overrode|inhibit\w*|suppress\w*|by-?pass\w*|disabl\w*|jumper\w*|"
+    r"forc(?:e|es|ed|ing)\b|set[- ]?points?|settings?|firmware|bms\s+config\w*|"
+    r"without\s+(?:first\s+)?(?:isolat\w*|lock\w*|proving|making\s+(?:it\s+)?safe)|"
+    r"energi[sz]ed|(?:hot|live)[- ](?:work\w*|swap\w*)|work\w*\s+(?:hot|live)|"
+    r"while\s+(?:it'?s\s+|it\s+is\s+|still\s+)?(?:live|energi[sz]ed|running|on\s+load))",
+    re.IGNORECASE,
+)
+
+
+def needs_change_process(text: str) -> bool:
+    """True if a hand-written work-order action touches a protection, a
+    setpoint or control setting, or live working, in any clause that is not
+    a prohibition. Deny by default: the AOM rejects the recommendation and
+    raises it through the site's engineering change process instead."""
+    return defeats_safety(text) or touches_protection(text) or any(
+        _CONTROL_CHANGE.search(part) for part in _open_clauses(text))

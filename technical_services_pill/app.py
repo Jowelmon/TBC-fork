@@ -841,21 +841,28 @@ def post_approval(
                 400,
                 "modify requires modified_action_type and modified_action_target",
             )
+        from .decision_tree import ACTION_TYPES
         from .guardrails import _is_banned_action
         from .models import RecommendationAction
-        from .safety import defeats_safety
+        from .safety import needs_change_process
 
-        # G1 applies to a person's action exactly as to the agent's: no
-        # setpoint, interlock or safety change, and nothing that defeats a
-        # protective device, reaches a work order. That needs an engineer
-        # and the site's change process, not a modified recommendation.
-        text = f"{modified_action_type} {modified_action_target} {modified_action_detail or ''}"
-        if _is_banned_action(modified_action_type, f"{modified_action_target} {modified_action_detail or ''}") \
-                or defeats_safety(text):
+        # G1 applies to a person's action as to the agent's, and harder: the
+        # agent's actions come from reviewed decision trees, a typed one has
+        # no reviewer after the AOM. So the kind of work is picked from the
+        # agent's own catalogue, and any wording that touches a protection,
+        # a setpoint or control setting, or live working is refused rather
+        # than matched against a list of known bad phrasings.
+        if modified_action_type not in ACTION_TYPES:
             raise HTTPException(
-                400, "[G1] the modified action would change a BMS setpoint, interlock or safety "
-                     "device, or defeat a protection; that cannot become a work order. Reject the "
-                     "recommendation and raise it through the site's engineering change process")
+                400, f"[G1] {modified_action_type!r} is not an action the agent can recommend; "
+                     "pick one of: " + ", ".join(ACTION_TYPES))
+        text = f"{modified_action_target} {modified_action_detail or ''}"
+        if _is_banned_action(modified_action_type, text) or needs_change_process(text):
+            raise HTTPException(
+                400, "[G1] the modified action touches a protection, alarm, setpoint or control "
+                     "setting, or live working; a hand-written action cannot put that on a work "
+                     "order. Reject the recommendation and raise it through the site's "
+                     "engineering change process")
         modified_actions = [
             RecommendationAction(
                 type=modified_action_type,
@@ -887,13 +894,14 @@ def post_approval(
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     if dec == HumanDecision.MODIFY:
-        # apply the manager's modified action set while preserving G8
-        # grounding metadata (kb_refs / evidence_refs) from the original
-        # recommendation so the audit trail stays fully grounded.
+        # The AOM's action replaces the agent's. It cites no knowledge (it
+        # was not drawn from any); the evidence the case holds still stands.
+        # The agent's actions and their citations stay on the decision
+        # record as original_actions.
         orig = state.recommendation
         state.recommendation = Recommendation(
             actions=modified_actions or [],
-            kb_refs=list(orig.kb_refs) if orig and orig.kb_refs else [],
+            kb_refs=[],
             evidence_refs=list(orig.evidence_refs) if orig and orig.evidence_refs else [],
         )
         state._record_note(actor=user, reason="modified action set applied to the recommendation "
@@ -1134,6 +1142,15 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
             "approval_rate": round(len(approved) / len(decided), 3) if decided else None,
         })
     return {"pills": pills}
+
+
+@app.get("/actions/types")
+def list_action_types(user: str = Depends(resolve_user)) -> dict:
+    """The kinds of work the agent can recommend; an AOM's modification picks one."""
+    _need(user, "view_case")
+    from .decision_tree import ACTION_TYPES
+
+    return {"action_types": list(ACTION_TYPES)}
 
 
 @app.get("/system/info")

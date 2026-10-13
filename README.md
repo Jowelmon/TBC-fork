@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (387 tests) |
+| `make test` | pytest suite (402 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -102,7 +102,7 @@ person or a work order):
 
 | Rule | Trigger | Action |
 |---|---|---|
-| G1 | Recommendation (the agent's, or an AOM's Modify) touches a BMS setpoint, interlock, safety system or firmware, or defeats a protection | Block and escalate (a Modify is refused) |
+| G1 | Recommendation (the agent's, or an AOM's Modify) touches a BMS setpoint, interlock, safety system or firmware, or defeats a protection | Block and escalate. A Modify is held to more: its kind of work comes from the agent's own action list, and any wording that names a protection, alarm, setpoint or control setting, or live working, is refused (deny by default, not a list of bad phrasings). It cites no knowledge, and the sentinel re-checks it |
 | G2 | Safety-critical fault (cooling lost and temperature rising) | Escalate |
 | G2b | Environmental/pressure hazard (e.g. refrigerant leak), or hazardous readings whatever the cause (a battery at 40 °C or more and still rising) | Approval with a hazard acknowledgement |
 | G3 | Cause belongs to another pill's domain | Coordinate and escalate |

@@ -122,6 +122,19 @@ def find_evidence(
     return None
 
 
+# Every action the agent can recommend. An AOM's modification picks one of
+# these: a person can change what is done and where, but cannot invent a new
+# kind of work that no guardrail was written for.
+ACTION_TYPES: tuple[str, ...] = (
+    "battery_replacement", "bearing_replacement", "charger_repair", "compressor_overhaul",
+    "condenser_cleaning", "config_remap", "controller_inspection", "ground_fault_locate",
+    "grouting_retorque", "impeller_balance_clean", "inverter_repair", "laser_realign",
+    "leak_inspection_repair", "npsh_review_throttle", "onsite_diagnostic", "onsite_inspection",
+    "path_restore", "refrigerant_topup", "sensor_inspection", "sensor_recalibration",
+    "sensor_replacement", "starter_replacement", "thermal_shutdown_inspect",
+)
+
+
 def _merge_kb_refs(base: str, supporting: list[EvidenceItem]) -> list[str]:
     """Union of a base ref and all kb_refs on the supporting evidence items."""
     refs: list[str] = [base]
