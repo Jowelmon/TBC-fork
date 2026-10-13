@@ -2060,7 +2060,7 @@ export function renderGovernance(el, state, h) {
     try {
       const { entries, chain_valid } = await api.get('/kb/ledger');
       setHTML('ledger-status', chain_valid ? '<span class="badge badge-green">Ledger verified</span>' : '<span class="badge badge-red">Ledger FAILED verification</span>');
-      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_rejected: 'Rejected', proposal_revoked: 'Revoked', rollback: 'Rollback', seeded: 'Seeded', integrity_review: 'Integrity review' };
+      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_signed_off: 'Signed off (one pill)', proposal_rejected: 'Rejected', proposal_revoked: 'Revoked', rollback: 'Rollback', seeded: 'Seeded', integrity_review: 'Integrity review' };
       setHTML('ledger-body', !entries.length
         ? '<p class="muted">No governance actions yet.</p>'
         : `<p class="muted" style="margin-bottom:8px">Every proposal, approval, rejection, rollback and integrity review, with who did it and why. Keyed hash chain: editing any entry breaks verification.</p>

@@ -147,11 +147,12 @@ shown above it. Then open the seeded **UPS-DC1-01** case. The evidence
 genuinely conflicts: the bank is past its five-year design life, so the
 rules say battery end of life (replace the bank), but the charger has
 failed with no charge current, which on its own explains a low battery.
-Read out what the second opinion says: the offline mock says "charger
-failure", and Tencent Cloud ADP has a real reason to say the same. Any
-disagreement is recorded as **G9** and the case still goes to the AOM: the
-AI informs the decision (fix the charger before buying a bank), it never
-makes or blocks it. The AOM can **Modify** the action.
+Read out what the second opinion says. The offline mock says "charger
+failure"; on Tencent Cloud ADP it usually agrees with the rules, so point
+at the evidence it lists as conflicting and what it says would help,
+rather than promise a disagreement. When it does disagree, that is recorded as **G9** and the
+case still goes to the AOM: the AI informs the decision, it never makes or
+blocks it. The AOM can **Modify** the action.
 
 For contrast, open **UPS-DC1-02**: cells at 41 °C and still rising. Safety
 comes first in the rules, not the AI: the tree diagnoses thermal runaway
@@ -235,7 +236,7 @@ it with a reason.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 374
+**If asked "is any of this real?"** — `make test` (pytest, currently 405
 tests), `make eval` (13 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires
