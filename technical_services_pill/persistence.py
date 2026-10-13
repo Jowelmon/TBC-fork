@@ -369,7 +369,7 @@ def restore_verified_learning(path: Path | None = None) -> None:
     if not learning.STORE.verify_ledger():
         _apply_learning(current)
         raise ValueError("the last verified knowledge snapshot no longer verifies either; "
-                         "accept or restore from an offline backup")
+                         "compare it with the archived copies listed under Integrity events before deciding to accept")
 
 
 def load_state(path: Path | None = None) -> dict[str, Any]:

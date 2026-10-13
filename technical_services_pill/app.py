@@ -1539,8 +1539,12 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
 
 
 @app.post("/kb/proposals/{proposal_id}/revoke")
-def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(resolve_user)) -> dict:
-    """Withdraw one approved proposal's knowledge, leaving everything else."""
+def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(resolve_user),
+                    pills: str | None = None) -> dict:
+    """Withdraw one approved proposal's knowledge, leaving everything else.
+
+    ``pills`` (comma-separated) withdraws only that part of a proposal filed
+    under several pills, so each pill's steward can withdraw their own."""
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
     from .rbac import Role
@@ -1555,13 +1559,19 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
         from .learning import proposal_pills
 
         p = _LSTORE.find_proposal(proposal_id)
-        others = [x for x in proposal_pills(p) if not _decides_pill(x, user, p.get("submitted_by"))] if p else []
+        scope = wanted if (wanted := [x.strip() for x in (pills or "").split(",") if x.strip()]) \
+            else (proposal_pills(p) if p else [])
+        others = [x for x in scope if not _decides_pill(x, user, p.get("submitted_by"))] if p else []
         if others:
+            mine = [x for x in proposal_pills(p) if _decides_pill(x, user, p.get("submitted_by"))]
             raise HTTPException(
-                403, f"this knowledge also covers {', '.join(others)}, which {user} does not decide; "
-                     "its owning steward or an admin revokes it")
+                403, f"{user} does not decide {', '.join(others)}; that part is for its own steward "
+                     "(or an admin) to withdraw"
+                     + (f". You can withdraw your part: {', '.join(mine)}" if mine else ""))
     try:
-        return _LSTORE.revoke_proposal(proposal_id, actor=user, reason=reason)
+        return _LSTORE.revoke_proposal(
+            proposal_id, actor=user, reason=reason,
+            pills=[x.strip() for x in pills.split(",") if x.strip()] if pills else None)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 

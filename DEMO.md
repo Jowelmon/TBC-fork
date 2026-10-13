@@ -72,7 +72,9 @@ again on the server when the draft is sent, so it cannot become knowledge.
 **Say:** "The AI drafts; a human reviews every item before it goes
 anywhere."
 
-**Do:** Walk through the reviewed heuristics — toggle one off, note the
+**Do:** Walk through the reviewed heuristics — you can toggle one off, but keep the
+pump "shaft misalignment" and CRAH "sensor hardware failure" ones (beats 5 and 6
+reuse them) — note the
 cause-correction dropdown and the "Files under" pill chip. Every check,
 "never" and "escalate when" line is the expert's own words from the same
 answer; anything else, or anything telling someone to bypass a safety
@@ -152,7 +154,7 @@ failure"; on Tencent Cloud ADP it usually agrees with the rules, so point
 at the evidence it lists as conflicting and what it says would help,
 rather than promise a disagreement. When it does disagree, that is recorded as **G9** and the
 case still goes to the AOM: the AI informs the decision, it never makes or
-blocks it. The AOM can **Modify** the action.
+blocks it. The AOM can **Modify** the action by picking another of the procedures this fault's tree can recommend; no typed text reaches the work order.
 
 For contrast, open **UPS-DC1-02**: cells at 41 °C and still rising. Safety
 comes first in the rules, not the AI: the tree diagnoses thermal runaway
@@ -236,7 +238,7 @@ it with a reason.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 405
+**If asked "is any of this real?"** — `make test` (pytest, currently 571
 tests), `make eval` (13 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

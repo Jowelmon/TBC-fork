@@ -12,7 +12,7 @@ const STEPS = [
     title: 'Harvest tacit knowledge',
     role: 'steward1', screen: 'capture',
     say: 'A knowledge steward interviews an experienced technician. The AI model drafts structured heuristics from the transcript: symptom, likely cause, what to check, what never to do, when to escalate.',
-    notice: 'Click "Load sample interview" then "Draft knowledge with AI". Every heuristic sits beside the expert\'s own words; anything they did not say is dropped. Untick one heuristic, then "Send for steward approval". Chiller knowledge from a CRAH interview is filed under the Chiller pill.',
+    notice: 'Click "Load sample interview" then "Draft knowledge with AI". Every heuristic sits beside the expert\'s own words; anything they did not say is dropped. You can untick a heuristic, but keep the pump misalignment and CRAH sensor ones (later steps reuse them), then "Send for steward approval". Chiller knowledge from a CRAH interview is filed under the Chiller pill.',
   },
   {
     title: 'Nobody approves their own change',
@@ -127,15 +127,22 @@ export function initGuide({ api, navigate, setRole, showToast }) {
 
   async function go() {
     const s = STEPS[idx];
-    await setRole(s.role);
+    if (!(await setRole(s.role, { render: false }))) return;
     let caseId = null;
     if (s.newCase) {
       // Raise a fresh alarm so the diagnosis uses today's knowledge base.
+      // The AI second opinion makes this take a few seconds: say so.
+      const btns = [...panel.querySelectorAll('#guide-go, #guide-next')];
+      btns.forEach(b => { b.disabled = true; b.setAttribute('aria-busy', 'true'); });
+      const goBtn = panel.querySelector('#guide-go');
+      if (goBtn) goBtn.textContent = 'Raising the case…';
+      showToast(`Raising a new ${s.asset} case and diagnosing it…`, 'success');
       try {
         const r = await api.post('/cases', { asset_id: s.asset, ...s.newCase });
         await api.post(`/cases/${r.case_id}/advance`);
         caseId = r.case_id;
       } catch (e) { showToast(`Could not raise the case: ${e.message}`, 'error'); }
+      finally { render(); }
     } else if (s.asset) {
       try { caseId = await findCaseId(api, s.asset); } catch (_) { /* fall through */ }
       if (!caseId) { showToast(`No ${s.asset} case yet. Switch to admin1 and click Seed Demo Cases on the Dashboard.`, 'error'); navigate('dashboard'); return; }
