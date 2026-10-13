@@ -83,3 +83,57 @@ def test_confidence_preview_requires_a_resolvable_diagnosis(client: TestClient):
     case_id = resp.json()["case_id"]  # not yet advanced -> no diagnosis
     resp = client.get(f"/cases/{case_id}/confidence-preview", params={"user": "tech1"})
     assert resp.status_code == 409
+
+
+def test_preview_shows_only_the_knowledges_effect_not_evidence_ageing(client: TestClient):
+    """Re-running right after an approval must not show a drop caused by the
+    evidence getting older since the case was scored."""
+    from datetime import timedelta
+
+    from technical_services_pill import store
+
+    case = _create_and_advance(client)
+    state = store.STORE.get(case["case_id"])
+    saved = [ev.retrieved_at for ev in state.evidence]
+    for ev in state.evidence:
+        ev.retrieved_at = ev.retrieved_at - timedelta(hours=6)
+    try:
+        body = client.get(f"/cases/{case['case_id']}/confidence-preview",
+                          params={"user": "tech1"}).json()
+    finally:
+        for ev, at in zip(state.evidence, saved):
+            ev.retrieved_at = at
+    assert body["kb_match_after"] == body["kb_match_before"]
+    assert body["after"] == pytest.approx(body["before"])
+    # The ageing is still reported, on its own.
+    assert body["evidence_age_effect"] < 0
+
+
+def test_a_sensor_not_on_the_asset_is_refused(client: TestClient):
+    """BOGUS-99 must not borrow SA-TEMP-01's readings as its evidence."""
+    resp = client.post("/cases", params={
+        "asset_id": "CRAH-DC1-01", "sensor_id": "BOGUS-99", "user": "tech1",
+        "observation_type": "temperature_measurement_missing", "reading_status": "absent"})
+    assert resp.status_code == 400
+    assert "SA-TEMP-01" in resp.json()["detail"]
+
+
+def test_evidence_comes_from_the_sensor_the_case_names(client: TestClient):
+    from technical_services_pill import store
+
+    cid = client.post("/cases", params={
+        "asset_id": "CRAH-DC1-01", "sensor_id": "RA-TEMP-01", "user": "tech1",
+        "observation_type": "temperature_measurement_missing", "reading_status": "absent"}).json()["case_id"]
+    ids = {str(ev.payload.get("sensor_id")) for ev in store.STORE.get(cid).evidence
+           if isinstance(ev.payload, dict) and ev.payload.get("sensor_id")}
+    assert ids and "SA-TEMP-01" not in ids
+
+
+@pytest.mark.parametrize("reviewer", ["auditor1", "steward1"])
+def test_reviewers_cannot_open_or_drive_a_case(client: TestClient, reviewer):
+    params = {"asset_id": "CRAH-DC1-01", "sensor_id": "SA-TEMP-01",
+              "observation_type": "temperature_measurement_missing", "reading_status": "absent"}
+    assert client.post("/cases", params={**params, "user": reviewer}).status_code == 403
+    cid = client.post("/cases", params={**params, "user": "tech1"}).json()["case_id"]
+    assert client.post(f"/cases/{cid}/advance", params={"user": reviewer}).status_code == 403
+    assert client.post(f"/cases/{cid}/advance", params={"user": "tech1"}).status_code == 200

@@ -255,7 +255,8 @@ def eval_11(client):
         "mgr1": {"view_case": True, "approve_reject_modify": True, "submit_feedback": True},
         "steward1": {"approve_knowledge_version": True, "approve_reject_modify": False},
         "auditor1": {"read_audit_trail": True, "approve_reject_modify": False},
-        "admin1": {"approve_reject_modify": True, "approve_knowledge_version": True, "read_audit_trail": True},
+        "admin1": {"approve_reject_modify": False, "review_audit_integrity": False,
+                   "approve_knowledge_version": True, "read_audit_trail": True},
     }
     for user_id, caps in expectations.items():
         role = DEMO_USERS[user_id].role

@@ -122,6 +122,19 @@ def find_evidence(
     return None
 
 
+# Every action the agent can recommend. An AOM's modification picks one of
+# these: a person can change what is done and where, but cannot invent a new
+# kind of work that no guardrail was written for.
+ACTION_TYPES: tuple[str, ...] = (
+    "battery_replacement", "bearing_replacement", "charger_repair", "compressor_overhaul",
+    "condenser_cleaning", "config_remap", "controller_inspection", "ground_fault_locate",
+    "grouting_retorque", "impeller_balance_clean", "inverter_repair", "laser_realign",
+    "leak_inspection_repair", "npsh_review_throttle", "onsite_diagnostic", "onsite_inspection",
+    "path_restore", "refrigerant_topup", "sensor_inspection", "sensor_recalibration",
+    "sensor_replacement", "starter_replacement", "thermal_shutdown_inspect",
+)
+
+
 def _merge_kb_refs(base: str, supporting: list[EvidenceItem]) -> list[str]:
     """Union of a base ref and all kb_refs on the supporting evidence items."""
     refs: list[str] = [base]
@@ -496,7 +509,10 @@ def _eval_chiller_compressor_trip(
 # (cause ids declared at the top of the module)
 
 _KB_REF_UPS = "kb:technical_services:ups_tree:v1"
-_UPS_THERMAL_ESCALATE_C = 45  # 【ASSUMPTION】 cell temp threshold for runaway risk
+# 【ASSUMPTION】 VRLA cells are rated around 20-25 °C; at 40 °C and still rising
+# the bank is treated as heading for thermal runaway (same line as the G2b
+# hazard read from evidence, guardrails.BATTERY_TEMP_HIGH_C).
+_UPS_THERMAL_ESCALATE_C = 40
 _UPS_SOH_FLOOR = 60  # 【ASSUMPTION】 state-of-health % below which = EoL
 _UPS_AGE_MONTHS_EOL = 60  # 【ASSUMPTION】 5-year design life
 
@@ -505,7 +521,8 @@ def _thermal_runaway_risk(supporting: list[EvidenceItem]) -> DecisionResult:
     return _make_result(
         CAUSE_THERMAL_RUNAWAY_RISK, "Thermal runaway risk (cell temp high + rising)",
         "thermal_shutdown_inspect", "battery_bank",
-        "Reduce float voltage, force-ventilate, isolate bank; safety-critical, do not attempt alone.",
+        "Isolate the battery bank and keep people clear, then force-ventilate the room; "
+        "reduce float voltage only under supervision. Safety-critical: never attempt alone.",
         f"{_KB_REF_UPS}:Q1", supporting,
     )
 

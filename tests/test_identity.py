@@ -173,3 +173,12 @@ def test_system_info_reports_demo_insecure_flag(secure_client: TestClient, monke
     monkeypatch.setenv("TBC_DEMO_INSECURE", "1")
     resp = secure_client.get("/system/info")
     assert resp.json()["demo_insecure"] is True
+
+
+def test_unlocked_list_is_empty_for_a_new_browser_and_never_401s():
+    from fastapi.testclient import TestClient
+
+    from technical_services_pill.app import app
+
+    r = TestClient(app).get("/login/unlocked")
+    assert r.status_code == 200 and r.json() == {"unlocked": []}

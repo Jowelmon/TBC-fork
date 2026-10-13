@@ -29,19 +29,28 @@ class CaseStore:
     def __init__(self) -> None:
         self._cases: dict[str, AgentState] = {}
         self.registry_seal: str | None = None
+        # Case ids the signed anchor outside the database recorded; any of
+        # them missing means an older copy of the database was put back.
+        self.anchor_cases: set[str] = set()
         self.reseal()
 
     def reseal(self) -> None:
         """Keyed seal over the set of case ids: deleting or inserting a case
-        outside the API no longer passes verification."""
+        outside the API no longer passes verification. An auditor's reseal
+        also accepts the case set as the new baseline."""
         from .audit import compute_hash
 
         self.registry_seal = compute_hash("registry", {"cases": sorted(self._cases)})
+        self.anchor_cases = set()
+
+    def missing_from_anchor(self) -> list[str]:
+        return sorted(self.anchor_cases - set(self._cases))
 
     def verify_registry(self) -> bool:
         from .audit import compute_hash
 
-        return self.registry_seal == compute_hash("registry", {"cases": sorted(self._cases)})
+        return (self.registry_seal == compute_hash("registry", {"cases": sorted(self._cases)})
+                and not self.missing_from_anchor())
 
     def _restore_from_snapshot(self, data: dict[str, Any]) -> AgentState:
         obs = Observation.model_validate(data["observation"])

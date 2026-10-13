@@ -72,7 +72,7 @@ def test_abnormal_fields_match_the_trees(payload, flagged, not_flagged):
 
 
 def test_case_snapshot_carries_abnormal_flags(client):
-    snap = _case(client, "CHILLER-DC1-02", "x", "chiller_compressor_trip")
+    snap = _case(client, "CHILLER-DC1-02", "CH2-COMP-PRESSURE", "chiller_compressor_trip")
     flags = {f for ev in snap["evidence"] for f in ev["abnormal"]}
     assert "approach_temp" in flags and "charge_pct" not in flags
 

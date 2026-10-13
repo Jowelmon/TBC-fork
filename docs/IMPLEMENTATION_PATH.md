@@ -37,8 +37,9 @@ overstates where the build actually is.
   (`gather_evidence_for_case`, `gather_evidence_for_fault`) are the seam:
   point them at a real BMS/historian API and nothing else in the
   diagnosis path changes.
-- `PILL_OWNERS` in `app.py` is a fixed two-steward assignment, not sourced
-  from a roster system.
+- `PILL_OWNERS` in `app.py` defaults to a two-steward assignment and is
+  configurable with `TBC_PILL_OWNERS`, but it is not sourced from a roster
+  system.
 - The six demo users (five roles) in `rbac.DEMO_USERS` are not a real identity
   provider; `auth.py`'s `/login` is the integration point for SSO.
 - `TBC_SECRET` auto-generates per process if unset — fine for a pilot
@@ -79,7 +80,7 @@ technical-services SMEs; SSO in place of the demo user list.
 - Extend `decision_tree.py` and `mock_registry.py`'s asset model to
   additional equipment types and sites (`site_id`, currently hardcoded
   to `DC-SINGAPORE-1` for every asset).
-- Replace the fixed `PILL_OWNERS` registry with real per-site/per-pill
+- Replace the env-configured `PILL_OWNERS` registry with real per-site/per-pill
   governance ownership, and extend RBAC (`rbac.py`) past the single-site
   five-role model if multiple sites need independent stewards.
 - Aggregate confidence/`kb_match` signals across sites so a validated

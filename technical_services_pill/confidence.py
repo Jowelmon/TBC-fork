@@ -91,10 +91,11 @@ def peer_agreement_from_registry(asset_id: str, sensor_id: str | None) -> float:
 def _staleness_from_age(evidence: list[EvidenceItem], *, now: datetime | None = None) -> float:
     """W4: how far evidence has drifted past its source's freshness SLA.
 
-    Uses each item's own ``retrieved_at`` against ``now`` — not a payload
-    flag nothing ever sets. In a live request this is ~0 (evidence is
-    gathered moments before scoring); it only bites when older evidence is
-    reused unchanged (e.g. re-scoring a case against today's KB).
+    Uses each item's own age against ``now``: the reading's timestamp
+    (payload ``ts``) when the source gives one, since a reading fetched just
+    now can still be days old, otherwise ``retrieved_at``. Fresh telemetry
+    scores ~0; it bites when a feed has stalled or older evidence is reused
+    unchanged (e.g. re-scoring a case against today's KB).
     """
     now = now or datetime.now(timezone.utc)
     worst = 0.0
@@ -103,6 +104,11 @@ def _staleness_from_age(evidence: list[EvidenceItem], *, now: datetime | None = 
         if sla <= 0:
             continue
         retrieved = ev.retrieved_at
+        try:
+            retrieved = min(retrieved if retrieved.tzinfo else retrieved.replace(tzinfo=timezone.utc),
+                            datetime.fromisoformat(str(ev.payload["ts"])))
+        except (KeyError, TypeError, ValueError):
+            pass
         if retrieved.tzinfo is None:
             retrieved = retrieved.replace(tzinfo=timezone.utc)
         age_minutes = (now - retrieved).total_seconds() / 60.0

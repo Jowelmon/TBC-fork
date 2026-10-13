@@ -169,3 +169,26 @@ def test_a_non_ascii_pin_is_a_failed_login_not_a_crash(monkeypatch):
     c = TestClient(app)
     assert c.post("/login", json={"user_id": "tech1", "pin": "１１１１"}).status_code == 401
     auth._failures.clear()
+
+
+def test_everyday_ways_to_defeat_a_protection_are_screened():
+    from technical_services_pill.safety import defeats_safety, touches_protection
+
+    for line in ("touch the two pins together on the pressure switch", "Tape over the buzzer",
+                 "Swap the fuse for a bigger one", "Hold the reset button down with a cable tie"):
+        assert defeats_safety(line), line
+    # Named but not defeated: held for the steward's safety review.
+    assert not defeats_safety("Swap the fuse for a 32 amp one")
+    assert touches_protection("Swap the fuse for a 32 amp one")
+    assert touches_protection("press the reset button once and watch it")
+    assert not defeats_safety("Never tape over the buzzer")
+
+
+def test_more_protections_are_screened():
+    from technical_services_pill.safety import defeats_safety, touches_protection
+
+    for line in ("disable the earth leakage relay", "pull the fuse on the leak alarm",
+                 "tape the float switch up", "Silence the VESDA"):
+        assert defeats_safety(line), line
+    assert touches_protection("put the UPS in maintenance bypass and swap the cells hot")
+    assert not defeats_safety("Never silence the VESDA")

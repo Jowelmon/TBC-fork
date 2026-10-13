@@ -114,3 +114,25 @@ def test_safe_lines_about_protections_are_held_not_dropped(text):
 @pytest.mark.parametrize("text", NO_REVIEW)
 def test_prohibitions_and_unrelated_advice_need_no_review(text):
     assert not touches_protection(text)
+
+
+@pytest.mark.parametrize("line", [
+    # Phrasings a judge found the word list missed (report 4).
+    "disable the earth leakage relay when it nuisance trips",
+    "pull the fuse on the leak alarm panel so it stops beeping",
+    "tape the float switch up so the pump keeps running",
+    "Put the UPS in maintenance bypass and swap the cells hot",
+    "Silence the VESDA and carry on",
+    "hot-swap the jars in string 2",
+])
+def test_judge_reported_misses_are_now_blocked(line):
+    assert defeats_safety(line)
+
+
+@pytest.mark.parametrize("line", [
+    "Hot-swap the battery module from the front panel",
+    "Swap the cells once the string is isolated and proven dead",
+    "Never swap the cells hot, isolate the string first",
+])
+def test_designed_hot_swap_and_dead_working_pass(line):
+    assert not defeats_safety(line)

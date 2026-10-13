@@ -25,7 +25,7 @@ def _create_and_advance(client: TestClient) -> dict:
     """Create CHILLER-DC1-01 case and advance it; return the advance response."""
     resp = client.post("/cases", params={
         "asset_id": "CHILLER-DC1-01",
-        "sensor_id": "CHILLER-DC1-01-s",
+        "sensor_id": "CH-COMP-PRESSURE",
         "user": "tech1",
         "observation_type": "chiller_compressor_trip",
         "reading_status": "absent",

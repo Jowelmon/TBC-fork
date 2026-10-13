@@ -110,8 +110,21 @@ def get_asset_profile(asset_id: str) -> dict | None:
     return profile
 
 
+def _as_live(reading: dict) -> dict:
+    """The mock is a fixed snapshot: re-anchor its timestamps to now, keeping
+    their spacing, so it reads like a live feed and W4 staleness measures
+    the reading's own age the way it would against a real BMS."""
+    if not reading.get("ts"):
+        return reading
+    shift = datetime.now(timezone.utc) - datetime.fromisoformat(reading["ts"])
+    for key in ("ts", "last_good_ts"):
+        if reading.get(key):
+            reading[key] = (datetime.fromisoformat(reading[key]) + shift).isoformat()
+    return reading
+
+
 def get_sensor_readings(asset_id: str, sensor_id: str, window: str = "1h") -> dict:
-    reading = dict(LIVE_READINGS.get(sensor_id, {}))
+    reading = _as_live(dict(LIVE_READINGS.get(sensor_id, {})))
     reading.setdefault("sensor_id", sensor_id)
     reading["window"] = window
     _log("get_sensor_readings", {"asset_id": asset_id, "sensor_id": sensor_id, "window": window}, reading)
@@ -236,7 +249,8 @@ def gather_evidence_for_case(asset_id: str, sensor_id: str) -> list[EvidenceItem
     return gathered
 
 
-def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceItem]:
+def gather_evidence_for_fault(asset_id: str, fault_type: str,
+                              sensor_id: str | None = None) -> list[EvidenceItem]:
     """Asset/fault-aware evidence gatherer (multi-asset generalisation).
 
     Routes by ``fault_type`` to the matching evidence contract. CRAH
@@ -247,11 +261,10 @@ def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceIt
     """
     # CRAH tree reuses the sensor-centric gatherer.
     if fault_type == "temperature_measurement_missing":
-        sensor_id = ""
-        for sid, s in SENSORS.items():
-            if s.get("asset_id") == asset_id:
-                sensor_id = sid
-                break
+        # The sensor the case was raised on; the asset's first sensor only
+        # when none was named.
+        if not (sensor_id and SENSORS.get(sensor_id, {}).get("asset_id") == asset_id):
+            sensor_id = next((sid for sid, s in SENSORS.items() if s.get("asset_id") == asset_id), "")
         return gather_evidence_for_case(asset_id, sensor_id)
 
     records = TELEMETRY.get(asset_id)

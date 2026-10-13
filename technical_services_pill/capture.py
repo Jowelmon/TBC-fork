@@ -81,7 +81,8 @@ def _closest_sentence(symptom: str, quote: str) -> str:
 
 
 def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
-                  warnings: list[str], rejected: list[dict[str, Any]]) -> list[str]:
+                  warnings: list[str], rejected: list[dict[str, Any]],
+                  transcript: str = "") -> list[str]:
     """Keep a check / never / escalate-when line only if the expert said it,
     word for word, in the same answer as the quote, and it does not tell
     anyone to defeat a safety device."""
@@ -91,17 +92,22 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
             article = "an" if field[0] in "aeiou" else "a"
             warnings.append(f"Item {idx}: dropped {article} {field} line the expert did not say in this answer.")
             rejected.append({"item": idx, "field": field, "text": line,
-                             "reason": "not in the expert's answer: no source found in the transcript"})
+                             "reason": _why_not_grounded(line, answer, transcript)})
         elif field == "never" and not said_as_prohibition(line, answer):
-            # Shown under "Never", but the expert did not say it as one:
-            # it could be read as an instruction, so screen it like one.
-            if defeats_safety(line):
-                warnings.append(f"Item {idx}: dropped a never line that reads as an instruction "
-                                "to defeat a safety device.")
-                rejected.append({"item": idx, "field": field, "text": line,
-                                 "reason": "reads as an instruction to defeat a safety device"})
-            else:
-                kept.append(line)
+            # Shown under "Never", but the expert did not say it as one: the
+            # meaning is reversed (an expert's own unsafe advice recast as a
+            # prohibition is still not what they said), so it is dropped.
+            warnings.append(f"Item {idx}: dropped a never line the expert did not say as "
+                            "something to avoid.")
+            rejected.append({"item": idx, "field": field, "text": line,
+                             "reason": "meaning reversed: the expert did not say this as something "
+                                       "never to do"})
+        elif field != "never" and said_as_prohibition(line, answer):
+            article = "an" if field[0] in "aeiou" else "a"
+            warnings.append(f"Item {idx}: dropped {article} {field} line the expert said as "
+                            "something never to do.")
+            rejected.append({"item": idx, "field": field, "text": line,
+                             "reason": "meaning reversed: the expert said this as something never to do"})
         elif field != "never" and defeats_safety(line):
             article = "an" if field[0] in "aeiou" else "a"
             warnings.append(f"Item {idx}: dropped {article} {field} line that would defeat a safety device.")
@@ -110,6 +116,24 @@ def _ground_lines(lines: list[str], answer: str, field: str, idx: int,
         else:
             kept.append(line)
     return kept
+
+
+def _why_not_grounded(line: str, answer: str, transcript: str = "") -> str:
+    """Say whether a rejected line was reworded, borrowed from another answer
+    or made up. Only the expert's exact words from the same answer are kept,
+    but a paraphrase or a borrowed line is not an invention, and the screen
+    should not call it one."""
+    from .learning import _terms
+
+    if transcript and _norm(line) in _norm(transcript):
+        return ("said in a different answer, not the one this item quotes; "
+                "a line is kept only with the answer it came from")
+    wanted = _terms(line)
+    sentences = [x.strip() for x in _SENTENCES.split(answer) if x.strip()]
+    best = max(sentences, key=lambda x: len(wanted & _terms(x)), default="")
+    if wanted and len(wanted & _terms(best)) / len(wanted) >= 0.6:
+        return f"reworded: the expert said \"{best}\"; only their exact words are kept"
+    return "not in the expert's answer: no source found in the transcript"
 
 
 _GENERIC = {"failure", "fault", "hardware", "drop", "risk", "or", "of", "after", "gateway"}
@@ -222,7 +246,8 @@ def _validate_items(
                 "or its usual signs; check it is filed under the right cause."
             )
         names = {"checks": "check", "do_not": "never", "escalate_when": "escalate-when"}
-        lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings, rejected)
+        lists = {f: _ground_lines(_clean_list(item.get(f)), answer, names[f], idx, warnings, rejected,
+                                  sanitized)
                  for f in _LIST_FIELDS}
         # Deny by default: any line naming a protective device or its
         # monitoring is held for the approving steward's safety review.

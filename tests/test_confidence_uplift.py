@@ -119,3 +119,18 @@ def test_staleness_uses_real_evidence_age_in_any_timezone():
     later = datetime.now(timezone.utc) + timedelta(minutes=20)
     sensors = [ev for ev in fresh if ev.source == "sensor"]
     assert _staleness_from_age(sensors, now=later) == pytest.approx(20 / 30, abs=0.01)
+
+
+def test_staleness_uses_the_readings_own_timestamp_not_when_it_was_fetched():
+    """A reading fetched just now can still be days old: W4 ages it by its
+    own ``ts``, so a stalled feed is penalised even on a fresh fetch."""
+    from datetime import datetime, timedelta, timezone
+
+    from technical_services_pill.confidence import _staleness_from_age
+    from technical_services_pill.tools import gather_evidence_for_case
+
+    sensors = [ev for ev in gather_evidence_for_case("CRAH-DC1-01", "SA-TEMP-01") if ev.source == "sensor"]
+    assert sensors and _staleness_from_age(sensors) == 0.0  # the mock feed reads as live
+    stale_ts = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    old = [ev.model_copy(update={"payload": {**ev.payload, "ts": stale_ts}}) for ev in sensors]
+    assert _staleness_from_age(old) == 1.0

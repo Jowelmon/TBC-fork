@@ -30,8 +30,13 @@ function humanDetail(detail, status) {
 const TEXT_FIELDS = new Set(['rationale', 'reason', 'notes', 'modified_action_detail']);
 
 function apiError(res, body) {
-  const e = new Error(humanDetail(body.detail, res.status));
+  const d = body.detail;
+  // A structured detail carries data for the screen (e.g. re-checked text)
+  // plus a message for people.
+  const structured = d && typeof d === 'object' && !Array.isArray(d);
+  const e = new Error(humanDetail(structured ? d.message : d, res.status));
   e.status = res.status;
+  if (structured) e.detail = d;
   return e;
 }
 

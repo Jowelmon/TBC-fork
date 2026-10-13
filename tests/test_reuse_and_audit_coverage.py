@@ -128,7 +128,7 @@ def test_an_escalation_instruction_is_not_a_cause_heuristic():
 
 # 4/5. Routing story and identity -------------------------------------------------
 def test_ai_disagreement_reaches_the_aom_with_routing_unchanged(client):
-    snap_id = _case(client, "UPS-DC1-02", "UPS-DC1-02-BATT", "ups_battery_fault", "invalid")["case_id"]
+    snap_id = _case(client, "UPS-DC1-01", "UPS-DC1-01-BATT", "ups_battery_fault", "invalid")["case_id"]
     snap = client.get(f"/cases/{snap_id}", params={"user": "mgr1"}).json()
     assert snap["current_state"] == "AWAITING_APPROVAL"
     assert "G9" in snap["guardrail_result"]["rule_ids"]

@@ -2,8 +2,8 @@
 
 import { api } from './api.js?v=9';
 import { initGuide } from './guide.js?v=14';
-import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=6';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=37';
+import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=7';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=38';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -115,6 +115,7 @@ async function refreshKbVersion() {
     const labels = Object.values(stats.kb_version_labels || {});
     el.textContent = labels.length ? `KB ${labels.join(' · ')}` : 'KB version unavailable';
     el.title = 'Each pill versions its own knowledge';
+    el.parentElement.title = el.textContent;
   } catch (_) { if (el.textContent.includes('loading')) el.textContent = 'KB version unavailable'; }
 }
 
@@ -201,6 +202,17 @@ themeToggle.addEventListener('click', () => {
   applyThemeButtonLabel();
 });
 
+// ── Hideable menu (remembered per browser) ──────────────────
+// The ‹ beside the brand hides it; the › at the start of the top bar
+// (only there while it is hidden) brings it back.
+function setNavHidden(hidden) {
+  document.documentElement.classList.toggle('nav-hidden', hidden);
+  try { localStorage.setItem('tbc_nav_hidden', hidden ? '1' : '0'); } catch (_) {}
+  document.getElementById(hidden ? 'nav-show' : 'nav-hide')?.focus();
+}
+document.getElementById('nav-hide').addEventListener('click', () => setNavHidden(true));
+document.getElementById('nav-show').addEventListener('click', () => setNavHidden(false));
+
 // ── Role switcher ──────────────────────────────────────────
 // Switching role means logging in as that demo user (sets the signed
 // session cookie) — awaitable so callers (the guide tour included) can
@@ -230,10 +242,15 @@ function askPin(userId, note = '') {
       catch (e) { err.textContent = e.message; input.select(); }
     };
     document.getElementById('pin-cancel').onclick = () => done(false);
+    backdrop.onkeydown = ev => { if (ev.key === 'Escape') { ev.preventDefault(); done(false); } };
   });
 }
 
 async function signIn(userId) {
+  // Ask for the PIN straight away when this browser has not proven it yet,
+  // rather than sending a sign-in that can only be refused.
+  const unlocked = await api.get('/login/unlocked').then(r => r.unlocked).catch(() => null);
+  if (unlocked && !unlocked.includes(userId)) return askPin(userId);
   try { await api.login(userId); return true; }
   catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
 }

@@ -10,11 +10,17 @@
     // a flash of the light default. Light stays the default for everyone
     // else -- a presenter's OS dark-mode setting must not silently change
     // what's on the projector.
-    if (localStorage.getItem('tbc_theme') === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
+    try {
+      if (localStorage.getItem('tbc_theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+      // Same for a hidden menu: no flash of the nav rail before app.js runs.
+      if (localStorage.getItem('tbc_nav_hidden') === '1') {
+        document.documentElement.classList.add('nav-hidden');
+      }
+    } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/static/css/app.css?v=29">
+  <link rel="stylesheet" href="/static/css/app.css?v=31">
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to main content</a>
@@ -24,6 +30,7 @@
       <div class="nav-brand">
         <div class="nav-logo">TBC</div>
         <div class="nav-title">Technical Services<br><span>Intelligence Pill</span></div>
+        <button class="nav-arrow" id="nav-hide" aria-controls="nav-rail" aria-expanded="true" title="Hide the menu"><span aria-hidden="true">&#8249;</span><span class="sr-only">Hide the menu</span></button>
       </div>
       <div class="nav-items">
         <button class="nav-item active" data-screen="dashboard" aria-label="Navigate to Dashboard">
@@ -52,7 +59,7 @@
         </button>
       </div>
       <div class="nav-footer" id="kb-footer">
-        <span id="nav-kb-version">KB loading…</span><br>
+        <span id="nav-kb-version">KB loading…</span><span class="nav-footer-short" aria-hidden="true">KB</span><br>
         <span class="nav-footer-sub">Keppel AI Harvest</span>
       </div>
     </nav>
@@ -60,7 +67,8 @@
     <!-- Main content -->
     <main id="main">
       <header id="topbar">
-        <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="nav-arrow" id="nav-show" aria-controls="nav-rail" aria-expanded="false" title="Show the menu"><span aria-hidden="true">&#8250;</span><span class="sr-only">Show the menu</span></button>
+        <div id="title-block">
           <h1 id="screen-title">Asset and Fault Dashboard</h1>
           <div class="breadcrumb" id="breadcrumb">
             <a href="#" onclick="event.preventDefault(); window.__app__.navigate('dashboard')">Home</a>
@@ -69,16 +77,20 @@
           </div>
         </div>
         <div id="role-switcher">
+          <div class="rs-chips">
           <span class="badge badge-purple" id="model-chip" title="AI used for expert capture and the advisory second opinion. Diagnosis itself is deterministic.">AI: ...</span>
           <button class="btn btn-secondary btn-sm" id="theme-toggle" aria-pressed="false" title="Switch between light and dark theme">Dark theme</button>
           <button class="btn btn-secondary btn-sm" id="guide-toggle" aria-expanded="false" aria-controls="guide-panel">Demo guide</button>
           <span class="role-badge" id="role-badge">mgr1</span>
-          <label for="role-select" class="role-label">Acting as</label>
-          <select id="role-select" aria-label="Select acting role">
-            {% for u in users %}
-            <option value="{{ u.id }}">{{ u.id }} ({{ u.role|replace('_', ' ') }})</option>
-            {% endfor %}
-          </select>
+          </div>
+          <span class="acting-as">
+            <label for="role-select" class="role-label">Acting as</label>
+            <select id="role-select" aria-label="Select acting role">
+              {% for u in users %}
+              <option value="{{ u.id }}">{{ u.id }} ({{ u.role|replace('_', ' ') }})</option>
+              {% endfor %}
+            </select>
+          </span>
         </div>
       </header>
       <div id="insecure-banner" class="banner banner-warn" hidden role="alert" style="margin:12px 24px 0">
@@ -117,6 +129,6 @@
       {% endfor %}
     ];
   </script>
-  <script type="module" src="/static/js/app.js?v=40"></script>
+  <script type="module" src="/static/js/app.js?v=42"></script>
 </body>
 </html>

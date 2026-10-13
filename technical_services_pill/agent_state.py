@@ -28,7 +28,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from .audit import GENESIS_HASH
-from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
+from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails, hazard_signals
 from .models import (
     ESCALATE_CONFIDENCE,
     MAX_RETRIEVAL_ROUNDS,
@@ -46,6 +46,16 @@ from .models import (
     Outcome,
     Recommendation,
 )
+
+
+# Timestamps say when a reading was taken, not what it says: the same
+# reading read again is the same evidence.
+_VOLATILE_PAYLOAD_KEYS = frozenset({"ts", "last_good_ts"})
+
+
+def evidence_key(e: EvidenceItem) -> tuple[str, str, str]:
+    payload = {k: v for k, v in e.payload.items() if k not in _VOLATILE_PAYLOAD_KEYS}
+    return (e.source, e.type, repr(payload))
 
 
 class AgentState:
@@ -143,7 +153,7 @@ class AgentState:
         (AgentStateName.MONITORING_OUTCOME, AgentStateName.RECORDING_OUTCOME): "outcome submitted",
         (AgentStateName.RECORDING_OUTCOME, AgentStateName.FEEDBACK_QUEUED): "outcome persisted",
         (AgentStateName.FEEDBACK_QUEUED, AgentStateName.CLOSED): "feedback accepted into governance queue",
-        (AgentStateName.ESCALATED, AgentStateName.GATHERING_EVIDENCE): "expert requests more evidence",
+        (AgentStateName.ESCALATED, AgentStateName.GATHERING_EVIDENCE): "more evidence requested",
         (AgentStateName.ESCALATED, AgentStateName.CLOSED): "escalation resolved/closed by expert",
     }
 
@@ -258,6 +268,25 @@ class AgentState:
             raise ValueError("evidence can only be added while gathering or escalated")
         self.evidence.append(item)
         self._retrieval_rounds += 1
+
+    def refresh_evidence(self, items: list[EvidenceItem], *, actor: str = "agent") -> int:
+        """Re-read the evidence sources. An item already held (same source,
+        type and reading, whatever its timestamps) is replaced by the fresh
+        copy, so W4 ages it from this read rather than the first one; the
+        rest is added. Returns how many items were new."""
+        held = {evidence_key(e): n for n, e in enumerate(self.evidence)}
+        new = 0
+        for item in items:
+            n = held.get(evidence_key(item))
+            if n is None:
+                self.add_evidence(item, actor=actor)
+                held[evidence_key(item)] = len(self.evidence) - 1
+                new += 1
+            else:
+                self.evidence[n] = item
+        self._record_note(actor=actor, reason=f"re-read evidence sources: {new} new item(s), "
+                                              f"{len(items) - new} re-confirmed")
+        return new
 
     def begin_diagnosing(
         self, *, actor: str = "agent", force: bool = False
@@ -378,6 +407,8 @@ class AgentState:
             raise ValueError("propose_recommendation only valid in RECOMMENDING")
 
         ctx = guardrail_ctx or GuardrailContext(asset_known=True)
+        if not ctx.hazard_signals:
+            ctx = ctx.model_copy(update={"hazard_signals": hazard_signals(self.evidence)})
         top_label = None
         if self.diagnosis and self.diagnosis.top_cause_id:
             # G2 activation: if the top cause is a known safety-critical
@@ -533,7 +564,7 @@ class AgentState:
         self._transition(
             AgentStateName.GATHERING_EVIDENCE,
             actor=actor,
-            reason=f"expert requests more evidence: {reason}",
+            reason=f"more evidence requested: {reason}",
         )
 
     # ------------------------------------------------------------------ #
@@ -587,6 +618,31 @@ class AgentState:
             return False
         return self.chain_seal == compute_hash("seal", {"length": len(self.history), "head": prev})
 
+    def chain_problem(self) -> str | None:
+        """Where verification fails, in words an auditor can act on: the
+        first entry whose signature no longer matches, or which part of the
+        case was changed after its last entry. None when the chain holds."""
+        from .audit import compute_hash
+
+        prev = GENESIS_HASH
+        for n, entry in enumerate(self.history, start=1):
+            what = (f"entry #{n} ({entry.from_state.value if entry.from_state else 'start'} → "
+                    f"{entry.to_state.value}, by {entry.actor})")
+            if entry.prev_hash != prev:
+                return f"{what} does not follow the entry before it: an entry was removed or reordered there"
+            if entry.hash != compute_hash(prev, entry._payload_for_hash()):
+                return f"{what} was changed after it was signed: start the investigation there"
+            prev = entry.hash
+        if not self.history:
+            return "the case has no audit history at all"
+        if self.chain_seal != compute_hash("seal", {"length": len(self.history), "head": prev}):
+            return (f"the history was cut short or extended after entry #{len(self.history)}: "
+                    "entries were removed from (or added to) the end")
+        if self.history[-1].state_digest != self._state_digest():
+            return ("every entry is intact, but the case's current data (state, evidence, diagnosis, "
+                    "decision or outcome) no longer matches the last entry: it was edited directly")
+        return None
+
     def snapshot(self) -> dict:
         """Serialise the state for the HITL UI / API (brief: "Transparent")."""
         return {
@@ -620,5 +676,9 @@ class AgentState:
             "history": [h.model_dump(mode="json") for h in self.history],
             "chain_seal": self.chain_seal,
             "sentinel_hold": self.sentinel_hold,
+            # Closed by an auditor because its record is not trusted: its
+            # score and outcome must never read as a genuine result.
+            "quarantined": any(h.reason.startswith("audit review by") and "quarantined" in h.reason
+                               for h in self.history),
             "audit_chain_valid": self.verify_audit_chain(),
         }
