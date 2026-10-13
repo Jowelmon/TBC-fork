@@ -140,6 +140,14 @@ _INSTRUCTION = [
     re.compile(r"\b(?:pull\w*|remov\w*|tak(?:e|es|en|ing)\s+out|took\s+out)\b[^.;]{0,20}?\bfuses?\b"
                r"[^.;]{0,30}?\b(?:leak|smoke|fire|gas|water|alarm|detection|detector|protection|interlock|"
                r"safety|vesda)\w*", re.IGNORECASE),
+    # working on live battery cells: "swap the cells hot", "hot-swap the jars".
+    # Battery *modules* built for hot-swap are a designed feature, so they pass.
+    re.compile(r"\b(?:swap\w*|chang\w*|replac\w*|pull\w*|remov\w*|fit\w*)\b[^.;]{0,30}?"
+               r"\b(?:cells?|jars?|battery\s+blocks?|monoblocs?|strings?)\b[^.;]{0,20}?"
+               r"\b(?:hot|live|energi[sz]ed|under\s+load|on\s+load|while\s+(?:it'?s\s+)?(?:live|running|on\s+load))\b",
+               re.IGNORECASE),
+    re.compile(r"\b(?:hot|live)[- ]?swap\w*\b[^.;]{0,30}?\b(?:cells?|jars?|battery\s+blocks?|monoblocs?|strings?)\b",
+               re.IGNORECASE),
     # resetting a protection until it stays in: "I keep resetting the compressor trip"
     re.compile(r"\b(?:keep|keeps|kept|keeping)\s+(?:on\s+)?re-?sett?ing\b", re.IGNORECASE),
     re.compile(r"\bre-?set(?:s|ting)?\b[^.;]{0,40}?\b(?:again\s+and\s+again|over\s+and\s+over|"

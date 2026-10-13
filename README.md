@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (378 tests) |
+| `make test` | pytest suite (387 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
