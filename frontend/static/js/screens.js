@@ -135,10 +135,12 @@ const kbRef = r => {
     : String(r).replace(/^KB-H(\d+)$/, 'site heuristic H$1').replace(/^KB-(CH|UPS|PMP)(\d+)$/, 'site heuristic $1-$2');
   return `<span class="kb-ref" title="${_esc(r)}">${_esc(label)}</span>`;
 };
-// A symptom is shown after a "When" label; drop the expert's own leading
-// "When"/"If" so it never reads "When When the supply air...".
+// A symptom is shown after a "When" label; drop only a repeated leading
+// "When"/"Whenever" so it never reads "When When the supply air...". Any
+// other wording ("If the axial vibration...") is the expert's own sentence
+// and is shown exactly as they said it.
 const whenText = t => {
-  const s = String(t || '').trim().replace(/^(when|if|whenever)\s+/i, '');
+  const s = String(t || '').trim().replace(/^(when|whenever)\s+/i, '');
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
