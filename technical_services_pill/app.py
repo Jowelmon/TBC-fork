@@ -1804,7 +1804,8 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     tool_log_ok = verify_tool_log()
     # Cases the signed tool log saw opened that are no longer in the store.
     opened = [e["inputs"].get("case_id") for e in TOOL_AUDIT_LOG if e.get("tool") == "open_case"]
-    missing = sorted({c for c in opened if c and STORE.get(c) is None}) if not registry_ok else []
+    missing = sorted({c for c in opened if c and STORE.get(c) is None}
+                     | set(STORE.missing_from_anchor())) if not registry_ok else []
     return {"broken_cases": broken,
             "case_problems": {cid: STORE.get(cid).chain_problem() for cid in broken},
             "missing_cases": missing,

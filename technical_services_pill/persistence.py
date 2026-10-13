@@ -214,6 +214,58 @@ def save_state(path: Path | None = None) -> None:
                 (key, blob, now),
             )
             _last_written[(keyed, key)] = blob
+    _write_anchor(path)
+
+
+def anchor_path(path: Path | None = None) -> Path:
+    """Where this database's anchor lives: beside the audit key (or in
+    ``TBC_ANCHOR_DIR``), never beside the database, so whoever can put an
+    older database back cannot also put back an older anchor."""
+    from .audit import key_dir
+
+    db = (path or db_path()).resolve()
+    base = Path(os.environ["TBC_ANCHOR_DIR"]) if os.environ.get("TBC_ANCHOR_DIR") else key_dir()
+    return base / f"anchor-{hashlib.sha256(str(db).encode()).hexdigest()[:16]}.json"
+
+
+def _read_anchor(path: Path) -> dict[str, Any] | None:
+    """The signed anchor for this database, None if there is none, or
+    ``{"invalid": True}`` if its signature does not verify."""
+    from .audit import compute_hash
+
+    try:
+        rec = json.loads(anchor_path(path).read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return {"invalid": True}
+    body = {k: rec.get(k) for k in ("ledger", "cases")}
+    return body if rec.get("sig") == compute_hash("anchor", body) else {"invalid": True}
+
+
+def _write_anchor(path: Path) -> None:
+    """Record the high-water mark: the ledger's length and head while it
+    verifies, and the case ids while the registry verifies. A part that
+    fails verification keeps its last good value."""
+    from .audit import compute_hash
+
+    old = _read_anchor(path) or {}
+    if old.get("invalid"):
+        old = {}
+    ls, cases = learning.STORE, store.STORE
+    body = {
+        "ledger": ({"length": len(ls.ledger), "head": ls.ledger[-1]["hash"]}
+                   if ls.ledger and ls.verify_ledger() else old.get("ledger")),
+        "cases": sorted(cases._cases) if cases.verify_registry() else old.get("cases"),
+    }
+    target = anchor_path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps({**body, "sig": compute_hash("anchor", body)}))
+        os.replace(tmp, target)
+    except OSError:
+        _log.exception("could not write the integrity anchor %s", target)
 
 
 def _apply_learning(rec: dict[str, Any]) -> None:
@@ -228,8 +280,9 @@ def restore_verified_learning(path: Path | None = None) -> None:
     """Put back the last knowledge base whose ledger verified when saved.
 
     The snapshot is only trusted if its own ledger still verifies with this
-    deployment's key, so editing it too gains an attacker nothing. On any
-    failure the live (broken) state is left exactly as it was."""
+    deployment's key and reaches the anchor recorded outside the database,
+    so neither editing it nor planting an older genuine copy gets through.
+    On any failure the live (broken) state is left exactly as it was."""
     path = path or db_path()
     with _connect(path) as conn:
         row = conn.execute("SELECT blob FROM snapshots WHERE key = ?", (_VERIFIED_KEY,)).fetchone()
@@ -286,6 +339,21 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     if "seals" in data:
         store.STORE.registry_seal = data["seals"]["registry"]
         tools.TOOL_LOG_SEAL["seal"] = data["seals"]["tool_log"]
+
+    # The anchor says how far this database had got. Without it, an older
+    # genuine copy put back in place would pass every check inside it.
+    anchor = _read_anchor(path)
+    if anchor is None:
+        _record_event(path, "anchor_missing",
+                      "no integrity anchor for this database: expected only after a reset or a "
+                      "move; otherwise an older copy may have been put back undetected")
+    elif anchor.get("invalid"):
+        _record_event(path, "anchor_invalid",
+                      "the integrity anchor for this database was edited (signature fails); "
+                      "a rollback cannot be ruled out")
+    else:
+        learning.STORE.anchor = anchor.get("ledger")
+        store.STORE.anchor_cases = set(anchor.get("cases") or ())
 
     broken = [cid for cid, st in store.STORE._cases.items() if not st.verify_audit_chain()]
     if broken:

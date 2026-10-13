@@ -47,6 +47,12 @@ def _load_key() -> bytes:
     return key.encode()
 
 
+def key_dir() -> Path:
+    """The directory holding the audit key file: integrity anchors live
+    here too, off the database's own directory."""
+    return Path(os.environ.get("TBC_AUDIT_KEY_FILE", str(Path.home() / ".tbc" / "audit.key"))).parent
+
+
 def audit_key() -> bytes:
     global _KEY
     if _KEY is None:

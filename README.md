@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (402 tests) |
+| `make test` | pytest suite (405 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -246,8 +246,19 @@ find things; it never acts on a case.
     new case.
   - **Restore last verified** (ledger only): the knowledge base goes back to
     the last snapshot the ledger verified, discarding the edit made outside
-    governance. That snapshot is trusted only if its own ledger still
-    verifies, so editing it too gains nothing.
+    governance. That snapshot is trusted only if its own ledger verifies and
+    reaches the anchor below, so neither editing it nor planting an older
+    genuine copy gets through.
+- **Anchor against rollback.** Every seal lives inside the snapshot it
+  protects, so an older, genuinely signed copy of the database would pass on
+  its own. Each save also writes a signed anchor beside the audit key (not
+  beside the database): the ledger's length and head hash and the case IDs.
+  A ledger that is not an extension of it, or a case it lists that is gone,
+  fails verification ("an older copy of the knowledge base was put back").
+  An auditor's Accept makes the older copy the new baseline, on the record.
+  A missing or edited anchor is logged as an integrity event, but cannot be
+  told apart from a reset, so in production the key and anchor belong off
+  the database host.
 
   A reason is required. The review is written to the reviewed chain and to
   the ledger, with the head hash that had failed. The ledger is reviewed

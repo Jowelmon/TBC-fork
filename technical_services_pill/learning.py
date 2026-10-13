@@ -142,6 +142,11 @@ class LearningStore:
         # chain, so editing knowledge or truncating the ledger is caught.
         self.ledger: list[dict[str, Any]] = []
         self.ledger_seal: str | None = None
+        # The longest ledger this deployment has recorded ({length, head}),
+        # read from a signed anchor kept outside the database. The seal
+        # above lives inside the snapshot it protects, so it cannot tell an
+        # older genuine snapshot put back in place; the anchor can.
+        self.anchor: dict[str, Any] | None = None
         # {pill, version the withdrawn knowledge went live at, ledger seq}
         self._revocations: list[dict[str, Any]] = []
         self.expert_heuristics: list[dict[str, Any]] = []
@@ -258,8 +263,19 @@ class LearningStore:
             return False
         if self.ledger[-1]["kb_digest"] != self._kb_digest():
             return False
+        if self._behind_anchor():
+            return False
         return self.ledger_seal == compute_hash(
             "seal", {"length": len(self.ledger), "head": self.ledger[-1]["hash"]})
+
+    def _behind_anchor(self) -> bool:
+        """True if this ledger is not an extension of the one the anchor
+        recorded: an older copy was put back, or history was rewritten."""
+        a = self.anchor
+        if not a:
+            return False
+        n = int(a.get("length") or 0)
+        return len(self.ledger) < n or (n > 0 and self.ledger[n - 1].get("hash") != a.get("head"))
 
     def review_broken_ledger(self, *, actor: str, reason: str) -> dict[str, Any]:
         """An auditor's disposition of a ledger that failed verification: the
@@ -274,6 +290,9 @@ class LearningStore:
         problem = self.ledger_problem()
         resign_chain(self.ledger, LEDGER_FIELDS)
         self.rebuild_stats()
+        # Accepting an older copy (a restore from backup, say) makes it the
+        # new baseline; the next save records a fresh anchor.
+        self.anchor = None
         return self._log(actor=actor, action="integrity_review",
                          reason=f"knowledge ledger accepted after review ({problem}; failed head "
                                 f"{old_head[:12]}): {reason}")
@@ -292,6 +311,11 @@ class LearningStore:
             return "the ledger is empty"
         if self._cause_stats != self._derived_stats():
             return "cause statistics no longer match the validated cases"
+        if self._behind_anchor():
+            return (f"an older copy of the knowledge base was put back: this deployment last recorded "
+                    f"{self.anchor['length']} ledger entries and the one loaded "
+                    + (f"has {len(self.ledger)}" if len(self.ledger) < self.anchor["length"]
+                       else "diverges from that history"))
         if self.ledger[-1]["kb_digest"] != self._kb_digest():
             return ("the knowledge base (cases, expert heuristics, proposals or versions) was changed "
                     f"outside the governance flow after entry #{self.ledger[-1]['seq']}")

@@ -2082,6 +2082,8 @@ export function renderGovernance(el, state, h) {
   const TAMPER_EVENTS = {
     snapshot_modified_between_saves: 'Snapshot changed on disk between saves',
     audit_chain_failure_on_load: 'Audit chain failed on restart',
+    anchor_missing: 'No integrity anchor for this database',
+    anchor_invalid: 'Integrity anchor was edited',
   };
   async function loadTamperEvents() {
     const body = document.getElementById('tamper-body');
