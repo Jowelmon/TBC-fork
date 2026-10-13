@@ -110,8 +110,21 @@ def get_asset_profile(asset_id: str) -> dict | None:
     return profile
 
 
+def _as_live(reading: dict) -> dict:
+    """The mock is a fixed snapshot: re-anchor its timestamps to now, keeping
+    their spacing, so it reads like a live feed and W4 staleness measures
+    the reading's own age the way it would against a real BMS."""
+    if not reading.get("ts"):
+        return reading
+    shift = datetime.now(timezone.utc) - datetime.fromisoformat(reading["ts"])
+    for key in ("ts", "last_good_ts"):
+        if reading.get(key):
+            reading[key] = (datetime.fromisoformat(reading[key]) + shift).isoformat()
+    return reading
+
+
 def get_sensor_readings(asset_id: str, sensor_id: str, window: str = "1h") -> dict:
-    reading = dict(LIVE_READINGS.get(sensor_id, {}))
+    reading = _as_live(dict(LIVE_READINGS.get(sensor_id, {})))
     reading.setdefault("sensor_id", sensor_id)
     reading["window"] = window
     _log("get_sensor_readings", {"asset_id": asset_id, "sensor_id": sensor_id, "window": window}, reading)

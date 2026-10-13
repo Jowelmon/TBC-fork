@@ -143,7 +143,7 @@ class AgentState:
         (AgentStateName.MONITORING_OUTCOME, AgentStateName.RECORDING_OUTCOME): "outcome submitted",
         (AgentStateName.RECORDING_OUTCOME, AgentStateName.FEEDBACK_QUEUED): "outcome persisted",
         (AgentStateName.FEEDBACK_QUEUED, AgentStateName.CLOSED): "feedback accepted into governance queue",
-        (AgentStateName.ESCALATED, AgentStateName.GATHERING_EVIDENCE): "expert requests more evidence",
+        (AgentStateName.ESCALATED, AgentStateName.GATHERING_EVIDENCE): "more evidence requested",
         (AgentStateName.ESCALATED, AgentStateName.CLOSED): "escalation resolved/closed by expert",
     }
 
@@ -535,7 +535,7 @@ class AgentState:
         self._transition(
             AgentStateName.GATHERING_EVIDENCE,
             actor=actor,
-            reason=f"expert requests more evidence: {reason}",
+            reason=f"more evidence requested: {reason}",
         )
 
     # ------------------------------------------------------------------ #

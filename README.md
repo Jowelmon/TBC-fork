@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (374 tests) |
+| `make test` | pytest suite (378 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -244,6 +244,10 @@ find things; it never acts on a case.
   - **Accept:** the record is genuine as it stands, so it is re-signed.
   - **Quarantine** (cases only): the case is closed and the work redone as a
     new case.
+  - **Restore last verified** (ledger only): the knowledge base goes back to
+    the last snapshot the ledger verified, discarding the edit made outside
+    governance. That snapshot is trusted only if its own ledger still
+    verifies, so editing it too gains nothing.
 
   A reason is required. The review is written to the reviewed chain and to
   the ledger, with the head hash that had failed. The ledger is reviewed

@@ -1811,22 +1811,26 @@ def post_audit_review(target: str, decision: str, reason: str = "",
 
     ``target`` is ``case:<id>``, ``ledger``, ``registry`` or ``tool_log``.
     ``decision`` is ``accept`` (the record is genuine as it stands: re-sign
-    it) or, for a case, ``quarantine`` (not trusted: close it, redo the work
-    as a new case). A reason is required, and every review is written to
+    it), for a case ``quarantine`` (not trusted: close it, redo the work
+    as a new case), or for the ledger ``restore`` (not trusted: put back the
+    last knowledge base the ledger verified). A reason is required, and every review is written to
     the governance ledger as well as to the reviewed chain itself.
     """
     _need(user, "review_audit_integrity")
     from .learning import STORE as _LSTORE
+    from . import persistence
     from .tools import review_broken_tool_log, verify_tool_log
 
     reason = reason.strip()
     if not reason:
         raise HTTPException(400, "an integrity review needs a reason")
-    if decision not in ("accept", "quarantine"):
-        raise HTTPException(400, "decision must be 'accept' or 'quarantine'")
+    if decision not in ("accept", "quarantine", "restore"):
+        raise HTTPException(400, "decision must be 'accept', 'quarantine' or 'restore'")
     if decision == "quarantine" and not target.startswith("case:"):
         raise HTTPException(400, "only a case can be quarantined")
-    verdict = "accepted" if decision == "accept" else "quarantined"
+    if decision == "restore" and target != "ledger":
+        raise HTTPException(400, "only the knowledge ledger can be restored")
+    verdict = {"accept": "accepted", "quarantine": "quarantined", "restore": "restored"}[decision]
     # The ledger first: every review is recorded in it, and recording one in
     # a ledger that fails verification would re-sign whatever broke it.
     if target != "ledger" and not _LSTORE.verify_ledger():
@@ -1838,6 +1842,14 @@ def post_audit_review(target: str, decision: str, reason: str = "",
             _get_case(cid).review_broken_chain(actor=user, reason=reason,
                                               quarantine=decision == "quarantine")
             _LSTORE.record_integrity_review(actor=user, reason=f"case {cid} {verdict}: {reason}")
+        elif target == "ledger" and decision == "restore":
+            if _LSTORE.verify_ledger():
+                raise ValueError("the knowledge ledger verifies; there is nothing to review")
+            problem = _LSTORE.ledger_problem()
+            persistence.restore_verified_learning()
+            _LSTORE.record_integrity_review(
+                actor=user, reason=f"knowledge base restored to the last verified snapshot "
+                                   f"({problem}): {reason}")
         elif target == "ledger":
             _LSTORE.review_broken_ledger(actor=user, reason=reason)
         elif target == "registry":

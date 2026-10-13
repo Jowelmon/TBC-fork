@@ -469,7 +469,7 @@ export function renderDashboard(el, state, h) {
         observation_type: document.getElementById('nc-fault').value,
         reading_status: document.getElementById('nc-reading').value,
       });
-      showToast(`Case created: ${r.case_id} (${r.evidence_count} evidence items). Opening it.`, 'success');
+      showToast(`Case created: ${r.case_id} (${r.evidence_count} evidence items gathered). Opening it.`, 'success');
       window.__app__.navigate('diagnosis', r.case_id);
     } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
   };
@@ -759,7 +759,7 @@ export function renderDiagnosis(el, state, h) {
       const hypT = s.ai_hypothesis || {};
       html += tabbed('diag', [
         { id: 'summary', label: 'Summary', html: T.summary || '<div class="banner banner-info"><p>Not yet diagnosed.</p></div>' },
-        { id: 'evidence', label: 'Evidence', note: abnormalCount, html: T.evidence },
+        { id: 'evidence', label: 'Evidence', note: abnormalCount ? `${abnormalCount} abnormal` : '', html: T.evidence },
         { id: 'ai', label: 'AI second opinion', note: hypT.status === 'ok' && hypT.hypothesis && !hypT.agrees_with_rules ? 'disagrees' : '', html: T.ai },
         { id: 'expert', label: 'Expert knowledge', html: T.expert },
         { id: 'scoring', label: 'Scoring', html: T.scoring },
@@ -1056,7 +1056,8 @@ export function renderDecision(el, state, h) {
       const decisionHint = (s.audit_chain_valid === false || (s.sentinel_hold || {}).active)
         ? 'this case is frozen: an auditor must review it on Governance.'
         : s.current_state === 'ESCALATED'
-        ? 'resolve the escalation below, or request more evidence to have the agent gather and diagnose it again.'
+        ? (canApprove ? 'resolve the escalation below, or request more evidence to have the agent gather and diagnose it again.'
+                      : 'escalated: an Asset Ops Manager or expert resolves it or requests more evidence.')
         : s.current_state === 'AWAITING_APPROVAL'
         ? (canApprove ? 'approve, reject or modify sends the case to execution.' : 'an Asset Ops Manager needs to approve, reject or modify this.')
         : s.current_state === 'EXECUTING'
@@ -1659,7 +1660,8 @@ export function renderGovernance(el, state, h) {
   // Integrity review: the way out of "frozen until an auditor reviews it".
   // An auditor records a disposition for each chain that fails verification:
   // accept it as genuine (re-signed, with the review on the chain and in the
-  // ledger) or, for a case, quarantine it (closed; redo the work as a new case).
+  // ledger), for a case quarantine it (closed; redo the work as a new case),
+  // or for the ledger restore the last knowledge base it verified.
   const auditNeeds = { integrity: false, sentinel: false };
   const noteAudit = () => setTabNote('gov', 'audit', auditNeeds.integrity || auditNeeds.sentinel ? 'action needed' : '');
 
@@ -1672,7 +1674,7 @@ export function renderGovernance(el, state, h) {
       // The ledger comes first: the server records every other review in it,
       // so it must be reviewed before anything else.
       const items = [
-        ...(st.ledger_valid ? [] : [{ target: 'ledger', label: `Knowledge ledger: ${st.ledger_problem || 'failed verification'}. Knowledge changes are frozen and expert knowledge is withheld from diagnoses. Review this first: every other review is recorded in the ledger.` }]),
+        ...(st.ledger_valid ? [] : [{ target: 'ledger', restore: true, label: `Knowledge ledger: ${st.ledger_problem || 'failed verification'}. Knowledge changes are frozen and expert knowledge is withheld from diagnoses. Review this first: every other review is recorded in the ledger.` }]),
         ...st.broken_cases.map(cid => ({ target: `case:${cid}`, label: `Case ${cid}: ${(st.case_problems || {})[cid] || 'its audit chain failed verification'}. The case is frozen.`, quarantine: true })),
         ...(st.registry_valid ? [] : [{ target: 'registry', label: `Case registry: a case was added or removed outside the app.${(st.missing_cases || []).length ? ` Missing: ${st.missing_cases.join(', ')} (opened according to the signed tool log, no longer stored).` : ''}` }]),
         ...(st.tool_log_valid ? [] : [{ target: 'tool_log', label: 'Tool log: entries were changed or removed.' }]),
@@ -1684,12 +1686,13 @@ export function renderGovernance(el, state, h) {
         body.innerHTML = `<p>${items.map(i => esc(i.label)).join('<br>')}</p><p class="muted">An auditor (auditor1) reviews these and records a decision.</p>`;
         return;
       }
-      body.innerHTML = `<p class="muted" style="margin-bottom:10px">Investigate first (Case Audit Trace below, the snapshot and server logs). <strong>Accept</strong> means the record is genuine as it stands: it is re-signed, and your review is written to the chain and the ledger. <strong>Quarantine</strong> closes a case whose record you do not trust; redo the work as a new case.</p>` +
+      body.innerHTML = `<p class="muted" style="margin-bottom:10px">Investigate first (Case Audit Trace below, the snapshot and server logs). <strong>Accept</strong> means the record is genuine as it stands: it is re-signed, and your review is written to the chain and the ledger. <strong>Quarantine</strong> closes a case whose record you do not trust; redo the work as a new case. <strong>Restore</strong> puts back the last knowledge base the ledger verified, discarding the change made outside governance.</p>` +
         items.map((i, n) => `<div class="rerun-row">
           <div>${esc(i.label)}</div>
           <div class="flex gap-8 flex-wrap"><input id="ir-reason-${n}" type="text" placeholder="What you checked (required)" style="min-width:220px">
             <button class="btn btn-secondary btn-sm" id="ir-accept-${n}">Accept</button>
-            ${i.quarantine ? `<button class="btn btn-red btn-sm" id="ir-quarantine-${n}">Quarantine</button>` : ''}</div>
+            ${i.quarantine ? `<button class="btn btn-red btn-sm" id="ir-quarantine-${n}">Quarantine</button>` : ''}
+            ${i.restore ? `<button class="btn btn-red btn-sm" id="ir-restore-${n}">Restore last verified</button>` : ''}</div>
         </div>`).join('');
       items.forEach((i, n) => {
         const go = async decision => {
@@ -1697,13 +1700,15 @@ export function renderGovernance(el, state, h) {
           if (!reason) { showToast('Record what you checked before deciding', 'error'); document.getElementById(`ir-reason-${n}`).focus(); return; }
           try {
             await api.post('/audit/review', { target: i.target, decision, reason });
-            showToast(`${i.target.replace('case:', 'Case ')} ${decision === 'accept' ? 'accepted' : 'quarantined'}; recorded in the ledger`, 'success');
+            showToast(`${i.target.replace('case:', 'Case ')} ${{ accept: 'accepted', quarantine: 'quarantined', restore: 'restored to the last verified snapshot' }[decision]}; recorded in the ledger`, 'success');
             refreshAll();
           } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
         document.getElementById(`ir-accept-${n}`).onclick = () => go('accept');
         const q = document.getElementById(`ir-quarantine-${n}`);
         if (q) q.onclick = () => go('quarantine');
+        const rs = document.getElementById(`ir-restore-${n}`);
+        if (rs) rs.onclick = () => go('restore');
       });
     } catch (e) { card.hidden = true; }
   }
@@ -1742,6 +1747,8 @@ export function renderGovernance(el, state, h) {
         if (rel) rel.onclick = () => go('release');
         const q = document.getElementById(`sn-quarantine-${n}`);
         if (q) q.onclick = () => go('quarantine');
+        const rs = document.getElementById(`ir-restore-${n}`);
+        if (rs) rs.onclick = () => go('restore');
       });
       const drill = document.getElementById('sn-drill');
       if (drill) drill.onclick = async () => {
