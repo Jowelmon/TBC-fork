@@ -236,7 +236,8 @@ def gather_evidence_for_case(asset_id: str, sensor_id: str) -> list[EvidenceItem
     return gathered
 
 
-def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceItem]:
+def gather_evidence_for_fault(asset_id: str, fault_type: str,
+                              sensor_id: str | None = None) -> list[EvidenceItem]:
     """Asset/fault-aware evidence gatherer (multi-asset generalisation).
 
     Routes by ``fault_type`` to the matching evidence contract. CRAH
@@ -247,11 +248,10 @@ def gather_evidence_for_fault(asset_id: str, fault_type: str) -> list[EvidenceIt
     """
     # CRAH tree reuses the sensor-centric gatherer.
     if fault_type == "temperature_measurement_missing":
-        sensor_id = ""
-        for sid, s in SENSORS.items():
-            if s.get("asset_id") == asset_id:
-                sensor_id = sid
-                break
+        # The sensor the case was raised on; the asset's first sensor only
+        # when none was named.
+        if not (sensor_id and SENSORS.get(sensor_id, {}).get("asset_id") == asset_id):
+            sensor_id = next((sid for sid, s in SENSORS.items() if s.get("asset_id") == asset_id), "")
         return gather_evidence_for_case(asset_id, sensor_id)
 
     records = TELEMETRY.get(asset_id)

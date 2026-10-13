@@ -84,7 +84,7 @@
 html, body {
   height: 100%;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 15px;     /* body base */
+  font-size: 16px;     /* body base: readable from the back of a room */
   color: var(--text);
   background: var(--bg);
   line-height: 1.6;
@@ -92,7 +92,7 @@ html, body {
 
 h1 { font-size: 24px; font-weight: 600; }
 h2 { font-size: 20px; font-weight: 600; }
-h3 { font-size: 16px; font-weight: 600; }
+h3 { font-size: 17px; font-weight: 600; }
 
 code, pre {
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
@@ -154,6 +154,7 @@ code, pre {
   font-weight: 600;
 }
 .nav-footer-sub { font-size: 14px; font-weight: 400; color: var(--text-dim); }
+.nav-footer-short { display: none; }
 
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -637,6 +638,11 @@ textarea:focus-visible,
   .nav-brand .nav-title { display: none; }
   .nav-item span:not(.nav-icon) { display: none; }
   .nav-footer .nav-footer-sub { display: none; }
+  /* The rail is too narrow for every pill's version: a "KB" stub whose
+     tooltip has them (the Governance screen shows them in full). */
+  .nav-footer { padding: 12px 6px; text-align: center; }
+  .nav-footer #nav-kb-version { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .nav-footer .nav-footer-short { display: inline; }
   #topbar { padding: 0 12px; }
   #topbar h1 { font-size: 18px; }
   .breadcrumb { display: none; }
@@ -781,12 +787,14 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 
 /* Projector widths: keep Status and Confidence on screen by dropping the
    Sensor and Reading columns (both are on the Diagnosis screen). */
-@media (max-width: 1366px) {
+@media (max-width: 1600px) {
   #cases-table th:nth-child(4), #cases-table td:nth-child(4),
   #cases-table th:nth-child(5), #cases-table td:nth-child(5) { display: none; }
   #cases-table th, #cases-table td { padding-left: 8px; padding-right: 8px; }
 }
 @media (max-width: 1100px) {
+  /* The fault is named on the case screen too; the Action column stays. */
+  #cases-table th:nth-child(3), #cases-table td:nth-child(3) { display: none; }
   .role-label { display: none; }
   #role-switcher .btn-sm { padding: 4px 8px; }
   #model-chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -940,3 +948,4 @@ th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { 
 .nav-brand { gap: 10px; padding-right: 8px; }
 .nav-title { white-space: nowrap; }
 .nav-brand .nav-arrow { width: 26px; }
+.q-signoff { margin-top: 8px; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

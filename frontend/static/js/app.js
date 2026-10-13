@@ -115,6 +115,7 @@ async function refreshKbVersion() {
     const labels = Object.values(stats.kb_version_labels || {});
     el.textContent = labels.length ? `KB ${labels.join(' · ')}` : 'KB version unavailable';
     el.title = 'Each pill versions its own knowledge';
+    el.parentElement.title = el.textContent;
   } catch (_) { if (el.textContent.includes('loading')) el.textContent = 'KB version unavailable'; }
 }
 
@@ -241,10 +242,15 @@ function askPin(userId, note = '') {
       catch (e) { err.textContent = e.message; input.select(); }
     };
     document.getElementById('pin-cancel').onclick = () => done(false);
+    backdrop.onkeydown = ev => { if (ev.key === 'Escape') { ev.preventDefault(); done(false); } };
   });
 }
 
 async function signIn(userId) {
+  // Ask for the PIN straight away when this browser has not proven it yet,
+  // rather than sending a sign-in that can only be refused.
+  const unlocked = await api.get('/login/unlocked').then(r => r.unlocked).catch(() => null);
+  if (unlocked && !unlocked.includes(userId)) return askPin(userId);
   try { await api.login(userId); return true; }
   catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
 }

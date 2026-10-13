@@ -1,4 +1,13 @@
-# 6-minute demo script
+# Demo script
+
+**Short version (6 minutes, 6 beats):** 2 capture → 4 self-approval blocked
+→ 5 second steward approves and the pump case clears 55% → 6 the next
+diagnosis quotes the expert → 8 the AOM approves → 10 rollback. Everything
+else below is optional depth for questions.
+
+Before presenting, warm the AI up once (draft any interview on Capture):
+Tencent Cloud ADP takes 10–15 s per call. If it fails, the screen says so,
+and the offline path (`TBC_LLM_PROVIDER=mock`) runs the same script.
 
 ## Logins (demo PINs, the app's passwords)
 
@@ -17,7 +26,7 @@ replace them on any real deployment.
 ## Setup
 
 Before you start: `make reset && make serve`, open http://localhost:8000/ui.
-The server seeds five demo cases (recorded as `demo-seed`). The app opens
+The server seeds six demo cases (recorded as `demo-seed`). The app opens
 as `mgr1 (Asset Ops Manager)` and asks for that user's PIN; switch roles
 with the "Acting as" dropdown in the top bar. Each switch is a real login
 (PIN checked, signed session cookie), not a URL trick, which is itself part
@@ -44,15 +53,17 @@ is an input, and the formula is shown.
 
 **Say:** "Here's how undocumented expertise gets captured."
 
-**Do:** Go to **Capture**. Click **Load sample interview**, then
+**Do:** Switch role to **steward1** (PIN 3333): steward1 is the capturer
+from here to step 4. Go to **Capture**. Click **Load sample interview**, then
 **Draft knowledge with AI**. Point at the step tracker — this is an AI
 draft, clearly labelled, nothing live yet.
 
 **Say:** "And when the AI makes something up?"
 
 **Do:** Point at the **Grounding check** card. With Tencent Cloud ADP it
-usually shows real lines the model reworded or added, marked ✗ "no source
-found in the transcript". Then use **Try to slip in a line the expert never
+usually shows lines the model reworded, marked ✗ "reworded: the expert
+said …" next to the expert's real sentence, or lines it added, marked ✗ "no
+source found in the transcript". Then use **Try to slip in a line the expert never
 said**: "Tighten the terminal to 12 Nm." is rejected. The same check runs
 again on the server when the draft is sent, so it cannot become knowledge.
 
@@ -66,22 +77,30 @@ cause-correction dropdown and the "Files under" pill chip. Every check,
 "never" and "escalate when" line is the expert's own words from the same
 answer; anything else, or anything telling someone to bypass a safety
 device, is dropped with a note. Tick the consent box (the expert agreed to
-their words being reused) and click **Send for steward approval**.
+their words being reused) and click **Send for steward approval**. What is
+stored is exactly what is on screen: if the server's re-check would change
+any wording, nothing is sent and the re-checked text comes back to review.
+The sent card says so: "exactly what the steward will see".
 
 ## 4. Self-approval is blocked (30s)
 
 **Say:** "Whoever captured it can't be the one who approves it."
 
-**Do:** Switch role to **steward1** (the capturer), go to **Governance** → **Approval queue**.
-Find the new proposal — its **Approve** button is disabled, with a note
-explaining why.
+**Do:** Still as **steward1** (the capturer), go to **Governance**: it opens
+on **Approval queue**. Find the new proposal: its **Approve** button is
+disabled, with the note "You sent this. A different steward must decide."
 
 ## 5. A second steward approves (30s)
 
 **Say:** "A different knowledge steward has to sign off."
 
-**Do:** Switch role to **steward2**. The queue shows every line of every
-heuristic, exactly as the AOM will see it. Click **Approve…** and say why
+**Do:** Switch role to **steward2** (PIN 4444). The queue shows every line of every
+heuristic, exactly as the AOM will see it. Knowledge is decided pill by
+pill: steward2 owns Chiller and Pump, and stands in for CRAH because its
+owner, steward1, proposed it, so steward2 can approve the whole interview.
+(Had **mgr1** captured it, steward1 would sign off CRAH and the proposal
+would stay pending, showing "Chiller · waiting for steward2", until
+steward2 signed the rest.) Click **Approve…** and say why
 it is sound (recorded in the ledger). Try to confirm without ticking the
 safety review: it is refused, because every check an expert gives is an
 action on equipment and a person must confirm none of them defeats a
@@ -93,16 +112,22 @@ Pump, so those three pills move and UPS does not. In **Re-run Diagnosis on
 Similar Open Cases**, re-run the seeded **PUMP-DC1-01** case: 49% becomes
 about 60%, past the 55% recommendation threshold, because R. Tan's pump
 answer is now approved knowledge and the case's evidence shows what he
-described.
+described. The figure is the knowledge's effect alone: every other term is
+held as it was when the case was scored, and any ageing of the readings is
+shown separately. (Optional: as **mgr1** on AOM Decision, **Request more
+evidence** on that escalated pump case; it is re-diagnosed at once and goes
+to Awaiting approval.)
 
 ## 6. Diagnosis reuses that knowledge (45s)
 
 **Say:** "That knowledge is now live — the next matching diagnosis finds
 it automatically."
 
-**Do:** Switch role to **tech1**. Click **New Case**, keep CRAH-DC1-01,
-**Create Case**, then **Advance** (sensor hardware failure, the cause just
-approved). Open **Diagnosis**: each case screen shows one group of cards
+**Do:** Switch role to **tech1** (PIN 1111). Click **New Case**: it opens on
+CRAH-DC1-01 with sensor SA-TEMP-01 (the sensor list only offers that
+asset's own sensors). Click **Create Case**; the new case opens on
+**Diagnosis**. Click **Advance Agent** (sensor hardware failure, the cause just
+approved). Each case screen shows one group of cards
 at a time, in tabs. **Summary** gives the cause, confidence, AI view,
 recommendation and abnormal readings; **Evidence**, **AI second opinion**,
 **Expert knowledge** and **Scoring** hold the detail. Open the **Expert
@@ -118,12 +143,20 @@ decides anything."
 **Do:** On the same Diagnosis screen, open the **AI second opinion** tab.
 Point at the "Advisory only — does not affect routing" tag, the
 agree/disagree badge, and that it's grounded only in evidence actually
-shown above it. Then open the seeded **UPS-DC1-02** case: the rules say
-battery end of life, and the battery is at 41°C and rising. Read out what
-the second opinion says. Tencent Cloud ADP usually agrees; the offline mock
-flags thermal runaway risk. Either way the badge shows it, any disagreement
-is recorded as G9, and the case still goes to the AOM for approval: the AI
-informs the decision, it never makes or blocks it.
+shown above it. Then open the seeded **UPS-DC1-01** case. The evidence
+genuinely conflicts: the bank is past its five-year design life, so the
+rules say battery end of life (replace the bank), but the charger has
+failed with no charge current, which on its own explains a low battery.
+Read out what the second opinion says: the offline mock says "charger
+failure", and Tencent Cloud ADP has a real reason to say the same. Any
+disagreement is recorded as **G9** and the case still goes to the AOM: the
+AI informs the decision (fix the charger before buying a bank), it never
+makes or blocks it. The AOM can **Modify** the action.
+
+For contrast, open **UPS-DC1-02**: cells at 41 °C and still rising. Safety
+comes first in the rules, not the AI: the tree diagnoses thermal runaway
+risk, **G2** escalates it to a person (isolate the bank, keep people clear),
+and **G2b** names the hazard. No work order can be approved from it.
 Cloudy, the cloud in the navigation rail, shows the AI's state on every
 screen (worried on this case, smiling when Tencent Cloud ADP is
 answering). Click it for the assistant panel: the live model, what the AI
@@ -139,17 +172,20 @@ the AOM sees before deciding: the diagnosed cause, confidence, the
 readings behind it, the AI's advisory view, and the approved expert's
 checks and cautions. Click **Approve**: a rationale is required. On the
 chiller case the safety-hazard banner also needs an explicit
-acknowledgement before approval goes through.
+acknowledgement before approval goes through. The Dashboard's Action column
+gives the AOM a **Decide** button on each case waiting for them.
 
 ## 9. Outcome and feedback (30s)
 
 **Say:** "The loop closes: the fix gets recorded, and feeds back into
 governance."
 
-**Do:** Go to **Outcome**. Raise the work order, record the outcome as
-resolved (the verifier is your signed-in identity, not a text box), submit
-feedback. Note this creates another pending proposal — same governance
-loop as step 4. Once the case closes, the feedback form disappears: feedback
+**Do:** Still as **mgr1**, go to **Outcome** and raise the work order. The
+outcome form is not offered to mgr1: whoever approved the work cannot also
+certify that it worked. Switch to **tech1**: record the outcome as resolved
+(the verifier is your signed-in identity, not a text box), then under
+**What did you find?** send feedback to the stewards. Note this creates
+another pending proposal — same governance loop as step 4. Once the case closes, the feedback form disappears: feedback
 is accepted exactly once.
 
 **Optional (escalations teach too):** open the ESCALATED CRAH-DC1-02 case
@@ -199,7 +235,7 @@ it with a reason.
 
 ---
 
-**If asked "is any of this real?"** — `make test` (pytest, currently 342
+**If asked "is any of this real?"** — `make test` (pytest, currently 374
 tests), `make eval` (13 labelled acceptance evals, pass/fail table), and
 `make demo` (console walkthrough of the same scenarios, deterministic
 output) all run with zero configuration. Nothing in this script requires

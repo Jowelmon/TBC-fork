@@ -60,7 +60,7 @@ def test_chiller_dc1_02_resolves_to_condenser_fouling(client: TestClient):
     so condenser-fouling knowledge (e.g. from the sample interview) could
     never be demonstrated as reused. CHILLER-DC1-02 closes that gap."""
     resp = client.post("/cases", params={
-        "asset_id": "CHILLER-DC1-02", "sensor_id": "CHILLER-DC1-02-s", "user": "tech1",
+        "asset_id": "CHILLER-DC1-02", "sensor_id": "CH2-COMP-PRESSURE", "user": "tech1",
         "observation_type": "chiller_compressor_trip", "reading_status": "absent",
     })
     case_id = resp.json()["case_id"]
@@ -72,7 +72,7 @@ def test_chiller_dc1_02_resolves_to_condenser_fouling(client: TestClient):
 def test_pump_dc1_02_resolves_to_cavitation(client: TestClient):
     """Previously: every pump case always resolved to shaft_misalignment."""
     resp = client.post("/cases", params={
-        "asset_id": "PUMP-DC1-02", "sensor_id": "PUMP-DC1-02-s", "user": "tech1",
+        "asset_id": "PUMP-DC1-02", "sensor_id": "PUMP-DC1-02-VIB", "user": "tech1",
         "observation_type": "pump_vibration_high", "reading_status": "absent",
     })
     case_id = resp.json()["case_id"]

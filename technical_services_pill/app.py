@@ -297,6 +297,13 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict:
     return _me(u.user_id)
 
 
+@app.get("/login/unlocked")
+def login_unlocked(request: Request) -> dict:
+    """Users this browser has already proven the PIN for, so the screen asks
+    for a PIN only when one is needed instead of trying (and failing) first."""
+    return {"unlocked": sorted(unlocked_users(request))}
+
+
 def _me(user_id: str) -> dict:
     from .rbac import PERMISSIONS
 
@@ -341,7 +348,7 @@ def create_case(
     with 400 so an un-routable observation is never built. ``raw_value`` is
     required semantics for an INVALID reading (spec §4.2 Q1).
     """
-    _need(user, "view_case")
+    _need(user, "open_case")
     from .decision_tree import KNOWN_FAULT_TYPES
 
     asset_id = asset_id.strip().upper()  # "crah-dc1-01" is CRAH-DC1-01, not an unknown asset
@@ -361,6 +368,16 @@ def create_case(
         raise HTTPException(
             400, f"{observation_type!r} is not a fault the {asset_type} pill diagnoses; "
                  f"expected one of {sorted(allowed)}")
+    from .mock_registry import ASSETS, sensors_for
+
+    sensor_id = sensor_id.strip().upper()
+    known = sensors_for(asset_id)
+    if asset_id in ASSETS and sensor_id not in known:
+        # Evidence would otherwise be gathered from a different sensor and
+        # filed under one that does not exist.
+        raise HTTPException(
+            400, f"sensor {sensor_id!r} is not registered on {asset_id}; "
+                 f"expected one of {known}")
     state = _new_case(asset_id, sensor_id, observation_type, rs, raw_value, actor=user)
     return {"case_id": state.case_id, "current_state": state.current_state.value,
             "evidence_count": len(state.evidence)}
@@ -385,7 +402,7 @@ def _new_case(asset_id: str, sensor_id: str, observation_type: str,
     state = AgentState(asset_id=asset_id, observation=observation, actor=actor,
                        asset_registered=registered)
     if registered:
-        for ev in gather_evidence_for_fault(asset_id, observation_type):
+        for ev in gather_evidence_for_fault(asset_id, observation_type, sensor_id):
             state.add_evidence(ev, actor="agent")
         state._record_note(actor="agent", reason=f"gathered {len(state.evidence)} evidence items")
     else:
@@ -397,6 +414,10 @@ def _new_case(asset_id: str, sensor_id: str, observation_type: str,
         state.guardrail_result = gr
         state.escalate_for_evidence(actor="agent", reason="[G5] unknown asset; outside pill scope")
     STORE.create(state)
+    # On the signed tool log too, so a case deleted outside the app can be
+    # named, not only counted (see /audit/status).
+    from .tools import _log
+    _log("open_case", {"case_id": state.case_id, "asset_id": asset_id, "opened_by": actor}, "created")
     return state
 
 
@@ -421,7 +442,7 @@ def advance_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     ``guardrail_result`` populated — the proximate cause of escalation is
     recorded, but the guardrail attribution is not lost.
     """
-    _need(user, "view_case")
+    _need(user, "open_case")
     state = _get_case_for_write(case_id)
     _advance(state)
     return {"case_id": case_id, "current_state": state.current_state.value,
@@ -517,7 +538,8 @@ def _advance(state: AgentState) -> None:
             from .tools import gather_evidence_for_fault
 
             seen = {(e.source, e.type, repr(e.payload)) for e in state.evidence}
-            fresh = [ev for ev in gather_evidence_for_fault(state.asset_id, state.observation.type)
+            fresh = [ev for ev in gather_evidence_for_fault(state.asset_id, state.observation.type,
+                                                            state.observation.sensor_id)
                      if (ev.source, ev.type, repr(ev.payload)) not in seen]
             if not fresh:
                 state.escalate_for_evidence(
@@ -542,7 +564,7 @@ def _advance(state: AgentState) -> None:
         and state.diagnosis.top_cause_id
         and state.diagnosis.top_cause_id != "unresolvable"
     ):
-        from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails
+        from .guardrails import SAFETY_CRITICAL_CAUSE_IDS, check_guardrails, hazard_signals
         from .models import GuardrailContext, Recommendation
 
         top_label = None
@@ -550,7 +572,7 @@ def _advance(state: AgentState) -> None:
             if c.id == state.diagnosis.top_cause_id:
                 top_label = c.label
                 break
-        ctx = GuardrailContext(asset_known=True)
+        ctx = GuardrailContext(asset_known=True, hazard_signals=hazard_signals(state.evidence))
         if state.diagnosis.top_cause_id in SAFETY_CRITICAL_CAUSE_IDS:
             ctx = ctx.model_copy(update={"safety_critical": True})
         rec = Recommendation(
@@ -690,10 +712,29 @@ def preview_confidence(case_id: str, user: str = Depends(resolve_user)) -> dict:
     on the stored case -- it's a preview, not a re-diagnosis.
     """
     _need(user, "view_case")
+    from .confidence import score_confidence
+
     state = _get_case(case_id)
-    after, breakdown = _score_against_current_kb(state)
+    rescored_now, breakdown = _score_against_current_kb(state)
+    # The question is "what does the knowledge change?", so only kb_match
+    # moves: every other term stays as it was when the case was scored.
+    # Evidence ageing since then is reported separately, never mixed into
+    # the knowledge's effect.
+    stored = state.confidence_breakdown or {}
+    terms = ("evidence_coverage", "peer_agreement", "data_staleness", "conflict_penalty")
+    if all(k in stored for k in terms):
+        after = score_confidence(
+            evidence_coverage=stored["evidence_coverage"], peer_agreement=stored["peer_agreement"],
+            kb_match=breakdown["kb_match"], data_staleness=stored["data_staleness"],
+            conflict_penalty=stored["conflict_penalty"],
+        )
+    else:
+        after = rescored_now
     return {"case_id": case_id, "before": state.confidence, "after": after,
-            "delta": after - state.confidence, "breakdown": breakdown}
+            "delta": after - state.confidence, "breakdown": breakdown,
+            "kb_match_before": stored.get("kb_match"), "kb_match_after": breakdown["kb_match"],
+            "rescored_now": rescored_now,
+            "evidence_age_effect": rescored_now - after}
 
 
 def _score_against_current_kb(state: AgentState) -> tuple[float, dict]:
@@ -805,16 +846,28 @@ def post_approval(
                 400,
                 "modify requires modified_action_type and modified_action_target",
             )
+        from .guardrails import _is_banned_action
         from .models import RecommendationAction
+        from .safety import defeats_safety
 
+        # G1 applies to a person's action exactly as to the agent's: no
+        # setpoint, interlock or safety change, and nothing that defeats a
+        # protective device, reaches a work order. That needs an engineer
+        # and the site's change process, not a modified recommendation.
+        text = f"{modified_action_type} {modified_action_target} {modified_action_detail or ''}"
+        if _is_banned_action(modified_action_type, f"{modified_action_target} {modified_action_detail or ''}") \
+                or defeats_safety(text):
+            raise HTTPException(
+                400, "[G1] the modified action would change a BMS setpoint, interlock or safety "
+                     "device, or defeat a protection; that cannot become a work order. Reject the "
+                     "recommendation and raise it through the site's engineering change process")
         modified_actions = [
             RecommendationAction(
                 type=modified_action_type,
                 target=modified_action_target,
                 detail=modified_action_detail or "",
-                kb_refs=list(state.recommendation.actions[0].kb_refs)
-                if state.recommendation and state.recommendation.actions
-                else [],
+                # Written by the AOM, not drawn from knowledge: it cites none.
+                kb_refs=[],
             )
         ]
         if state.recommendation and state.recommendation.actions:
@@ -848,7 +901,8 @@ def post_approval(
             kb_refs=list(orig.kb_refs) if orig and orig.kb_refs else [],
             evidence_refs=list(orig.evidence_refs) if orig and orig.evidence_refs else [],
         )
-        state._record_note(actor=user, reason="modified action set applied to the recommendation")
+        state._record_note(actor=user, reason="modified action set applied to the recommendation "
+                                              "(written by the AOM, not from approved knowledge; passed G1)")
     return {"case_id": case_id, "current_state": state.current_state.value}
 
 
@@ -888,6 +942,11 @@ def post_outcome(
 ) -> dict:
     _need(user, "record_outcome")
     state = _get_case_for_write(case_id)
+    # Two people per case: whoever approved the work does not also certify
+    # that it worked. The technician on site (or another AOM) verifies.
+    if state.human_decision is not None and state.human_decision.decided_by == user:
+        raise HTTPException(403, f"{user} approved this work and cannot also verify its outcome; "
+                                 "the technician who did it (or another manager) records it")
     try:
         res = OutcomeResult(result)
     except ValueError:
@@ -1032,15 +1091,18 @@ def list_assets(user: str = Depends(resolve_user)) -> dict:
     """Registered assets with the fault their pill diagnoses and a default
     sensor, so the New Case form is built from the registry itself."""
     _need(user, "view_case")
-    from .mock_registry import ASSETS, SENSORS
+    from .learning import PILLS
+    from .mock_registry import ASSETS, sensors_for
 
+    # Pill order (CRAH first), then asset id: the form opens on CRAH-DC1-01.
+    order = {pill: i for i, pill in enumerate(PILLS)}
     out = []
-    for asset_id, a in sorted(ASSETS.items()):
-        sensor = next((sid for sid, s in SENSORS.items() if s.get("asset_id") == asset_id),
-                      f"{asset_id}-SENSOR")
+    for asset_id, a in sorted(ASSETS.items(), key=lambda kv: (order.get(kv[1].get("type"), 99), kv[0])):
+        sensors = sensors_for(asset_id)
         out.append({"asset_id": asset_id, "type": a.get("type"),
                     "fault_type": min(FAULTS_BY_ASSET_TYPE.get(a.get("type"), [])),
-                    "default_sensor": sensor})
+                    "default_sensor": sensors[0] if sensors else "",
+                    "sensors": sensors})
     return {"assets": out}
 
 
@@ -1140,6 +1202,19 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
             drafted = {h["evidence_quote"] for h in source["heuristics"]} if source else set()
             for h in draft["heuristics"]:
                 h["source"] = "model" if h["evidence_quote"] in drafted else "manual"
+            # What is stored must be exactly what the capturer reviewed. If
+            # the re-check would change any wording (a line dropped, a WHEN
+            # replaced by the expert's own sentence), nothing is queued: the
+            # screen gets the re-checked text to review and send again.
+            changed = [i for i, (sent, kept) in enumerate(zip(body.heuristics, draft["heuristics"]), start=1)
+                       if any(_as_stored(sent.get(f)) != _as_stored(kept.get(f)) for f in _STORED_FIELDS)]
+            if changed:
+                raise HTTPException(409, {
+                    "message": f"the server's re-check changed the wording of item(s) "
+                               f"{', '.join(map(str, changed))}; review the re-checked text and send again",
+                    "changed_items": changed,
+                    "heuristics": draft["heuristics"],
+                })
         else:
             draft = capture.draft_from_transcript(body.transcript, body.asset_type)
     except capture.CaptureError as exc:
@@ -1148,6 +1223,12 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
         raise HTTPException(502, f"knowledge extraction failed: {exc}") from exc
 
     _require_intact_ledger()
+    # The same knowledge already waiting or live: queue it, but say so, so a
+    # steward does not approve one interview twice.
+    quotes = {h["evidence_quote"] for h in draft["heuristics"]}
+    duplicate_of = next((p["proposal_id"] for p in reversed(_LSTORE.list_all_proposals())
+                         if p.get("kind") == "expert_capture" and p["status"] in ("pending", "approved")
+                         and {h["evidence_quote"] for h in p.get("heuristics") or []} == quotes), None)
     proposal = _LSTORE.record_expert_capture(
         draft=draft, submitted_by=user, expert_name=body.expert_name,
         expert_role=body.expert_role, asset_type=body.asset_type, expert_consent=True,
@@ -1156,9 +1237,23 @@ def post_capture_interview(body: CaptureInterviewRequest, user: str = Depends(re
          {"expert": body.expert_name, "asset_type": body.asset_type,
           "provider": draft["provider"], "submitted_by": user},
          proposal)
+    if duplicate_of:
+        proposal["duplicate_of"] = duplicate_of
     return {"proposal_id": proposal["proposal_id"], "status": "pending",
             "provider": draft["provider"], "heuristics": draft["heuristics"],
-            "warnings": draft["warnings"], "dropped": draft["dropped"]}
+            "warnings": draft["warnings"], "dropped": draft["dropped"],
+            "duplicate_of": duplicate_of}
+
+
+# The fields of a heuristic an approver and an AOM read.
+_STORED_FIELDS = ("symptom_pattern", "likely_cause", "evidence_quote", "checks", "do_not", "escalate_when")
+
+
+def _as_stored(value):
+    """Compare text the way it is stored: whitespace-normalised, lists in order."""
+    if isinstance(value, list):
+        return [_as_stored(v) for v in value]
+    return " ".join(str(value or "").split())
 
 
 @app.post("/capture/draft")
@@ -1311,8 +1406,7 @@ def get_kb_queue(user: str = Depends(resolve_user)) -> dict:
     """
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
-    pending = [{**p, "owner_steward": PILL_OWNERS.get(p.get("asset_type") or "")}
-               for p in _LSTORE.list_pending_proposals()]
+    pending = [_with_owners(p) for p in _LSTORE.list_pending_proposals()]
     return {"queue": pending, "pending_count": len(pending)}
 
 
@@ -1330,25 +1424,57 @@ def approve_proposal(proposal_id: str, rationale: str = "", safety_reviewed: boo
     from .learning import SelfApprovalError
 
     _require_intact_ledger()
-    _require_pill_owner(proposal_id, user, "approve")
+    signing_for = _require_pill_owner(proposal_id, user, "approve")
     try:
         proposal = _LSTORE.approve_proposal(proposal_id, decided_by=user, rationale=rationale,
-                                            safety_reviewed=safety_reviewed)
+                                            safety_reviewed=safety_reviewed, signing_for=signing_for)
     except SelfApprovalError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400 if "needs a" in str(exc) else 404, str(exc)) from exc
+    if proposal["status"] == "pending":
+        waiting = _with_owners(proposal)["awaiting_signoff"]
+        return {"proposal_id": proposal_id, "status": "awaiting_signoff", "decided_by": user,
+                "signed_for": signing_for, "awaiting_signoff": waiting}
     return {"proposal_id": proposal_id, "status": "approved", "decided_by": user,
             "kb_versions": proposal["kb_versions"],
             "kb_version_labels": [f"{pill} v{_kb_label(v)}" for pill, v in proposal["kb_versions"].items()],
             "validated_case_id": proposal.get("validated_case_id")}
 
 
-def _require_pill_owner(proposal_id: str, user: str, verb: str) -> None:
-    """Knowledge is decided by a knowledge steward, never by an admin alone:
-    the pill's owning steward decides, and if the owner proposed it, another
-    steward stands in."""
+def _decides_pill(pill: str, user: str, submitted_by: str | None) -> bool:
+    """A pill's owning steward decides its knowledge; when the owner proposed
+    it (or the pill has no owner), any other steward stands in."""
+    owner = PILL_OWNERS.get(pill)
+    if owner and owner != submitted_by:
+        return owner == user
+    return user != submitted_by
+
+
+def _with_owners(p: dict) -> dict:
+    """A proposal plus who decides each pill it touches and who is still to sign."""
+    from .learning import proposal_pills
+
+    pills = proposal_pills(p)
+    signed = p.get("signoffs") or {}
+    return {**p,
+            "owner_steward": PILL_OWNERS.get(p.get("asset_type") or ""),
+            "pill_owners": {pill: PILL_OWNERS.get(pill) for pill in pills},
+            # Who can sign each pill now: its owner, or (when the owner
+            # proposed it) any other steward standing in.
+            "awaiting_signoff": [
+                {"pill": pill,
+                 "owner": None if PILL_OWNERS.get(pill) in (None, p.get("submitted_by")) else PILL_OWNERS.get(pill),
+                 "stand_in": PILL_OWNERS.get(pill) == p.get("submitted_by")}
+                for pill in pills if pill not in signed]}
+
+
+def _require_pill_owner(proposal_id: str, user: str, verb: str) -> list[str]:
+    """Knowledge is decided by a knowledge steward, never by an admin alone,
+    and each pill a proposal touches is decided by that pill's steward.
+    Returns the pills ``user`` decides that are still waiting for sign-off."""
     from .learning import STORE as _LSTORE
+    from .learning import proposal_pills
     from .rbac import Role
 
     if _user(user).role != Role.KNOWLEDGE_STEWARD:
@@ -1356,12 +1482,18 @@ def _require_pill_owner(proposal_id: str, user: str, verb: str) -> None:
                                  f"{user} can view the queue but not decide")
     p = _LSTORE.find_proposal(proposal_id)
     if p is None:
-        return
-    owner = PILL_OWNERS.get(p.get("asset_type") or "")
-    if owner and owner != user and owner != p.get("submitted_by"):
+        return []
+    signed = p.get("signoffs") or {}
+    pills = [x for x in proposal_pills(p) if x not in signed] or proposal_pills(p)
+    mine = [x for x in pills if _decides_pill(x, user, p.get("submitted_by"))]
+    # The proposer gets learning.py's clearer self-approval refusal instead,
+    # except on revoke, which has no such check of its own.
+    if not mine and (verb == "revoke" or user != p.get("submitted_by")):
+        owners = ", ".join(f"{x} by {PILL_OWNERS.get(x)}" for x in pills)
         raise HTTPException(
-            403, f"{p.get('asset_type')} knowledge is owned by {owner}; only they can {verb} it "
+            403, f"this knowledge is decided pill by pill ({owners}); {user} owns none of them "
                  "(another steward stands in only when the owner proposed it)")
+    return mine
 
 
 def _require_intact_ledger() -> None:
@@ -1402,8 +1534,23 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
     """Withdraw one approved proposal's knowledge, leaving everything else."""
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
+    from .rbac import Role
 
     _require_intact_ledger()
+    # An admin may withdraw knowledge (a break-glass action, reason logged);
+    # a steward only knowledge on a pill they decide.
+    if _user(user).role != Role.ADMIN:
+        _require_pill_owner(proposal_id, user, "revoke")
+        # Withdrawing knowledge another steward signed for is their call
+        # too: a steward revokes alone only what they decide entirely.
+        from .learning import proposal_pills
+
+        p = _LSTORE.find_proposal(proposal_id)
+        others = [x for x in proposal_pills(p) if not _decides_pill(x, user, p.get("submitted_by"))] if p else []
+        if others:
+            raise HTTPException(
+                403, f"this knowledge also covers {', '.join(others)}, which {user} does not decide; "
+                     "its owning steward or an admin revokes it")
     try:
         return _LSTORE.revoke_proposal(proposal_id, actor=user, reason=reason)
     except ValueError as exc:
@@ -1420,8 +1567,8 @@ def list_proposals(user: str = Depends(resolve_user), status: str | None = None)
     if status:
         props = [p for p in props if p["status"] == status]
     return {"proposals": [
-        {**p, "kb_version_labels": {pill: kb_version_label(v) for pill, v in (p.get("kb_versions") or {}).items()},
-         "owner_steward": PILL_OWNERS.get(p.get("asset_type") or "")}
+        {**_with_owners(p),
+         "kb_version_labels": {pill: kb_version_label(v) for pill, v in (p.get("kb_versions") or {}).items()}}
         for p in props]}
 
 
@@ -1532,7 +1679,14 @@ def seed_demo_cases() -> list[str]:
                          ReadingStatus.ABSENT, actor=SEED_ACTOR)
     _advance(awaiting)
 
-    disagreement = _new_case("UPS-DC1-02", "UPS-DC1-02-BATT", "ups_battery_fault",
+    # A battery heading for thermal runaway: safety first, G2 escalates it.
+    runaway = _new_case("UPS-DC1-02", "UPS-DC1-02-BATT", "ups_battery_fault",
+                        ReadingStatus.INVALID, actor=SEED_ACTOR)
+    _advance(runaway)
+
+    # Conflicting evidence (aged bank, dead charger): the rules say end of
+    # life, and the AI second opinion has a real case for the charger.
+    disagreement = _new_case("UPS-DC1-01", "UPS-DC1-01-BATT", "ups_battery_fault",
                              ReadingStatus.INVALID, actor=SEED_ACTOR)
     _advance(disagreement)
 
@@ -1541,7 +1695,8 @@ def seed_demo_cases() -> list[str]:
     pump = _new_case("PUMP-DC1-01", "PUMP-DC1-01-VIB", "pump_vibration_high",
                      ReadingStatus.INVALID, actor=SEED_ACTOR)
     _advance(pump)
-    return [closed.case_id, escalated.case_id, awaiting.case_id, disagreement.case_id, pump.case_id]
+    return [closed.case_id, escalated.case_id, awaiting.case_id, runaway.case_id,
+            disagreement.case_id, pump.case_id]
 
 
 @app.post("/demo/seed")
@@ -1630,12 +1785,18 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     from .learning import STORE as _LSTORE
     broken = [cid for cid in STORE.list()
               if (st := STORE.get(cid)) is not None and not st.verify_audit_chain()]
-    from .tools import verify_tool_log
+    from .tools import TOOL_AUDIT_LOG, verify_tool_log
 
     ledger_ok = _LSTORE.verify_ledger()
     registry_ok = STORE.verify_registry()
     tool_log_ok = verify_tool_log()
-    return {"broken_cases": broken, "ledger_valid": ledger_ok,
+    # Cases the signed tool log saw opened that are no longer in the store.
+    opened = [e["inputs"].get("case_id") for e in TOOL_AUDIT_LOG if e.get("tool") == "open_case"]
+    missing = sorted({c for c in opened if c and STORE.get(c) is None}) if not registry_ok else []
+    return {"broken_cases": broken,
+            "case_problems": {cid: STORE.get(cid).chain_problem() for cid in broken},
+            "missing_cases": missing,
+            "ledger_valid": ledger_ok,
             "ledger_problem": None if ledger_ok else _LSTORE.ledger_problem(),
             "registry_valid": registry_ok,
             "tool_log_valid": tool_log_ok,
@@ -1747,7 +1908,8 @@ def close_escalation(
 
 @app.post("/cases/{case_id}/escalation/evidence")
 def request_more_evidence(case_id: str, reason: str, user: str = Depends(resolve_user)) -> dict:
-    """Request more evidence on an escalated case (ESCALATED -> GATHERING_EVIDENCE).
+    """Request more evidence on an escalated case and re-diagnose it
+    (ESCALATED -> GATHERING_EVIDENCE -> the agent loop, as /advance).
 
     The only HTTP re-entry path from ESCALATED back into the diagnosis loop
     (spec §2 transition table). An expert who needs additional sensor data
@@ -1761,7 +1923,11 @@ def request_more_evidence(case_id: str, reason: str, user: str = Depends(resolve
         state.request_more_evidence(actor=user, reason=reason)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-    return {"case_id": case_id, "current_state": state.current_state.value}
+    # Gather and re-diagnose straight away, with the knowledge live now, so
+    # the AOM sees the outcome instead of a case parked in gathering.
+    _advance(state)
+    return {"case_id": case_id, "current_state": state.current_state.value,
+            "confidence": state.confidence}
 
 
 @app.get("/audit/trace")

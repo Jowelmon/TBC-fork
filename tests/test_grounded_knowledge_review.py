@@ -92,8 +92,12 @@ def test_draft_id_carries_the_real_provider_and_marks_hand_entries(client):
                     json={"asset_type": "CRAH", "transcript": capture.SAMPLE_INTERVIEW}).json()
     added = _item(evidence_quote="A fouled condenser is the usual story there, especially after the dry season.",
                   likely_cause="condenser_fouling")
-    r = client.post("/capture/interview", params={"user": "steward1"},
-                    json=_body(heuristics=[d["heuristics"][0], added], draft_id=d["draft_id"])).json()
+    body = _body(heuristics=[d["heuristics"][0], added], draft_id=d["draft_id"])
+    r = client.post("/capture/interview", params={"user": "steward1"}, json=body)
+    if r.status_code == 409:  # the hand entry's wording was re-checked: send what the server showed
+        r = client.post("/capture/interview", params={"user": "steward1"},
+                        json={**body, "heuristics": r.json()["detail"]["heuristics"]})
+    r = r.json()
     assert r["provider"] == "mock"
     assert [h["source"] for h in r["heuristics"]] == ["model", "manual"]
 
@@ -107,7 +111,7 @@ def test_consent_is_required(client):
 def test_decision_keeps_the_expert_knowledge_it_was_made_with(client):
     sample = client.post("/capture/interview", params={"user": "steward1"}, json=_body()).json()["proposal_id"]
     client.post(f"/kb/proposals/{sample}/approve", params={"user": "steward2", "rationale": "checked", "safety_reviewed": "true"})
-    cid = client.post("/cases", params={"user": "tech1", "asset_id": "CHILLER-DC1-01", "sensor_id": "x",
+    cid = client.post("/cases", params={"user": "tech1", "asset_id": "CHILLER-DC1-01", "sensor_id": "CH-COMP-PRESSURE",
                                          "observation_type": "chiller_compressor_trip"}).json()["case_id"]
     client.post(f"/cases/{cid}/advance", params={"user": "tech1"})
     client.post(f"/cases/{cid}/approval", params={"user": "mgr1", "decision": "approve",
@@ -148,10 +152,76 @@ def test_the_check_names_the_invented_line_and_why(client):
 
 
 def test_an_invented_line_cannot_be_submitted_past_the_screen(client):
+    pending = len(LSTORE.list_pending_proposals())
     r = client.post("/capture/interview", params={"user": "steward1"}, json={
         **_body(), "heuristics": _with_invention()})
+    # Nothing is queued with wording the capturer did not see: the screen
+    # gets the re-checked text back to review.
+    assert r.status_code == 409, r.text
+    assert len(LSTORE.list_pending_proposals()) == pending
+    rechecked = r.json()["detail"]["heuristics"]
+    assert INVENTED not in rechecked[0]["checks"]
+    r = client.post("/capture/interview", params={"user": "steward1"}, json={
+        **_body(), "heuristics": rechecked})
     assert r.status_code == 200, r.text
-    assert INVENTED not in r.json()["heuristics"][0]["checks"]
     pid = r.json()["proposal_id"]
     assert INVENTED not in str(LSTORE.find_proposal(pid)["heuristics"])
     client.post(f"/kb/proposals/{pid}/reject", params={"user": "steward2", "reason": "test cleanup"})
+
+
+def test_what_is_stored_is_exactly_what_was_reviewed(client):
+    d = client.post("/capture/draft", params={"user": "steward1"},
+                    json={"asset_type": "CRAH", "transcript": capture.SAMPLE_INTERVIEW}).json()
+    r = client.post("/capture/interview", params={"user": "steward1"},
+                    json=_body(heuristics=d["heuristics"], draft_id=d["draft_id"]))
+    assert r.status_code == 200, r.text
+    stored = LSTORE.find_proposal(r.json()["proposal_id"])["heuristics"]
+    for sent, kept in zip(d["heuristics"], stored):
+        for f in ("symptom_pattern", "evidence_quote", "checks", "do_not", "escalate_when"):
+            assert sent[f] == kept[f]
+    client.post(f"/kb/proposals/{r.json()['proposal_id']}/reject", params={"user": "steward2", "reason": "test cleanup"})
+
+
+def test_a_second_copy_of_the_same_interview_is_flagged(client):
+    first = client.post("/capture/interview", params={"user": "steward1"}, json=_body()).json()
+    second = client.post("/capture/interview", params={"user": "steward1"}, json=_body()).json()
+    assert second["duplicate_of"] == first["proposal_id"]
+    for pid in (first["proposal_id"], second["proposal_id"]):
+        client.post(f"/kb/proposals/{pid}/reject", params={"user": "steward2", "reason": "test cleanup"})
+
+
+def test_a_reworded_line_is_called_reworded_not_invented():
+    answer = capture.SAMPLE_INTERVIEW.split("And chillers?")[1]
+    assert capture._why_not_grounded("look for an oil stain near the joints", answer).startswith("reworded")
+    assert "no source found" in capture._why_not_grounded("Tighten the terminal to 12 Nm.", answer)
+
+
+def test_a_line_from_another_answer_is_not_called_invented():
+    t = capture.SAMPLE_INTERVIEW
+    answer = t.split("And chillers?")[1]
+    why = capture._why_not_grounded("look at the calibration sticker", answer, t)
+    assert why.startswith("said in a different answer")
+
+
+def test_grounding_rejects_reversed_meaning():
+    answer = ("Swap that one block if it reads nothing. Never just reset the alarm and leave it. "
+              "You can always just jumper the temperature probe.")
+    item = {"symptom_pattern": "Swap that one block if it reads nothing.",
+            "likely_cause": "sensor_hardware_failure",
+            "evidence_quote": "Swap that one block if it reads nothing.",
+            "checks": ["just reset the alarm and leave it"],
+            "do_not": ["Swap that one block", "jumper the temperature probe"],
+            "escalate_when": []}
+    out = capture.check_draft(answer, "CRAH", [item])
+    kept = out["heuristics"][0] if out["heuristics"] else {"checks": [], "do_not": []}
+    assert "just reset the alarm and leave it" not in kept["checks"]
+    assert kept["do_not"] == []
+    reasons = [r["reason"] for r in out["rejected"]]
+    assert sum(r.startswith("meaning reversed") for r in reasons) == 3, reasons
+
+
+def test_sample_interview_never_lines_still_pass():
+    d = capture.draft_from_transcript(capture.SAMPLE_INTERVIEW, "CRAH")
+    nevers = [n for h in d["heuristics"] for n in h["do_not"]]
+    assert nevers, d["rejected"]
+    assert not [r for r in d["rejected"] if r["reason"].startswith("meaning reversed")]

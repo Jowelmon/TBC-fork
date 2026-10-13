@@ -54,7 +54,7 @@ def test_g2b_hazard_is_named_in_the_guardrail_result_the_decision_screen_reads(c
     screen fix is a frontend change verified visually; this pins the data
     contract so the frontend has something to render)."""
     resp = client.post("/cases", params={
-        "asset_id": "CHILLER-DC1-01", "sensor_id": "CHILLER-DC1-01-s", "user": "tech1",
+        "asset_id": "CHILLER-DC1-01", "sensor_id": "CH-COMP-PRESSURE", "user": "tech1",
         "observation_type": "chiller_compressor_trip", "reading_status": "absent",
     })
     case_id = resp.json()["case_id"]

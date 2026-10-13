@@ -52,7 +52,9 @@ _DEVICE = (
     r"limit\s+switch(?:es)?|overloads?(?:\s+relays?)?|"
     r"(?:high|low)-?\s?temp(?:erature)?\s+(?:cut-?out|trip|limit|switch|interlock|protection|alarm)|"
     r"(?:leak|smoke|fire|gas|water)[- ]?detect(?:ion|ors?)?(?:\s+(?:fuse|circuit|system))?|"
-    r"e-?stops?|emergency\s+stops?|"
+    r"e-?stops?|emergency\s+stops?|buzzers?|sounders?|horns?|beacons?|sirens?|vesda|"
+    r"earth[- ]leakage\s+(?:relays?|protection|breakers?|trips?)|rcds?|elcbs?|rcbos?|"
+    r"(?:float|flow|level|reed|door)\s+switch(?:es)?|"
     r"safety\s+(?:device|interlock|valve|circuit|chain|relay|switch|system)"
 )
 # The limits a protection acts at.
@@ -71,8 +73,9 @@ _INSTRUCTION = [
                r"crah|ups|mains|isolator)\b)", re.IGNORECASE),
     # verb, device, particle: "tie the alarm contact out", "turn the alarm off"
     re.compile(rf"\b(?:ti(?:e|es|ed|ing)|wir(?:e|es|ed|ing)|link(?:s|ed|ing)?|short(?:s|ed|ing)?|"
-               rf"turn(?:s|ed|ing)?|switch(?:es|ed|ing)?|knock(?:s|ed|ing)?|tak(?:e|es|en|ing)|took)"
-               rf"\b[^.;]{{0,30}}?\b(?:{_DEVICE})\b[^.;]{{0,20}}?\b(?:out|off|down|over)\b", re.IGNORECASE),
+               rf"turn(?:s|ed|ing)?|switch(?:es|ed|ing)?|knock(?:s|ed|ing)?|tak(?:e|es|en|ing)|took|"
+               rf"tap(?:e|es|ed|ing)|strap(?:s|ped|ping)?|prop(?:s|ped|ping)?)"
+               rf"\b[^.;]{{0,30}}?\b(?:{_DEVICE})\b[^.;]{{0,20}}?\b(?:out|off|down|over|up)\b", re.IGNORECASE),
     # raising a protective limit: "raise the trip setpoint", "wind the HP cut-out up",
     # "set the overload relay to max"
     re.compile(r"\b(?:raise|raising|increase|increasing|bump|bumping|lift|widen)\s+(?:the\s+)?"
@@ -122,6 +125,21 @@ _INSTRUCTION = [
                re.IGNORECASE),
     re.compile(r"\bstop(?:s|ped|ping)?\s+it\s+(?:from\s+)?(?:alarm|trip|call|pag|cutt?|shutt?|go)\w*\b",
                re.IGNORECASE),
+    # joining contacts by hand: "touch the two pins together", "short the terminals"
+    re.compile(r"\b(?:touch\w*|short\w*|join\w*|bridg\w*|connect\w*|link\w*)\b[^.;]{0,30}?"
+               r"\b(?:pins?|terminals?|contacts?|leads?|wires?)\b[^.;]{0,15}?\btogether\b", re.IGNORECASE),
+    # holding a control in: "hold the reset button down with a cable tie"
+    re.compile(r"\b(?:hold\w*|held|ti(?:e|es|ed|ing)|cable-?ti\w*|zip-?ti\w*|tap(?:e|es|ed|ing)|wedg\w*|"
+               r"jam\w*|weigh\w*|stick\w*|stuck)\b[^.;]{0,30}?\b(?:reset|test|override|start|mute|"
+               r"silence|acknowledge)\s+(?:buttons?|switch(?:es)?|keys?|push(?:es)?)\b", re.IGNORECASE),
+    # a fuse or breaker uprated: "swap the fuse for a bigger one"
+    re.compile(r"\b(?:swap\w*|replac\w*|chang\w*|put\w*|fit\w*|up-?rat\w*|upgrad\w*)\b[^.;]{0,30}?"
+               r"\b(?:fuses?|breakers?|mcbs?)\b[^.;]{0,30}?\b(?:bigger|larger|higher|heavier|up-?rated|"
+               r"higher[- ]rated)\b", re.IGNORECASE),
+    # the fuse feeding a detection or alarm circuit: "pull the fuse on the leak alarm"
+    re.compile(r"\b(?:pull\w*|remov\w*|tak(?:e|es|en|ing)\s+out|took\s+out)\b[^.;]{0,20}?\bfuses?\b"
+               r"[^.;]{0,30}?\b(?:leak|smoke|fire|gas|water|alarm|detection|detector|protection|interlock|"
+               r"safety|vesda)\w*", re.IGNORECASE),
     # resetting a protection until it stays in: "I keep resetting the compressor trip"
     re.compile(r"\b(?:keep|keeps|kept|keeping)\s+(?:on\s+)?re-?sett?ing\b", re.IGNORECASE),
     re.compile(r"\bre-?set(?:s|ting)?\b[^.;]{0,40}?\b(?:again\s+and\s+again|over\s+and\s+over|"
@@ -137,8 +155,10 @@ _PROTECTION = re.compile(
     r"(?:high|low|temperature|temp|pressure|current)\s+limits?|safety\s+(?:device|valve|circuit|chain|"
     r"relay|system|interlock)|shut-?(?:down|off)s?|"
     r"contactors?|thermostats?|buzzers?|sounders?|horns?|beacons?|sirens?|probes?|thermistors?|"
+    r"vesda|earth[- ]leakage|rcds?|elcbs?|rcbos?|maintenance\s+bypass|"
     r"leak\s+ropes?|reed\s+switch(?:es)?|reeds?|flow\s+sensors?|float\w*|magnets?|"
-    r"terminal\s+\d+|(?:hand|manual|override|bypass)\s+mode|"
+    r"terminal\s+\d+|(?:hand|manual|override|bypass)\s+mode|pins?\s+together|"
+    r"(?:reset|test|override|mute|silence)\s+(?:buttons?|switch(?:es)?|keys?)|"
     r"(?:lift\w*|unplug\w*|disconnect\w*|clip\w*)\s+(?:the\s+|a\s+)?(?:\w+\s+){0,2}?(?:wire|lead|cable|plug)s?|"
     # taking something out of monitoring (calling "the BMS vendor" is not)
     r"(?:off|out\s+of|from)\s+(?:the\s+)?(?:bms|scada|monitoring))\b",
@@ -196,4 +216,7 @@ def said_as_prohibition(line: str, answer: str) -> bool:
         return True
     low_answer, low_line = " ".join(answer.lower().split()), " ".join(line.lower().split())
     at = low_answer.find(low_line)
-    return at > 0 and bool(re.search(r"(?:never|don'?t|do\s+not|must\s+not)\s*$", low_answer[:at]))
+    # "Don't go swapping sensors" stored as "swapping sensors": up to three
+    # words may sit between the prohibition and the line.
+    return at > 0 and bool(re.search(r"\b(?:never|don'?t|do\s+not|must\s+not)(?:\s+[\w']+){0,3}\s*$",
+                                     low_answer[:at]))

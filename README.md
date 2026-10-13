@@ -29,9 +29,10 @@ deployment):
 | `auditor1` | Auditor | 5555 |
 | `admin1` | Admin | 9999 |
 
-On first start the server seeds five scenarios (attributed to `demo-seed`):
+On first start the server seeds six scenarios (attributed to `demo-seed`):
 a closed case, a bus fault escalated to the BMS pill, a chiller awaiting
-approval, a hot UPS battery for the AI second opinion to weigh in on, and a
+approval, a UPS battery hot and rising (thermal runaway, escalated), a UPS
+with conflicting evidence for the AI second opinion to weigh in on, and a
 pump escalated at 49% that clears the 55% threshold once the sample expert
 interview is approved. Click **Demo guide** in the top bar for a guided tour,
 or follow [`DEMO.md`](DEMO.md) for a 6-minute scripted run.
@@ -42,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (342 tests) |
+| `make test` | pytest suite (374 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -101,9 +102,9 @@ person or a work order):
 
 | Rule | Trigger | Action |
 |---|---|---|
-| G1 | Recommendation touches a BMS setpoint, interlock, safety system or firmware | Block and escalate |
+| G1 | Recommendation (the agent's, or an AOM's Modify) touches a BMS setpoint, interlock, safety system or firmware, or defeats a protection | Block and escalate (a Modify is refused) |
 | G2 | Safety-critical fault (cooling lost and temperature rising) | Escalate |
-| G2b | Environmental/pressure hazard (e.g. refrigerant leak) | Approval with a hazard acknowledgement |
+| G2b | Environmental/pressure hazard (e.g. refrigerant leak), or hazardous readings whatever the cause (a battery at 40 °C or more and still rising) | Approval with a hazard acknowledgement |
 | G3 | Cause belongs to another pill's domain | Coordinate and escalate |
 | G4 | Confidence too low | Escalate, no recommendation |
 | G5 | Unknown asset | Escalate without diagnosing |
@@ -142,7 +143,9 @@ review, second-steward approval.
 
 - **Visible when the AI invents something.** The Capture screen's
   **Grounding check** lists every drafted line that was kept and every line
-  rejected, with why ("no source found in the transcript"). A box lets you
+  rejected, with why: "no source found in the transcript" (invented),
+  "reworded", "said in a different answer", or "meaning reversed" (a check
+  the expert said as a "never", or a "never" they did not say). A box lets you
   try to slip in a line yourself. The same check runs again on the server
   when the draft is sent (`POST /capture/check` runs it on its own).
 - **Flagged for review.** A quote whose own words rule out its cause, or
@@ -165,10 +168,13 @@ failure is reported in plain language, never silently replaced.
 ## Governance
 
 - **Two people per change, stewards only.** A proposal (outcome feedback, an
-  escalation resolution, or an expert interview) is decided by the pill's
-  owning steward; if they proposed it, the other steward decides. Nobody
-  approves or rejects their own proposal, and an admin cannot decide on
-  knowledge at all (admins can revoke and roll back). Approval needs a
+  escalation resolution, or an expert interview) is decided pill by pill:
+  each pill it files knowledge under is signed off by that pill's owning
+  steward (if the owner proposed it, another steward stands in), and
+  nothing goes live until every pill has signed. Nobody approves or rejects
+  their own proposal, and an admin cannot decide on knowledge at all
+  (admins can revoke and roll back; a steward revokes alone only knowledge
+  whose every pill they decide). Approval needs a
   rationale, rejection a reason, and expert interviews need recorded
   consent. The roster is configurable (`TBC_PILL_OWNERS`).
 - **Per-pill versions.** Each pill versions its own knowledge (`CRAH v1.4.0`).
@@ -194,10 +200,11 @@ diagnosis. Inputs are G7-sanitised; a hypothesis outside the asset's causes
 is rejected and citations not present in the evidence are dropped. It never
 approves, executes or changes the case: a disagreement is recorded as G9 for
 the manager to see, and a timeout falls back to a labelled "AI offline" state
-recorded in the audit trail. Seeded case **UPS-DC1-02** (end of life by
-the rules, battery at 41°C) is the one to watch: the offline mock flags
-thermal runaway risk and so raises G9; Tencent Cloud ADP usually agrees
-with the rules. Nothing is staged either way.
+recorded in the audit trail. Seeded case **UPS-DC1-01** is the one to
+watch: its evidence genuinely conflicts (a bank past its design life, so
+the rules say end of life, and a failed charger with no charge current).
+The offline mock says charger failure and raises G9; what Tencent Cloud
+ADP says is its own call. Nothing is staged either way.
 
 Cloudy, the small draggable cloud on every screen, shows the AI's state
 (thinking, offline, worried when it disagrees). Clicking it opens an
@@ -216,6 +223,13 @@ find things; it never acts on a case.
 - **Roles.** Technician, Asset Ops Manager, Knowledge Steward, Auditor,
   Admin (`rbac.py`). The UI gates controls on capabilities; the server
   enforces them regardless.
+  - Only technicians and AOMs open and run cases; stewards and auditors
+    review them.
+  - Two people per case: the AOM who approved the work cannot also verify
+    its outcome; the technician who did it records it, and can send what
+    they found to the stewards as feedback (a pending proposal).
+  - Admin runs the system (seeding, rollback, revoke, drills) but cannot
+    approve a case, decide on knowledge or review integrity.
 - **Tamper evidence.** Case histories, the knowledge ledger and the tool log
   are keyed HMAC-SHA256 hash chains, each sealed over length and head. Case
   entries carry a digest of the case's state, and ledger entries a digest of
@@ -223,7 +237,10 @@ find things; it never acts on a case.
   case whose chain fails is frozen (423) and shown read-only; any failure
   raises a red banner on the Dashboard.
 - **Integrity review.** On Governance, an auditor records a decision for
-  each failed chain (`POST /audit/review`):
+  each failed chain (`POST /audit/review`). The review names where to look:
+  the first case entry changed after it was signed (or that the case's data
+  was edited directly), and any case deleted outside the app, by ID from the
+  signed tool log. The ledger is listed, and must be reviewed, first.
   - **Accept:** the record is genuine as it stands, so it is re-signed.
   - **Quarantine** (cases only): the case is closed and the work redone as a
     new case.

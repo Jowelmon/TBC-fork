@@ -6,7 +6,7 @@ const STEPS = [
     title: 'The problem',
     role: 'mgr1', screen: 'dashboard',
     say: 'Data centre cooling faults are diagnosed by a handful of senior technicians. When they leave, the know-how leaves with them. This Intelligence Pill captures that know-how for Technical Services fault diagnosis.',
-    notice: 'Seeded cases: one resolved, a bus fault escalated to the BMS pill, a chiller waiting for the Asset Operations Manager, a hot UPS battery where the AI gives a second opinion, and a pump escalated at 49% because nobody has written down how to read its vibration yet.',
+    notice: 'Seeded cases: one resolved, a bus fault escalated to the BMS pill, a chiller waiting for the Asset Operations Manager, a UPS battery hot and rising (thermal runaway, escalated), a UPS with conflicting evidence (an old bank and a dead charger) where the AI second opinion may disagree with the rules, and a pump escalated at 49% because nobody has written down how to read its vibration yet.',
   },
   {
     title: 'Harvest tacit knowledge',
@@ -24,7 +24,7 @@ const STEPS = [
     title: 'Second steward approves, version bumps',
     role: 'steward2', screen: 'governance', tab: ['gov', 'review'],
     say: 'A second steward reviews the expert\'s words and approves. Only now does it become live knowledge, versioned and reversible.',
-    notice: 'Approve the proposal with a reason and tick the safety review: every check must be confirmed safe before it goes live. The chiller answer mentions a trip, so that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 60%, past the 55% recommendation threshold.',
+    notice: 'Each pill is decided by its own steward: steward2 owns Chiller and Pump, and stands in for CRAH because steward1 proposed it. Approve the proposal with a reason and tick the safety review: every check must be confirmed safe before it goes live. The chiller answer mentions a trip, so that heuristic becomes guidance only and never raises confidence. The KB version in the sidebar ticks up, and "Re-run diagnosis" appears for the open cases this knowledge touches. Re-run the PUMP-DC1-01 case: 49% becomes about 60%, past the 55% recommendation threshold.',
   },
   {
     title: 'Captured know-how changes the outcome',

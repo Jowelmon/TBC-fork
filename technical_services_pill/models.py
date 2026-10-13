@@ -208,6 +208,9 @@ class GuardrailContext(BaseModel):
 
     asset_known: bool = True
     safety_critical: bool = False  # e.g. cooling lost AND temperature rising
+    # Hazards read from the evidence (guardrails.hazard_signals), e.g. a hot,
+    # rising battery: G2b, whatever the diagnosed cause.
+    hazard_signals: list[str] = []
 
 
 class HistoryEntry(BaseModel):

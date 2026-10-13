@@ -133,14 +133,14 @@ def test_validated_by_is_the_approver_not_the_proposer(client):
 
 # 3. AI ---------------------------------------------------------------------
 def test_second_opinion_can_disagree_and_cites_readable_evidence(client):
-    cid = _case(client, "UPS-DC1-02", "UPS-DC1-02-BATT", "ups_battery_fault")
+    cid = _case(client, "UPS-DC1-01", "UPS-DC1-01-BATT", "ups_battery_fault")
     snap = client.get(f"/cases/{cid}", params={"user": "mgr1"}).json()
     hyp = snap["ai_hypothesis"]
     assert snap["diagnosis"]["top_cause_id"] == "battery_eol"
-    assert hyp["hypothesis"] == "thermal_runaway_risk" and hyp["agrees_with_rules"] is False
+    assert hyp["hypothesis"] == "charger_failure" and hyp["agrees_with_rules"] is False
     assert hyp["supporting_evidence"] and not any("{" in e for e in hyp["supporting_evidence"])
     g9 = next(r for r in snap["guardrail_result"]["reasons"] if r.startswith("[G9]"))
-    assert "Battery thermal runaway risk" in g9
+    assert "Charger failure" in g9
 
 
 def test_adp_errors_are_plain_language(monkeypatch):
@@ -156,8 +156,9 @@ def test_adp_errors_are_plain_language(monkeypatch):
 
 # 4. Escalations explained, no contradictions -----------------------------------
 def test_every_escalation_has_a_reason(client):
-    for asset, fault in [("PUMP-DC1-01", "pump_vibration_high"), ("UPS-DC1-01", "ups_battery_fault")]:
-        cid = _case(client, asset, f"{asset}-S", fault)
+    for asset, sensor, fault in [("PUMP-DC1-01", "PUMP-DC1-01-VIB", "pump_vibration_high"),
+                                 ("UPS-DC1-01", "UPS-DC1-01-BATT", "ups_battery_fault")]:
+        cid = _case(client, asset, sensor, fault)
         snap = client.get(f"/cases/{cid}", params={"user": "mgr1"}).json()
         if snap["current_state"] == "ESCALATED":
             assert snap["guardrail_result"]["must_escalate"] is True
@@ -165,7 +166,7 @@ def test_every_escalation_has_a_reason(client):
 
 
 def test_fault_type_must_match_the_asset(client):
-    resp = client.post("/cases", params={"asset_id": "PUMP-DC1-01", "sensor_id": "x", "user": "tech1",
+    resp = client.post("/cases", params={"asset_id": "PUMP-DC1-01", "sensor_id": "PUMP-DC1-01-VIB", "user": "tech1",
                                          "observation_type": "ups_battery_fault"})
     assert resp.status_code == 400
 

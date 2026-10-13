@@ -93,6 +93,27 @@ SAFETY_APPROVAL_REQUIRED_CAUSE_IDS: frozenset[str] = frozenset({
     "refrigerant_leak",  # environmental + pressure hazard; repair needs approval
 })
 
+# --- Hazardous readings (G2b) --------------------------------------------
+# A battery this hot is a thermal-runaway precursor whatever the diagnosed
+# cause; with the temperature still rising, nobody acts on it without
+# acknowledging the hazard.
+BATTERY_TEMP_HIGH_C = 40.0
+
+
+def hazard_signals(evidence: list) -> list[str]:
+    """Readings in the gathered evidence that make any work on the asset
+    hazardous, in plain words. Pure function of the evidence."""
+    payloads = [ev.payload for ev in evidence if isinstance(getattr(ev, "payload", None), dict)]
+    rising = any(p.get("temp_rising") is True for p in payloads)
+    hot = [p["battery_temp_c"] for p in payloads
+           if isinstance(p.get("battery_temp_c"), (int, float)) and p["battery_temp_c"] >= BATTERY_TEMP_HIGH_C]
+    alarmed = any("battery_temp_high" in (p.get("alarms") or []) for p in payloads)
+    if rising and (hot or alarmed):
+        temp = f" ({max(hot):.0f} °C)" if hot else ""
+        return [f"battery temperature high{temp} and still rising: thermal-runaway risk"]
+    return []
+
+
 # --- Prompt-injection patterns (G7) -------------------------------------
 _INJECTION_PATTERN = re.compile(
     r"(?i)\b(ignore\s+(all\s+)?(prior|previous)\s+instructions|"
@@ -168,6 +189,12 @@ def check_guardrails(
                               "requires mandatory human approval before action "
                               "(environmental / pressure hazard)", require_approval=True)
                 break
+
+    # G2b — hazardous readings, whatever the cause: the same mandatory,
+    # acknowledged human approval (routine-looking causes included).
+    for signal in ctx.hazard_signals:
+        res.add("G2b", f"hazard in the readings: {signal}; approve only with the hazard "
+                       "acknowledged and the site's safety precautions in place", require_approval=True)
 
     # G3 — cross-domain root cause: coordinate + escalate to that pill's owner.
     if top_cause_label:

@@ -241,6 +241,9 @@ class LearningStore:
                  p.get("confirmed_cause"), p.get("asset_type"), p.get("kb_versions"), p.get("reason"),
                  p.get("expert_name"), p.get("resolution"), p.get("heuristics"),
                  p.get("rolled_back_pills"))
+                # Appended only when present, so ledgers sealed before
+                # per-pill sign-off existed still verify.
+                + ((p["signoffs"],) if p.get("signoffs") else ())
                 for p in self._proposals
             ],
         }
@@ -469,10 +472,16 @@ class LearningStore:
         return p
 
     def approve_proposal(self, proposal_id: str, *, decided_by: str, rationale: str,
-                         safety_reviewed: bool = False) -> dict[str, Any]:
+                         safety_reviewed: bool = False,
+                         signing_for: list[str] | None = None) -> dict[str, Any]:
         """Approve a pending proposal: its knowledge goes live and each pill
         it files knowledge under moves to a new version. Expert knowledge
-        needs the approver's explicit safety review (``needs_safety_review``)."""
+        needs the approver's explicit safety review (``needs_safety_review``).
+
+        ``signing_for`` names the pills this approver decides for. When a
+        proposal files knowledge under several pills, each pill's steward
+        signs off; nothing goes live until every pill has, and the proposal
+        stays pending in between."""
         self._require_verified()
         if not rationale.strip():
             raise ValueError("approving knowledge needs a rationale")
@@ -483,6 +492,17 @@ class LearningStore:
                 f"approving expert knowledge needs a safety review: confirm that none of its "
                 f"{len(held)} check(s) or protective-device line(s) tells anyone to defeat, bypass "
                 "or weaken a protection (safety_reviewed=true)")
+        if signing_for is not None:
+            signoffs = p.setdefault("signoffs", {})
+            for pill in signing_for:
+                signoffs[pill] = {"by": decided_by, "at": _now().isoformat(),
+                                  "rationale": rationale.strip(), "safety_reviewed": bool(held)}
+            remaining = [x for x in proposal_pills(p) if x not in signoffs]
+            if remaining:
+                self._log(actor=decided_by, action="proposal_signed_off", proposal_id=proposal_id,
+                          reason=f"signed off {', '.join(sorted(signing_for))}; waiting for "
+                                 f"{', '.join(remaining)}: {rationale.strip()}")
+                return p
         before = dict(self._kb_version)
         if held:
             p["safety_reviewed_by"] = decided_by

@@ -319,6 +319,27 @@ CONFIG_CHANGE_LOG: dict[str, list[dict]] = {
     "CRAH-DC1-02": [],
 }
 
+# --- Fault-signal sensors on the telemetry assets -------------------------
+# The chiller / UPS / pump trees read asset-level telemetry (TELEMETRY below),
+# raised against the one signal that triggers the fault.
+TELEMETRY_SENSORS: dict[str, str] = {
+    "CHILLER-DC1-01": "CH-COMP-PRESSURE",
+    "CHILLER-DC1-02": "CH2-COMP-PRESSURE",
+    "UPS-DC1-01": "UPS-DC1-01-BATT",
+    "UPS-DC1-02": "UPS-DC1-02-BATT",
+    "PUMP-DC1-01": "PUMP-DC1-01-VIB",
+    "PUMP-DC1-02": "PUMP-DC1-02-VIB",
+}
+
+
+def sensors_for(asset_id: str) -> list[str]:
+    """Every sensor registered on ``asset_id``, in registry order."""
+    ids = [sid for sid, s in SENSORS.items() if s.get("asset_id") == asset_id]
+    if asset_id in TELEMETRY_SENSORS:
+        ids.append(TELEMETRY_SENSORS[asset_id])
+    return ids
+
+
 # --- Multi-asset telemetry (spec §4.2 — chiller / UPS / pump) -------------
 # Per-asset evidence payloads, keyed by asset_id. Each value is a list of
 # (source, type, payload, kb_refs) tuples the generalised gatherer turns into
@@ -363,27 +384,30 @@ TELEMETRY: dict[str, list[tuple]] = {
             "starter_ok": True, "contactor_ok": True, "winding_resistance": 2.6,
         }, []),
     ],
-    # UPS: low SoH + aged bank -> battery_eol
+    # UPS-DC1-01: genuinely conflicting evidence. The bank is past its
+    # 5-year design life, so the tree says battery_eol (Q2 comes before the
+    # charger, Q3). But the charger has failed with no charge current, which
+    # alone explains a low battery: a second opinion can fairly say "fix the
+    # charger before buying a new bank" (G9, advisory; the AOM decides).
     "UPS-DC1-01": [
         ("ups", "battery", {
-            "soh_pct": 48, "age_months": 64, "float_voltage": 432.0,
-            "balance_ok": False,
+            "soh_pct": 78, "age_months": 64, "float_voltage": 401.0,
+            "balance_ok": True,
         }, ["KB-UPS1"]),
         ("ups", "status", {
-            "battery_voltage": 410.0, "load_pct": 35, "on_battery": False,
-            "alarms": ["battery_low"],
+            "battery_voltage": 404.0, "load_pct": 35, "on_battery": False,
+            "alarms": ["battery_low", "charger_fault"],
         }, []),
         ("ups", "charger", {
-            "charge_current": 8.0, "charger_ok": True,
+            "charge_current": 0.0, "charger_ok": False,
         }, []),
         ("ups", "thermal", {
             "battery_temp_c": 28.0, "temp_rising": False,
         }, []),
     ],
-    # UPS-DC1-02: borderline. State of health just under the end-of-life
-    # floor, and cell temperature rising at 41 C, below the tree's 45 C
-    # thermal trigger. The tree says battery_eol; the AI second opinion's
-    # evidence weighting flags thermal_runaway_risk (G9, advisory).
+    # UPS-DC1-02: an ageing bank (state of health under the floor) whose
+    # cells are at 41 °C and still rising. Safety comes first: the tree says
+    # thermal_runaway_risk (Q1, before end of life) and G2 escalates it.
     "UPS-DC1-02": [
         ("ups", "battery", {
             "soh_pct": 58, "age_months": 40, "float_voltage": 436.0,

@@ -21,7 +21,16 @@ or
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
+import tempfile
+
+# The demo drives the API in-process. Keep it away from the running server's
+# database (data/tbc.sqlite): a shared file would make the server log false
+# "snapshot changed on disk" integrity events and load the demo's cases.
+os.environ["TBC_PERSIST"] = "0"
+os.environ["TBC_DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="tbc-demo-"), "tbc.sqlite")
+
+from datetime import datetime, timezone  # noqa: E402
 
 from .agent_state import AgentState
 from .confidence import (

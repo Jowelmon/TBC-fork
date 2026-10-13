@@ -43,15 +43,21 @@ _ALL_CAPABILITIES: frozenset[str] = frozenset(
         "read_audit_trail",
         "capture_expert_knowledge",
         "review_audit_integrity",
+        "open_case",
     }
 )
 
 # Spec §6 RBAC matrix.
 PERMISSIONS: dict[Role, frozenset[str]] = {
-    Role.TECHNICIAN: frozenset({"view_case", "record_outcome"}),
+    # open_case: raise a case and run the agent on it. Reviewers (stewards,
+    # auditors) read cases but never start or drive one.
+    # submit_feedback: the field person tells the stewards what they found;
+    # it is only a proposal until a steward approves it.
+    Role.TECHNICIAN: frozenset({"view_case", "open_case", "record_outcome", "submit_feedback"}),
     Role.ASSET_OPS_MANAGER: frozenset(
         {
             "view_case",
+            "open_case",
             "approve_reject_modify",
             "record_outcome",
             "submit_feedback",
@@ -68,7 +74,10 @@ PERMISSIONS: dict[Role, frozenset[str]] = {
         }
     ),
     Role.AUDITOR: frozenset({"view_case", "read_audit_trail", "review_audit_integrity"}),
-    Role.ADMIN: _ALL_CAPABILITIES,
+    # Admin runs the system (seeding, roll back, revoke, drills) but holds
+    # no decision that needs a second person: no case approvals and no
+    # integrity reviews, so nobody is approver, operator and auditor at once.
+    Role.ADMIN: _ALL_CAPABILITIES - {"approve_reject_modify", "review_audit_integrity"},
 }
 
 
