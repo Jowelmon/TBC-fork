@@ -105,3 +105,37 @@ def test_a_steward_cannot_revoke_pills_another_steward_signed(client):
         assert r.status_code == 403, r.text
     assert client.post(f"/kb/proposals/{pid}/revoke",
                        params={"user": "admin1", "reason": "test cleanup"}).status_code == 200
+
+
+def test_each_steward_withdraws_their_own_part_of_a_mixed_proposal(client):
+    """Judge 6: on a proposal filed under several pills, no steward could
+    withdraw a bad line (only admin). Each steward now withdraws the part
+    they decide; the proposal is revoked once every part is withdrawn."""
+    pid = _capture_as(client, "mgr1")
+    for user in ("steward1", "steward2"):
+        assert client.post(f"/kb/proposals/{pid}/approve", params={"user": user, **OK}).status_code == 200
+    pills = set(proposal_pills(LSTORE.find_proposal(pid)))
+    crah_before = [h for h in LSTORE.expert_heuristics if h.get("proposal_id") == pid and h["asset_type"] == "CRAH"]
+    assert crah_before
+
+    whole = client.post(f"/kb/proposals/{pid}/revoke", params={"user": "steward1", "reason": "bad line"})
+    assert whole.status_code == 403 and "withdraw your part: CRAH" in whole.json()["detail"]
+    not_mine = client.post(f"/kb/proposals/{pid}/revoke",
+                           params={"user": "steward1", "reason": "bad line", "pills": "Chiller"})
+    assert not_mine.status_code == 403
+
+    r = client.post(f"/kb/proposals/{pid}/revoke", params={"user": "steward1", "reason": "bad line", "pills": "CRAH"})
+    assert r.status_code == 200, r.text
+    p = LSTORE.find_proposal(pid)
+    assert p["status"] == "approved" and p["revoked_pills"] == ["CRAH"]
+    left = {h["asset_type"] for h in LSTORE.expert_heuristics if h.get("proposal_id") == pid}
+    assert left == pills - {"CRAH"}
+    assert LSTORE.verify_ledger() and "CRAH part only" in LSTORE.ledger[-1]["reason"]
+    again = client.post(f"/kb/proposals/{pid}/revoke", params={"user": "steward1", "reason": "x", "pills": "CRAH"})
+    assert again.status_code == 409  # already withdrawn
+
+    rest = ",".join(sorted(pills - {"CRAH"}))
+    r = client.post(f"/kb/proposals/{pid}/revoke", params={"user": "steward2", "reason": "whole interview", "pills": rest})
+    assert r.status_code == 200, r.text
+    assert LSTORE.find_proposal(pid)["status"] == "revoked"
+    assert not [h for h in LSTORE.expert_heuristics if h.get("proposal_id") == pid]

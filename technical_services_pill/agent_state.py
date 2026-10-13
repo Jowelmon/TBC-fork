@@ -117,6 +117,10 @@ class AgentState:
         self.feedback_id = None
         self.history: list[HistoryEntry] = []
         self.chain_seal: str | None = None
+        # The furthest this case's history had got ({length, head}), from the
+        # signed anchor kept outside the database: an older copy of the case
+        # put back in place verifies on its own, but not against this.
+        self.anchor: dict | None = None
         # Set by the sentinel (sentinel.py) when it stops the case.
         self.sentinel_hold: dict | None = None
 
@@ -591,6 +595,9 @@ class AgentState:
             prev = rebuilt[-1].hash
         self.history = rebuilt
         self.chain_seal = compute_hash("seal", {"length": len(self.history), "head": prev})
+        # Accepting an older copy makes it the baseline; the next save
+        # records a fresh anchor for this case.
+        self.anchor = None
         verdict = "quarantined: record not trusted, case closed" if quarantine else "accepted after review"
         note = f"audit review by {actor}: {verdict} (failed head {old_head[:12]}); {reason}"
         if quarantine:
@@ -616,7 +623,16 @@ class AgentState:
             return False
         if self.history[-1].state_digest != self._state_digest():
             return False
+        if self._behind_anchor():
+            return False
         return self.chain_seal == compute_hash("seal", {"length": len(self.history), "head": prev})
+
+    def _behind_anchor(self) -> bool:
+        a = self.anchor
+        if not a:
+            return False
+        n = int(a.get("length") or 0)
+        return len(self.history) < n or (n > 0 and self.history[n - 1].hash != a.get("head"))
 
     def chain_problem(self) -> str | None:
         """Where verification fails, in words an auditor can act on: the
@@ -635,6 +651,11 @@ class AgentState:
             prev = entry.hash
         if not self.history:
             return "the case has no audit history at all"
+        if self._behind_anchor():
+            return (f"an older copy of this case was put back: this deployment last recorded "
+                    f"{self.anchor['length']} history entries and the one loaded "
+                    + (f"has {len(self.history)}" if len(self.history) < self.anchor["length"]
+                       else "diverges from that history"))
         if self.chain_seal != compute_hash("seal", {"length": len(self.history), "head": prev}):
             return (f"the history was cut short or extended after entry #{len(self.history)}: "
                     "entries were removed from (or added to) the end")

@@ -836,38 +836,35 @@ def post_approval(
     modified_actions = None
     original_actions = None
     if dec == HumanDecision.MODIFY:
-        if not (modified_action_type and modified_action_target):
-            raise HTTPException(
-                400,
-                "modify requires modified_action_type and modified_action_target",
-            )
-        from .decision_tree import ACTION_TYPES
+        if not modified_action_type:
+            raise HTTPException(400, "modify requires modified_action_type")
+        from .decision_tree import action_templates
         from .guardrails import _is_banned_action
         from .models import RecommendationAction
-        from .safety import needs_change_process
 
-        # G1 applies to a person's action as to the agent's, and harder: the
-        # agent's actions come from reviewed decision trees, a typed one has
-        # no reviewer after the AOM. So the kind of work is picked from the
-        # agent's own catalogue, and any wording that touches a protection,
-        # a setpoint or control setting, or live working is refused rather
-        # than matched against a list of known bad phrasings.
-        if modified_action_type not in ACTION_TYPES:
+        # A Modify picks another of the actions this fault's tree can
+        # recommend; it never carries free text to a work order. Text typed
+        # by a person has no reviewer after them, and no word list can tell
+        # every way of saying "leave the trip off" from an honest repair, so
+        # the work order only ever holds a reviewed procedure. The AOM's
+        # reasoning is the decision's rationale.
+        options = [t for t in action_templates(state.observation.type)
+                   if t["type"] == modified_action_type
+                   and (modified_action_target is None or t["target"] == modified_action_target)
+                   and (modified_action_detail is None or t["detail"] == modified_action_detail)]
+        if len(options) != 1 or _is_banned_action(options[0]["type"], options[0]["detail"]):
+            choices = "; ".join(f"{t['type']} ({t['target']})"
+                                for t in action_templates(state.observation.type))
             raise HTTPException(
-                400, f"[G1] {modified_action_type!r} is not an action the agent can recommend; "
-                     "pick one of: " + ", ".join(ACTION_TYPES))
-        text = f"{modified_action_target} {modified_action_detail or ''}"
-        if _is_banned_action(modified_action_type, text) or needs_change_process(text):
-            raise HTTPException(
-                400, "[G1] the modified action touches a protection, alarm, setpoint or control "
-                     "setting, or live working; a hand-written action cannot put that on a work "
-                     "order. Reject the recommendation and raise it through the site's "
-                     "engineering change process")
+                400, "[G1] a modified action must be one of the procedures this fault's decision "
+                     f"tree can recommend, unchanged: {choices}. Put your reasoning in the "
+                     "rationale; anything else goes through the site's engineering change process")
+        template = options[0]
         modified_actions = [
             RecommendationAction(
-                type=modified_action_type,
-                target=modified_action_target,
-                detail=modified_action_detail or "",
+                type=template["type"],
+                target=template["target"],
+                detail=template["detail"],
                 # Written by the AOM, not drawn from knowledge: it cites none.
                 kb_refs=[],
             )
@@ -904,8 +901,8 @@ def post_approval(
             kb_refs=[],
             evidence_refs=list(orig.evidence_refs) if orig and orig.evidence_refs else [],
         )
-        state._record_note(actor=user, reason="modified action set applied to the recommendation "
-                                              "(written by the AOM, not from approved knowledge; passed G1)")
+        state._record_note(actor=user, reason=f"AOM replaced the recommended action with the tree's "
+                                              f"'{template['type']}' procedure (cites no knowledge)")
     return {"case_id": case_id, "current_state": state.current_state.value}
 
 
@@ -1144,13 +1141,13 @@ def list_pills(user: str = Depends(resolve_user)) -> dict:
     return {"pills": pills}
 
 
-@app.get("/actions/types")
-def list_action_types(user: str = Depends(resolve_user)) -> dict:
-    """The kinds of work the agent can recommend; an AOM's modification picks one."""
+@app.get("/cases/{case_id}/action-templates")
+def list_action_templates(case_id: str, user: str = Depends(resolve_user)) -> dict:
+    """The procedures this case's fault tree can recommend; a Modify picks one."""
     _need(user, "view_case")
-    from .decision_tree import ACTION_TYPES
+    from .decision_tree import action_templates
 
-    return {"action_types": list(ACTION_TYPES)}
+    return {"templates": action_templates(_get_case(case_id).observation.type)}
 
 
 @app.get("/system/info")
@@ -1542,8 +1539,12 @@ def reject_proposal(proposal_id: str, reason: str, user: str = Depends(resolve_u
 
 
 @app.post("/kb/proposals/{proposal_id}/revoke")
-def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(resolve_user)) -> dict:
-    """Withdraw one approved proposal's knowledge, leaving everything else."""
+def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(resolve_user),
+                    pills: str | None = None) -> dict:
+    """Withdraw one approved proposal's knowledge, leaving everything else.
+
+    ``pills`` (comma-separated) withdraws only that part of a proposal filed
+    under several pills, so each pill's steward can withdraw their own."""
     _need(user, "approve_knowledge_version")
     from .learning import STORE as _LSTORE
     from .rbac import Role
@@ -1558,13 +1559,19 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
         from .learning import proposal_pills
 
         p = _LSTORE.find_proposal(proposal_id)
-        others = [x for x in proposal_pills(p) if not _decides_pill(x, user, p.get("submitted_by"))] if p else []
+        scope = wanted if (wanted := [x.strip() for x in (pills or "").split(",") if x.strip()]) \
+            else (proposal_pills(p) if p else [])
+        others = [x for x in scope if not _decides_pill(x, user, p.get("submitted_by"))] if p else []
         if others:
+            mine = [x for x in proposal_pills(p) if _decides_pill(x, user, p.get("submitted_by"))]
             raise HTTPException(
-                403, f"this knowledge also covers {', '.join(others)}, which {user} does not decide; "
-                     "its owning steward or an admin revokes it")
+                403, f"{user} does not decide {', '.join(others)}; that part is for its own steward "
+                     "(or an admin) to withdraw"
+                     + (f". You can withdraw your part: {', '.join(mine)}" if mine else ""))
     try:
-        return _LSTORE.revoke_proposal(proposal_id, actor=user, reason=reason)
+        return _LSTORE.revoke_proposal(
+            proposal_id, actor=user, reason=reason,
+            pills=[x.strip() for x in pills.split(",") if x.strip()] if pills else None)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 

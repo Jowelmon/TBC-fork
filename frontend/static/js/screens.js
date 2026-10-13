@@ -135,10 +135,12 @@ const kbRef = r => {
     : String(r).replace(/^KB-H(\d+)$/, 'site heuristic H$1').replace(/^KB-(CH|UPS|PMP)(\d+)$/, 'site heuristic $1-$2');
   return `<span class="kb-ref" title="${_esc(r)}">${_esc(label)}</span>`;
 };
-// A symptom is shown after a "When" label; drop the expert's own leading
-// "When"/"If" so it never reads "When When the supply air...".
+// A symptom is shown after a "When" label; drop only a repeated leading
+// "When"/"Whenever" so it never reads "When When the supply air...". Any
+// other wording ("If the axial vibration...") is the expert's own sentence
+// and is shown exactly as they said it.
 const whenText = t => {
-  const s = String(t || '').trim().replace(/^(when|if|whenever)\s+/i, '');
+  const s = String(t || '').trim().replace(/^(when|whenever)\s+/i, '');
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
@@ -600,7 +602,7 @@ export function renderDashboard(el, state, h) {
         : c.current_state === 'AWAITING_APPROVAL' && api.can('approve_reject_modify') ? ['decision', 'Decide']
         : c.current_state === 'ESCALATED' && api.can('approve_reject_modify') ? ['decision', 'Resolve']
         : ['MONITORING_OUTCOME', 'RECORDING_OUTCOME'].includes(c.current_state) && api.can('record_outcome') && (c.human_decision || {}).decided_by !== api.user() ? ['outcome', 'Record outcome']
-        : c.current_state === 'EXECUTING' && api.can('approve_reject_modify') ? ['outcome', 'Raise work order']
+        : c.current_state === 'EXECUTING' && api.can('approve_reject_modify') ? ['outcome', 'Work order']
         : null;
       return `<tr class="clickable" tabindex="0" role="link" aria-label="Open case ${c.case_id} on ${c.asset_id}" onclick="window.__app__.navigate('diagnosis', '${c.case_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.__app__.navigate('diagnosis', '${c.case_id}')}">
         <td><code>${esc(c.case_id)}</code></td>
@@ -1059,7 +1061,11 @@ export function renderDecision(el, state, h) {
         ? (canApprove ? 'resolve the escalation below, or request more evidence to have the agent gather and diagnose it again.'
                       : 'escalated: an Asset Ops Manager or expert resolves it or requests more evidence.')
         : s.current_state === 'AWAITING_APPROVAL'
-        ? (canApprove ? 'approve, reject or modify sends the case to execution.' : 'an Asset Ops Manager needs to approve, reject or modify this.')
+        ? (!canApprove ? 'an Asset Ops Manager needs to approve, reject or modify this.'
+          : s.knowledge_withdrawn ? (s.ledger_valid === false
+            ? 'knowledge it relied on is withheld until an auditor reviews the ledger; you can still reject.'
+            : 're-score the case against the current knowledge first; you can still reject.')
+          : 'approve or modify to raise a work order, or reject to close the case.')
         : s.current_state === 'EXECUTING'
         ? 'approved: raise the work order on the Outcome screen.'
         : s.current_state === 'MONITORING_OUTCOME'
@@ -1285,27 +1291,28 @@ export function renderDecision(el, state, h) {
       }
 
       async function showModifyForm() {
-        let types = [];
-        try { types = (await api.get('/actions/types')).action_types; } catch (e) { /* the server still checks */ }
+        let templates = [];
+        try { templates = (await api.get(`/cases/${cid}/action-templates`)).templates; } catch (e) { /* the server still checks */ }
         const current = ((s.recommendation || {}).actions || [])[0] || {};
+        const others = templates.filter(t => !(t.type === current.type && t.detail === current.detail));
         setHTML('decision-form', `
-          <div class="form-group"><label for="rat-text">Rationale (required for modify)</label><textarea id="rat-text" placeholder="Explain the modification..."></textarea></div>
-          <p class="muted" style="margin-bottom:8px">Your action is recorded as yours and cites no knowledge. Pick the kind of work from the agent's own list. Anything touching a protection, alarm, setpoint or control setting, or live working, is refused: reject instead and raise it through the site's engineering change process.</p>
-          <div class="grid-2">
-            <div class="form-group"><label for="mod-type">Modified Action Type</label><select id="mod-type">${types.map(t => `<option value="${esc(t)}"${t === current.type ? ' selected' : ''}>${esc(plain(t))}</option>`).join('')}</select></div>
-            <div class="form-group"><label for="mod-target">Modified Action Target</label><input id="mod-target" type="text" placeholder="e.g. CRAH-DC1-01 / SA-TEMP-01"></div>
-          </div>
-          <div class="form-group"><label for="mod-detail">Modified Action Detail</label><input id="mod-detail" type="text" placeholder="e.g. Replace supply-air RTD sensor"></div>
+          <div class="form-group"><label for="rat-text">Rationale (required for modify)</label><textarea id="rat-text" placeholder="Why this procedure instead of the recommended one..."></textarea></div>
+          <p class="muted" style="margin-bottom:8px">Pick another of the procedures this fault's decision tree can recommend. The work order carries that reviewed procedure, never free text, and cites no knowledge. Your reasoning is recorded as the rationale. Anything outside these procedures goes through the site's engineering change process.</p>
+          <div class="form-group"><label for="mod-template">Procedure</label>
+            <select id="mod-template">${others.map((t, i) => `<option value="${i}">${esc(plain(t.type))} · ${esc(plain(t.target))}</option>`).join('')}</select></div>
+          <p class="muted" id="mod-detail-view" style="margin-bottom:8px"></p>
           ${hazardAck()}
-          <button class="btn btn-secondary" id="btn-confirm-modify">Confirm Modification</button>
+          <button class="btn btn-secondary" id="btn-confirm-modify" ${others.length ? '' : 'disabled'}>Confirm Modification</button>
         `);
+        const sel = document.getElementById('mod-template');
+        const showDetail = () => { const t = others[Number(sel.value)]; document.getElementById('mod-detail-view').textContent = t ? `Procedure: ${t.detail}` : 'No other procedure for this fault.'; };
+        sel.onchange = showDetail; showDetail();
         document.getElementById('btn-confirm-modify').onclick = async () => {
           const rat = document.getElementById('rat-text').value.trim();
-          const mt = document.getElementById('mod-type').value.trim();
-          const mtg = document.getElementById('mod-target').value.trim();
-          if (!rat || !mt || !mtg) { showToast('Rationale, type, and target are required', 'error'); return; }
+          const t = others[Number(sel.value)];
+          if (!rat || !t) { showToast('A rationale and a procedure are required', 'error'); return; }
           if (!ackOk()) { showToast('Acknowledge the hazard before modifying', 'error'); return; }
-          try { await api.post(`/cases/${cid}/approval`, { decision: 'modify', hazard_acknowledged: hazardReason ? 'true' : '', rationale: rat, modified_action_type: mt, modified_action_target: mtg, modified_action_detail: document.getElementById('mod-detail').value }); showToast('Modification submitted', 'success'); load(); }
+          try { await api.post(`/cases/${cid}/approval`, { decision: 'modify', hazard_acknowledged: hazardReason ? 'true' : '', rationale: rat, modified_action_type: t.type, modified_action_target: t.target, modified_action_detail: t.detail }); showToast('Modification submitted', 'success'); load(); }
           catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
       }
@@ -1606,6 +1613,10 @@ export function renderGovernance(el, state, h) {
 
   // Approved proposals, each revocable on its own: withdrawing one bad
   // item should not require rolling back everything approved after it.
+  // A proposal filed under several pills can be withdrawn one pill at a
+  // time, so each pill's steward withdraws their own part.
+  const livePills = p => Object.keys(p.kb_version_labels || p.kb_versions || {})
+    .filter(x => !(p.rolled_back_pills || []).includes(x) && !(p.revoked_pills || []).includes(x));
   async function loadApproved() {
     const body = document.getElementById('approved-body');
     if (!body) return;
@@ -1631,7 +1642,8 @@ export function renderGovernance(el, state, h) {
             : `${p.kind === 'escalation_resolution' ? 'Escalation resolution' : 'Outcome feedback'}: ${esc(causeLabel(p.confirmed_cause))} · ${esc(p.case_id)}`;
           return `<div class="rerun-row">
             <div><code>${pid}</code> ${what} <span class="muted">· approved by ${esc(p.decided_by)} · ${esc(Object.entries(p.kb_version_labels || {}).map(([k, v]) => `${k} v${v}`).join(', '))}</span></div>
-            <div class="flex gap-8"><input id="rv-reason-${pid}" type="text" placeholder="Reason (required)" style="min-width:200px">
+            <div class="flex gap-8"><input id="rv-reason-${pid}" type="text" placeholder="Reason (required)" aria-label="Reason for revoking ${pid}" style="min-width:200px">
+            ${livePills(p).length > 1 ? `<select id="rv-pill-${pid}" aria-label="Which part to revoke"><option value="">All pills</option>${livePills(p).map(x => `<option value="${esc(x)}">${esc(x)} part only</option>`).join('')}</select>` : ''}
             <button class="btn btn-red btn-sm" id="rv-go-${pid}">Revoke</button></div>
           </div>`;
         }).join('');
@@ -1641,8 +1653,9 @@ export function renderGovernance(el, state, h) {
           const reason = document.getElementById(`rv-reason-${p.proposal_id}`).value.trim();
           if (!reason) { showToast('Give a reason for revoking', 'error'); return; }
           try {
-            const r = await api.post(`/kb/proposals/${p.proposal_id}/revoke`, { reason });
-            showToast(`${p.proposal_id} revoked (${r.removed_items} item(s) withdrawn)`, 'success');
+            const pill = document.getElementById(`rv-pill-${p.proposal_id}`)?.value || '';
+            const r = await api.post(`/kb/proposals/${p.proposal_id}/revoke`, pill ? { reason, pills: pill } : { reason });
+            showToast(`${p.proposal_id}${pill ? ` (${pill} part)` : ''} revoked (${r.removed_items} item(s) withdrawn)`, 'success');
             refreshAll();
           } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
@@ -2084,6 +2097,7 @@ export function renderGovernance(el, state, h) {
     audit_chain_failure_on_load: 'Audit chain failed on restart',
     anchor_missing: 'No integrity anchor for this database',
     anchor_invalid: 'Integrity anchor was edited',
+    database_replaced: 'A different database was put in place',
   };
   async function loadTamperEvents() {
     const body = document.getElementById('tamper-body');
@@ -2099,7 +2113,8 @@ export function renderGovernance(el, state, h) {
         body.innerHTML = `<div class="empty-state"><div class="empty-state-icon">[!]</div><div class="empty-state-title">Clean</div><div class="empty-state-desc">No tamper events detected. Every snapshot written matches what this process last saw, and every audit chain verified on load.</div></div>`;
         return;
       }
-      body.innerHTML = `<div class="banner banner-warn" style="margin-bottom:8px"><p><strong>${events.length} integrity event(s) detected</strong> — the tampered snapshot was archived (see paths below) before the clean state overwrote the file, so no restart can erase the evidence.</p></div>
+      const archived = events.some(e => e.archived_path);
+      body.innerHTML = `<div class="banner banner-warn" style="margin-bottom:8px"><p><strong>${events.length} integrity event(s) recorded.</strong> ${archived ? 'Where a snapshot was tampered with, it was archived (paths below) before the clean state overwrote the file, so no restart can erase the evidence.' : 'Each says what was found; review any frozen record on this tab.'}</p></div>
         <ul style="margin:0 0 0 18px">${events.slice().reverse().map(e => `<li style="margin-bottom:6px"><strong>${esc(TAMPER_EVENTS[e.event] || e.event)}</strong> — ${esc(e.detail)}${e.archived_path ? ' · <code>' + esc(e.archived_path) + '</code>' : ''}<div class="muted" style="font-size:12px">${esc(e.at)}</div></li>`).join('')}</ul>`;
     } catch (e) {
       setHTML('tamper-body', isForbidden(e)

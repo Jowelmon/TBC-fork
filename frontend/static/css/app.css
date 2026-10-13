@@ -944,6 +944,13 @@ th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { 
 .dash-toolbar .next-hint { margin-bottom: 0; }
 #how-it-works { margin-top: 20px; }
 #cases-table td:nth-child(1), #cases-table td:nth-child(2) { white-space: nowrap; }
+/* The next step for this role never wraps or clips at projector widths. */
+#cases-table td:last-child, #cases-table th:last-child { white-space: nowrap; }
+#cases-table td:last-child .btn { white-space: nowrap; }
+@media (max-width: 1100px) {
+  #cases-table td:nth-child(1) code { font-size: 13px; }
+  #cases-table td .badge { white-space: nowrap; }
+}
 @media (max-width: 768px) { .nav-brand { flex-direction: column; gap: 6px; padding: 12px 8px; } .nav-brand .nav-arrow { margin-left: 0; } }
 .nav-brand { gap: 10px; padding-right: 8px; }
 .nav-title { white-space: nowrap; }

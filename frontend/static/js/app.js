@@ -255,7 +255,9 @@ async function signIn(userId) {
   catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
 }
 
-async function setRole(role) {
+// ``render: false`` when the caller navigates straight after: two renders
+// racing into the same container would leave the slower (old) screen on top.
+async function setRole(role, { render = true } = {}) {
   if (roleSelect.value === role && state.role === role) return true;
   if (!(await signIn(role))) {
     roleSelect.value = state.role; // revert the dropdown
@@ -265,7 +267,7 @@ async function setRole(role) {
   state.role = role;
   roleBadge.textContent = roleDisplayName(state.role);
   updateKbFooter();
-  renderScreen();
+  if (render) renderScreen();
   return true;
 }
 

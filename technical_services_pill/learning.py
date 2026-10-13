@@ -63,6 +63,9 @@ _STOP = {
     "week", "usually", "story", "especially", "almost", "never", "always", "just", "only",
     "first", "thing", "look", "check", "sure", "make", "it's", "that's", "sensor", "sensors",
     "pump", "chiller", "unit", "ups", "crah", "if", "the", "and", "for", "you", "it",
+    # "past" comes from the is_past_calibration flag name, not from what an
+    # expert said to look for: on its own it is not a match.
+    "past",
 }
 
 
@@ -229,7 +232,8 @@ class LearningStore:
             "revocations": self._revocations,
             "validated": sorted(
                 (vc.id, vc.case_id, vc.asset_type, vc.confirmed_cause, vc.outcome,
-                 vc.kb_version, vc.weight, vc.fault_signature, vc.validated_by, vc.action_taken)
+                 vc.kb_version, vc.weight, vc.fault_signature, vc.validated_by, vc.action_taken,
+                 vc.proposed_cause)
                 for vc in self.validated
             ),
             # Every field shown to an AOM is covered, not only the ids.
@@ -249,6 +253,7 @@ class LearningStore:
                 # Appended only when present, so ledgers sealed before
                 # per-pill sign-off existed still verify.
                 + ((p["signoffs"],) if p.get("signoffs") else ())
+                + ((tuple(p["revoked_pills"]),) if p.get("revoked_pills") else ())
                 for p in self._proposals
             ],
         }
@@ -636,10 +641,15 @@ class LearningStore:
                   reason=reason.strip())
         return p
 
-    def revoke_proposal(self, proposal_id: str, *, actor: str, reason: str) -> dict[str, Any]:
+    def revoke_proposal(self, proposal_id: str, *, actor: str, reason: str,
+                        pills: list[str] | None = None) -> dict[str, Any]:
         """Withdraw one approved proposal's knowledge, leaving everything
         else. Each affected pill moves to a new version; the revocation is
-        permanent (a later rollback does not bring it back)."""
+        permanent (a later rollback does not bring it back).
+
+        ``pills`` withdraws only that part of a proposal filed under several
+        pills (each pill's steward withdraws their own); the proposal is
+        revoked once every pill's part has been withdrawn."""
         self._require_verified()
         if not reason.strip():
             raise ValueError("a revocation needs a reason")
@@ -648,21 +658,37 @@ class LearningStore:
             raise ValueError(f"proposal {proposal_id} not found")
         if p["status"] != "approved":
             raise ValueError(f"proposal {proposal_id} is {p['status']}, not approved")
+        live = {pill: v for pill, v in (p.get("kb_versions") or {}).items()
+                if pill not in (p.get("rolled_back_pills") or [])
+                and pill not in (p.get("revoked_pills") or [])}
+        target = set(live) if pills is None else set(pills)
+        if not target or not target <= set(live):
+            raise ValueError(f"proposal {proposal_id} has no live knowledge under "
+                             f"{', '.join(sorted(target - set(live))) or 'those pills'}; "
+                             f"live: {', '.join(sorted(live)) or 'none'}")
         ids = set(p.get("expert_heuristic_ids") or [])
         if p.get("validated_case_id"):
             ids.add(p["validated_case_id"])
+        pill_of = {**{v.id: v.asset_type for v in self.validated},
+                   **{h["id"]: h.get("asset_type") for h in self.expert_heuristics}}
+        ids = {i for i in ids if pill_of.get(i) in target}
         removed = self._remove_where(lambda vc: vc.id not in ids)
-        self.expert_heuristics = [h for h in self.expert_heuristics if h.get("proposal_id") != proposal_id]
+        mine = {h["id"] for h in self.expert_heuristics if h.get("proposal_id") == proposal_id
+                and h.get("asset_type") in target}
+        self.expert_heuristics = [h for h in self.expert_heuristics if h["id"] not in mine]
         before = dict(self._kb_version)
-        p["status"] = "revoked"
-        still_live = {pill: v for pill, v in (p.get("kb_versions") or {}).items()
-                      if pill not in (p.get("rolled_back_pills") or [])}
+        if target == set(live):
+            p["status"] = "revoked"
+        else:
+            p["revoked_pills"] = sorted({*(p.get("revoked_pills") or []), *target})
+        still_live = {pill: v for pill, v in live.items() if pill in target}
         for pill, version in still_live.items():
             self._bump(pill, actor=actor, proposal_id=None)
             self._revocations.append({"pill": pill, "proposal_version": version,
                                       "ledger_seq": len(self.ledger) + 1})
+        part = "" if p["status"] == "revoked" else f"{', '.join(sorted(target))} part only: "
         self._log(actor=actor, action="proposal_revoked", proposal_id=proposal_id,
-                  reason=reason.strip(), versions_before=before)
+                  reason=part + reason.strip(), versions_before=before)
         return {"revoked": proposal_id, "removed_items": removed, "pills": sorted(still_live),
                 "kb_versions": {pill: self._kb_version[pill] for pill in still_live}}
 

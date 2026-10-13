@@ -80,7 +80,7 @@ def test_a_safe_modified_action_is_marked_as_the_aoms_own(client):
     cid = _awaiting(client)
     r = client.post(f"/cases/{cid}/approval", params={
         "user": "mgr1", "decision": "modify", "rationale": "check wiring first",
-        "modified_action_type": "onsite_inspection", "modified_action_target": "SA-TEMP-01",
-        "modified_action_detail": "Check the terminal wiring before replacing the sensor"})
+        "modified_action_type": "onsite_inspection", "modified_action_target": "sensor_wiring",
+        "modified_action_detail": "Onsite re-seat/inspect wiring."})
     assert r.status_code == 200, r.text
     assert store.STORE.get(cid).recommendation.actions[0].kb_refs == []

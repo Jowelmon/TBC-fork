@@ -121,3 +121,85 @@ def test_an_edited_anchor_is_reported(db):
     with TestClient(app) as c:
         events = c.get("/system/integrity", params={"user": "auditor1"}).json()["events"]
     assert any(e["event"] == "anchor_invalid" for e in events)
+
+
+def _awaiting_case(c) -> str:
+    cid = c.post("/cases", params=NEW_CASE).json()["case_id"]
+    c.post(f"/cases/{cid}/advance", params={"user": "tech1"})
+    return cid
+
+
+def test_rolling_back_a_single_case_is_caught(db):
+    """Judge 6: copy the database, reject a case, put the copy back. The
+    ledger and the case set are unchanged, but the case's own history is
+    shorter than the anchor recorded, so it is frozen until reviewed."""
+    with TestClient(app) as c:
+        cid = _awaiting_case(c)
+    older = db.with_name("older.sqlite")
+    shutil.copyfile(db, older)
+    with TestClient(app) as c:
+        r = c.post(f"/cases/{cid}/approval", params={"user": "mgr1", "decision": "reject", "rationale": "wrong cause"})
+        assert r.status_code == 200, r.text
+    shutil.copyfile(older, db)
+    _restart()
+    with TestClient(app) as c:
+        st = _status(c)
+        assert cid in st["broken_cases"] and "older copy of this case" in st["case_problems"][cid]
+        r = c.post(f"/cases/{cid}/approval", params={"user": "mgr1", "decision": "approve", "rationale": "x"})
+        assert r.status_code == 423  # the rejection cannot be undone by putting a file back
+        r = c.post("/audit/review", params={"user": "auditor1", "target": f"case:{cid}", "decision": "quarantine",
+                                            "reason": "record rolled back outside the app"})
+        assert r.status_code == 200 and cid not in r.json()["broken_cases"]
+    _restart()
+    with TestClient(app) as c:
+        assert _status(c)["ok"] is True
+
+
+def test_the_anchor_follows_the_database_not_its_path(db, monkeypatch):
+    """Moved or opened under a differently-cased path, an older copy is still
+    checked against its own anchor (it carries its id inside)."""
+    older, _ = _two_sessions(db)
+    moved = db.with_name("Moved-DB.sqlite")
+    shutil.copyfile(older, moved)
+    monkeypatch.setenv("TBC_DB_PATH", str(moved))
+    _restart()
+    with TestClient(app) as c:
+        assert "older copy" in (_status(c)["ledger_problem"] or "")
+
+
+def test_a_different_database_at_the_same_path_is_reported_and_checked(db, tmp_path, monkeypatch):
+    _two_sessions(db)
+    other = tmp_path / "other" / "tbc.sqlite"
+    monkeypatch.setenv("TBC_DB_PATH", str(other))
+    for reset in (persistence._last_written, persistence._reported):
+        reset.clear()
+    store.STORE._cases.clear()
+    store.STORE.reseal()
+    learning.STORE.__init__()
+    with TestClient(app) as c:
+        c.post("/cases", params=NEW_CASE)
+    shutil.copyfile(other, db)  # another deployment's database, its own seals intact
+    monkeypatch.setenv("TBC_DB_PATH", str(db))
+    _restart()
+    with TestClient(app) as c:
+        events = c.get("/system/integrity", params={"user": "auditor1"}).json()["events"]
+        assert any(e["event"] == "database_replaced" for e in events)
+        assert _status(c)["ok"] is False
+        c.post("/cases", params=NEW_CASE)  # saves happen; they must not launder the swap
+    _restart()
+    with TestClient(app) as c:
+        assert _status(c)["ok"] is False
+        r = c.post("/audit/review", params={"user": "auditor1", "target": "ledger", "decision": "accept",
+                                            "reason": "moved the other site's database here on purpose"})
+        assert r.status_code == 200, r.text
+        for target in ("registry",):
+            if not _status(c)["registry_valid"]:
+                c.post("/audit/review", params={"user": "auditor1", "target": target, "decision": "accept",
+                                                "reason": "same move"})
+        for cid in _status(c)["broken_cases"]:
+            c.post("/audit/review", params={"user": "auditor1", "target": f"case:{cid}", "decision": "accept",
+                                            "reason": "same move"})
+        assert _status(c)["ok"] is True
+    _restart()
+    with TestClient(app) as c:  # accepted: the new database is the baseline now
+        assert _status(c)["ok"] is True

@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (405 tests) |
+| `make test` | pytest suite (571 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -102,7 +102,7 @@ person or a work order):
 
 | Rule | Trigger | Action |
 |---|---|---|
-| G1 | Recommendation (the agent's, or an AOM's Modify) touches a BMS setpoint, interlock, safety system or firmware, or defeats a protection | Block and escalate. A Modify is held to more: its kind of work comes from the agent's own action list, and any wording that names a protection, alarm, setpoint or control setting, or live working, is refused (deny by default, not a list of bad phrasings). It cites no knowledge, and the sentinel re-checks it |
+| G1 | Recommendation (the agent's, or an AOM's Modify) touches a BMS setpoint, interlock, safety system or firmware, or defeats a protection | Block and escalate. A Modify carries no free text to a work order: the AOM picks another of the procedures this fault's decision tree can recommend (type, target and procedure, unchanged), and their reasoning is the rationale. It cites no knowledge, and the sentinel independently checks it is one of the fault's procedures |
 | G2 | Safety-critical fault (cooling lost and temperature rising) | Escalate |
 | G2b | Environmental/pressure hazard (e.g. refrigerant leak), or hazardous readings whatever the cause (a battery at 40 °C or more and still rising) | Approval with a hazard acknowledgement |
 | G3 | Cause belongs to another pill's domain | Coordinate and escalate |
@@ -131,15 +131,20 @@ review, second-steward approval.
     in textbook or everyday words. Examples: bypass, jumper, wire across,
     wind up the cut-out, set the overload to max, cable-tie the contactor
     closed, a magnet on the flow reed, unplug the leak rope, clip the probe
-    to the frame, "so it never cuts in". A prohibition ("never bypass the
-    interlock") is kept.
+    to the frame, "so it never cuts in", a bag over the smoke head, cells
+    changed while the string is energised, an alarm limit moved to 60 C, an
+    offset "so it reads normal". Text is normalised first (hidden characters
+    removed, look-alike letters mapped), and a "prohibition" that keeps a
+    protection off ("do not reinstate the trip until...") counts as an
+    instruction. A real prohibition ("never bypass the interlock") is kept.
   - **Safety-reviewed:** every check is an action on equipment, so approving
     any expert knowledge needs the steward to tick "safety reviewed".
     Without the tick it does not go live, and a check that was never
     reviewed is withheld from display.
   - **Guidance only:** a line that names a protective device or describes
-    work on one (alarm, trip, contactor, probe, hand mode, lifting a wire)
-    is labelled as such and never raises a diagnosis's confidence.
+    work on one (alarm, trip, contactor, probe, hand mode, lifting a wire,
+    a threshold, a BMS "ignore"), or that the screen cannot read (another
+    script), is labelled as such and never raises a diagnosis's confidence.
 
 - **Visible when the AI invents something.** The Capture screen's
   **Grounding check** lists every drafted line that was kept and every line
@@ -173,8 +178,9 @@ failure is reported in plain language, never silently replaced.
   steward (if the owner proposed it, another steward stands in), and
   nothing goes live until every pill has signed. Nobody approves or rejects
   their own proposal, and an admin cannot decide on knowledge at all
-  (admins can revoke and roll back; a steward revokes alone only knowledge
-  whose every pill they decide). Approval needs a
+  (admins can revoke and roll back; a steward revokes knowledge on the
+  pills they decide, so on a proposal filed under several pills each
+  steward withdraws their own part). Approval needs a
   rationale, rejection a reason, and expert interviews need recorded
   consent. The roster is configurable (`TBC_PILL_OWNERS`).
 - **Per-pill versions.** Each pill versions its own knowledge (`CRAH v1.4.0`).
@@ -252,13 +258,16 @@ find things; it never acts on a case.
 - **Anchor against rollback.** Every seal lives inside the snapshot it
   protects, so an older, genuinely signed copy of the database would pass on
   its own. Each save also writes a signed anchor beside the audit key (not
-  beside the database): the ledger's length and head hash and the case IDs.
-  A ledger that is not an extension of it, or a case it lists that is gone,
-  fails verification ("an older copy of the knowledge base was put back").
-  An auditor's Accept makes the older copy the new baseline, on the record.
-  A missing or edited anchor is logged as an integrity event, but cannot be
-  told apart from a reset, so in production the key and anchor belong off
-  the database host.
+  beside the database): the ledger's length and head hash, and each case's
+  history length and head hash. A ledger or a case history that is not an
+  extension of it, or a case it lists that is gone, fails verification ("an
+  older copy ... was put back") and is frozen until an auditor reviews it;
+  Accept makes the older copy the new baseline, on the record. Anchors are
+  filed under an id stored inside each database, so a moved or renamed file
+  keeps its anchor, and a signed path index catches a different database
+  swapped in at the same path. A missing or edited anchor is logged as an
+  integrity event but cannot be told apart from a reset, so in production
+  the key and anchors belong off the database host.
 
   A reason is required. The review is written to the reviewed chain and to
   the ledger, with the head hash that had failed. The ledger is reviewed

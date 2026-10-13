@@ -203,3 +203,16 @@ def test_pin_lockout_and_unlock_cookie(monkeypatch):
     me = c.post("/login", json={"user_id": "tech1"})  # switching back needs no PIN
     assert me.status_code == 200 and me.json()["role"] == "technician"
     assert c.get("/me").json()["capabilities"] == me.json()["capabilities"]
+
+
+def test_editing_a_validated_cases_proposed_cause_is_detected(client):
+    """Judge 6: proposed_cause feeds the corrected-diagnosis stats, so an
+    edit to it outside governance must break the ledger like any other."""
+    _approved_feedback(client)
+    vc = LSTORE.validated[-1]
+    vc.proposed_cause, saved = "aliens_did_it", vc.proposed_cause
+    try:
+        assert LSTORE.verify_ledger() is False
+    finally:
+        vc.proposed_cause = saved
+    assert LSTORE.verify_ledger()
