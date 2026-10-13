@@ -537,10 +537,8 @@ def _advance(state: AgentState) -> None:
             # data, so hand the case to a human instead.
             from .tools import gather_evidence_for_fault
 
-            seen = {(e.source, e.type, repr(e.payload)) for e in state.evidence}
-            fresh = [ev for ev in gather_evidence_for_fault(state.asset_id, state.observation.type,
-                                                            state.observation.sensor_id)
-                     if (ev.source, ev.type, repr(ev.payload)) not in seen]
+            fresh = state.refresh_evidence(gather_evidence_for_fault(
+                state.asset_id, state.observation.type, state.observation.sensor_id), actor="agent")
             if not fresh:
                 state.escalate_for_evidence(
                     actor="agent",
@@ -549,9 +547,6 @@ def _advance(state: AgentState) -> None:
                             "needs a human"),
                 )
                 break
-            for ev in fresh:
-                state.add_evidence(ev, actor="agent")
-            state._record_note(actor="agent", reason=f"re-gathered {len(fresh)} new evidence items")
 
     # If the case escalated via G4 (low confidence / max gathering loops)
     # but a diagnosis with a resolvable top cause exists, evaluate
@@ -1935,6 +1930,12 @@ def request_more_evidence(case_id: str, reason: str, user: str = Depends(resolve
         state.request_more_evidence(actor=user, reason=reason)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    # Re-read the sources first, so the re-diagnosis scores today's readings
+    # rather than the ones gathered when the case was opened.
+    from .tools import gather_evidence_for_fault
+
+    state.refresh_evidence(gather_evidence_for_fault(
+        state.asset_id, state.observation.type, state.observation.sensor_id), actor="agent")
     # Gather and re-diagnose straight away, with the knowledge live now, so
     # the AOM sees the outcome instead of a case parked in gathering.
     _advance(state)

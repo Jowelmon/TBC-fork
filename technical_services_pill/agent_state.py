@@ -48,6 +48,16 @@ from .models import (
 )
 
 
+# Timestamps say when a reading was taken, not what it says: the same
+# reading read again is the same evidence.
+_VOLATILE_PAYLOAD_KEYS = frozenset({"ts", "last_good_ts"})
+
+
+def evidence_key(e: EvidenceItem) -> tuple[str, str, str]:
+    payload = {k: v for k, v in e.payload.items() if k not in _VOLATILE_PAYLOAD_KEYS}
+    return (e.source, e.type, repr(payload))
+
+
 class AgentState:
     """Mutable, deterministic, audit-chained agent state.
 
@@ -258,6 +268,25 @@ class AgentState:
             raise ValueError("evidence can only be added while gathering or escalated")
         self.evidence.append(item)
         self._retrieval_rounds += 1
+
+    def refresh_evidence(self, items: list[EvidenceItem], *, actor: str = "agent") -> int:
+        """Re-read the evidence sources. An item already held (same source,
+        type and reading, whatever its timestamps) is replaced by the fresh
+        copy, so W4 ages it from this read rather than the first one; the
+        rest is added. Returns how many items were new."""
+        held = {evidence_key(e): n for n, e in enumerate(self.evidence)}
+        new = 0
+        for item in items:
+            n = held.get(evidence_key(item))
+            if n is None:
+                self.add_evidence(item, actor=actor)
+                held[evidence_key(item)] = len(self.evidence) - 1
+                new += 1
+            else:
+                self.evidence[n] = item
+        self._record_note(actor=actor, reason=f"re-read evidence sources: {new} new item(s), "
+                                              f"{len(items) - new} re-confirmed")
+        return new
 
     def begin_diagnosing(
         self, *, actor: str = "agent", force: bool = False
