@@ -229,25 +229,3 @@ def said_as_prohibition(line: str, answer: str) -> bool:
     return at > 0 and bool(re.search(r"\b(?:never|don'?t|do\s+not|must\s+not)(?:\s+[\w']+){0,3}\s*$",
                                      low_answer[:at]))
 
-
-# Words that change how equipment is controlled or protected, or say the
-# work is done live. Knowledge naming them goes to a steward's review; an
-# action a person types into a work order has no reviewer after them, so
-# for that it is a refusal.
-_CONTROL_CHANGE = re.compile(
-    r"\b(?:overrid\w*|overrode|inhibit\w*|suppress\w*|by-?pass\w*|disabl\w*|jumper\w*|"
-    r"forc(?:e|es|ed|ing)\b|set[- ]?points?|settings?|firmware|bms\s+config\w*|"
-    r"without\s+(?:first\s+)?(?:isolat\w*|lock\w*|proving|making\s+(?:it\s+)?safe)|"
-    r"energi[sz]ed|(?:hot|live)[- ](?:work\w*|swap\w*)|work\w*\s+(?:hot|live)|"
-    r"while\s+(?:it'?s\s+|it\s+is\s+|still\s+)?(?:live|energi[sz]ed|running|on\s+load))",
-    re.IGNORECASE,
-)
-
-
-def needs_change_process(text: str) -> bool:
-    """True if a hand-written work-order action touches a protection, a
-    setpoint or control setting, or live working, in any clause that is not
-    a prohibition. Deny by default: the AOM rejects the recommendation and
-    raises it through the site's engineering change process instead."""
-    return defeats_safety(text) or touches_protection(text) or any(
-        _CONTROL_CHANGE.search(part) for part in _open_clauses(text))

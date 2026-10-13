@@ -99,9 +99,9 @@ def inspect(state: AgentState) -> list[str]:
             findings.append(f"evidence item {ev.type!r} has an unexpected source or shape")
 
     # 3. Grounding: an actionable recommendation cites knowledge and this case's evidence.
-    # The exception is an action the AOM wrote by Modify: it was drawn from no
-    # knowledge, so it must cite none, and it gets the change-process screen
-    # again here, independently of the approval endpoint.
+    # The exception is an action the AOM chose by Modify: it was drawn from no
+    # knowledge, so it must cite none, and it must be one of this fault's
+    # tree procedures, unchanged (checked here independently of the endpoint).
     rec = state.recommendation
     hd = state.human_decision
     if rec and rec.actions:
@@ -109,15 +109,14 @@ def inspect(state: AgentState) -> list[str]:
                            and [a.model_dump() for a in rec.actions]
                            == [a.model_dump() for a in hd.modified_actions])
         if aom_written:
-            from .decision_tree import ACTION_TYPES
-            from .safety import needs_change_process
+            from .decision_tree import is_action_template
 
             if rec.kb_refs or any(a.kb_refs for a in rec.actions):
-                findings.append("an action the AOM wrote cites knowledge it was not drawn from")
+                findings.append("an action the AOM chose cites knowledge it was not drawn from")
             for a in rec.actions:
-                if a.type not in ACTION_TYPES or needs_change_process(f"{a.target} {a.detail}"):
-                    findings.append(f"an action the AOM wrote ({a.type}) needs the engineering "
-                                    "change process, not a work order")
+                if not is_action_template(state.observation.type, a.type, a.target, a.detail):
+                    findings.append(f"an action the AOM chose ({a.type}) is not one of this "
+                                    "fault's reviewed procedures")
         elif not rec.kb_refs:
             findings.append("the recommendation cites no knowledge")
         gathered = {e.type for e in state.evidence}

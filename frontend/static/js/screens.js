@@ -1285,27 +1285,28 @@ export function renderDecision(el, state, h) {
       }
 
       async function showModifyForm() {
-        let types = [];
-        try { types = (await api.get('/actions/types')).action_types; } catch (e) { /* the server still checks */ }
+        let templates = [];
+        try { templates = (await api.get(`/cases/${cid}/action-templates`)).templates; } catch (e) { /* the server still checks */ }
         const current = ((s.recommendation || {}).actions || [])[0] || {};
+        const others = templates.filter(t => !(t.type === current.type && t.detail === current.detail));
         setHTML('decision-form', `
-          <div class="form-group"><label for="rat-text">Rationale (required for modify)</label><textarea id="rat-text" placeholder="Explain the modification..."></textarea></div>
-          <p class="muted" style="margin-bottom:8px">Your action is recorded as yours and cites no knowledge. Pick the kind of work from the agent's own list. Anything touching a protection, alarm, setpoint or control setting, or live working, is refused: reject instead and raise it through the site's engineering change process.</p>
-          <div class="grid-2">
-            <div class="form-group"><label for="mod-type">Modified Action Type</label><select id="mod-type">${types.map(t => `<option value="${esc(t)}"${t === current.type ? ' selected' : ''}>${esc(plain(t))}</option>`).join('')}</select></div>
-            <div class="form-group"><label for="mod-target">Modified Action Target</label><input id="mod-target" type="text" placeholder="e.g. CRAH-DC1-01 / SA-TEMP-01"></div>
-          </div>
-          <div class="form-group"><label for="mod-detail">Modified Action Detail</label><input id="mod-detail" type="text" placeholder="e.g. Replace supply-air RTD sensor"></div>
+          <div class="form-group"><label for="rat-text">Rationale (required for modify)</label><textarea id="rat-text" placeholder="Why this procedure instead of the recommended one..."></textarea></div>
+          <p class="muted" style="margin-bottom:8px">Pick another of the procedures this fault's decision tree can recommend. The work order carries that reviewed procedure, never free text, and cites no knowledge. Your reasoning is recorded as the rationale. Anything outside these procedures goes through the site's engineering change process.</p>
+          <div class="form-group"><label for="mod-template">Procedure</label>
+            <select id="mod-template">${others.map((t, i) => `<option value="${i}">${esc(plain(t.type))} · ${esc(plain(t.target))}</option>`).join('')}</select></div>
+          <p class="muted" id="mod-detail-view" style="margin-bottom:8px"></p>
           ${hazardAck()}
-          <button class="btn btn-secondary" id="btn-confirm-modify">Confirm Modification</button>
+          <button class="btn btn-secondary" id="btn-confirm-modify" ${others.length ? '' : 'disabled'}>Confirm Modification</button>
         `);
+        const sel = document.getElementById('mod-template');
+        const showDetail = () => { const t = others[Number(sel.value)]; document.getElementById('mod-detail-view').textContent = t ? `Procedure: ${t.detail}` : 'No other procedure for this fault.'; };
+        sel.onchange = showDetail; showDetail();
         document.getElementById('btn-confirm-modify').onclick = async () => {
           const rat = document.getElementById('rat-text').value.trim();
-          const mt = document.getElementById('mod-type').value.trim();
-          const mtg = document.getElementById('mod-target').value.trim();
-          if (!rat || !mt || !mtg) { showToast('Rationale, type, and target are required', 'error'); return; }
+          const t = others[Number(sel.value)];
+          if (!rat || !t) { showToast('A rationale and a procedure are required', 'error'); return; }
           if (!ackOk()) { showToast('Acknowledge the hazard before modifying', 'error'); return; }
-          try { await api.post(`/cases/${cid}/approval`, { decision: 'modify', hazard_acknowledged: hazardReason ? 'true' : '', rationale: rat, modified_action_type: mt, modified_action_target: mtg, modified_action_detail: document.getElementById('mod-detail').value }); showToast('Modification submitted', 'success'); load(); }
+          try { await api.post(`/cases/${cid}/approval`, { decision: 'modify', hazard_acknowledged: hazardReason ? 'true' : '', rationale: rat, modified_action_type: t.type, modified_action_target: t.target, modified_action_detail: t.detail }); showToast('Modification submitted', 'success'); load(); }
           catch (e) { showToast(`Error: ${e.message}`, 'error'); }
         };
       }

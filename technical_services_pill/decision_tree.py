@@ -122,19 +122,6 @@ def find_evidence(
     return None
 
 
-# Every action the agent can recommend. An AOM's modification picks one of
-# these: a person can change what is done and where, but cannot invent a new
-# kind of work that no guardrail was written for.
-ACTION_TYPES: tuple[str, ...] = (
-    "battery_replacement", "bearing_replacement", "charger_repair", "compressor_overhaul",
-    "condenser_cleaning", "config_remap", "controller_inspection", "ground_fault_locate",
-    "grouting_retorque", "impeller_balance_clean", "inverter_repair", "laser_realign",
-    "leak_inspection_repair", "npsh_review_throttle", "onsite_diagnostic", "onsite_inspection",
-    "path_restore", "refrigerant_topup", "sensor_inspection", "sensor_recalibration",
-    "sensor_replacement", "starter_replacement", "thermal_shutdown_inspect",
-)
-
-
 def _merge_kb_refs(base: str, supporting: list[EvidenceItem]) -> list[str]:
     """Union of a base ref and all kb_refs on the supporting evidence items."""
     refs: list[str] = [base]
@@ -749,6 +736,43 @@ _FAULT_EVALUATORS: dict[str, object] = {
     "ups_battery_fault": _eval_ups_battery_fault,
     "pump_vibration_high": _eval_pump_vibration_high,
 }
+
+
+# --- Action templates (what an AOM's Modify may pick) ----------------------
+# Every action a fault's tree can recommend, as (type, target, detail). An
+# AOM who disagrees with the agent picks a different one of these for the
+# same fault: the work order only ever carries a reviewed procedure, never
+# free text, so nothing typed into Modify can reach a technician as an
+# instruction. The AOM's reasoning goes in the decision's rationale.
+_FAULT_TERMINALS: dict[str, tuple] = {
+    "temperature_measurement_missing": (
+        _comm_bus_failure, _config_drift, _loose_wiring, _sensor_hardware_failure,
+        _data_path_drop, _intermittent_fault, _sensor_drift, _sensor_fault_noise),
+    "chiller_compressor_trip": (
+        _refrigerant_leak, _low_refrigerant_charge, _condenser_fouling,
+        _compressor_motor_fault, _chiller_electrical_fault),
+    "ups_battery_fault": (
+        _thermal_runaway_risk, _battery_eol, _charger_failure, _ground_fault, _inverter_fault),
+    "pump_vibration_high": (
+        _cavitation, _shaft_misalignment, _foundation_looseness, _bearing_wear,
+        _impeller_imbalance),
+}
+
+
+def action_templates(fault_type: str) -> list[dict[str, str]]:
+    """The actions this fault's tree can recommend, in tree order, without
+    duplicates. Empty for an unknown fault type."""
+    seen: list[dict[str, str]] = []
+    for terminal in _FAULT_TERMINALS.get(fault_type, ()):
+        a = terminal([]).action
+        t = {"type": a.type, "target": a.target, "detail": a.detail}
+        if t not in seen:
+            seen.append(t)
+    return seen
+
+
+def is_action_template(fault_type: str, action_type: str, target: str, detail: str) -> bool:
+    return {"type": action_type, "target": target, "detail": detail} in action_templates(fault_type)
 
 
 # --- Main entry point ------------------------------------------------------
