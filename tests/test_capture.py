@@ -78,7 +78,7 @@ def test_technician_cannot_capture(client):
     assert r.status_code == 403
 
 
-def test_approval_needs_second_steward_and_bumps_version(client):
+def test_approval_needs_second_steward_and_bumps_version(client, rollback):
     pid = client.post("/capture/interview", params={"user": "steward1"},
                       json=_body()).json()["proposal_id"]
     v0 = {pill: LSTORE.version_of(pill) for pill in ("CRAH", "Chiller", "Pump")}
@@ -93,7 +93,8 @@ def test_approval_needs_second_steward_and_bumps_version(client):
 
     # rolling each pill back removes them again
     for pill, v in v0.items():
-        client.post(f"/kb/rollback/{v}", params={"user": "admin1", "pill": pill, "reason": "test rollback"})
+        if LSTORE.version_of(pill) != v:  # UPS did not move, so there is nothing to roll back
+            rollback(pill, v, "test rollback")
     live = client.get("/kb/expert-heuristics", params={"user": "mgr1"}).json()["heuristics"]
     assert not [h for h in live if h["proposal_id"] == pid]
 

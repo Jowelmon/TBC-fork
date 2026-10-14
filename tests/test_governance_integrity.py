@@ -69,7 +69,7 @@ def test_feedback_ignores_client_asset_type_and_signature(client):
 
 
 # 2. Governance ledger, keyed chain, immutable labels ---------------------------
-def test_ledger_records_approval_rejection_and_rollback_with_reasons(client):
+def test_ledger_records_approval_rejection_and_rollback_with_reasons(client, rollback):
     cid = _to_feedback_queued(client)
     fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
     pid = next(p["proposal_id"] for p in LSTORE.list_all_proposals() if p["feedback_id"] == fb["feedback_id"])
@@ -77,18 +77,19 @@ def test_ledger_records_approval_rejection_and_rollback_with_reasons(client):
     client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
     assert client.post(f"/kb/rollback/{before['current_version']}",
                        params={"user": "admin1", "pill": "CRAH"}).status_code == 400  # reason required
-    assert client.post(f"/kb/rollback/{before['current_version']}",
-                       params={"user": "admin1", "pill": "CRAH", "reason": "bad batch"}).status_code == 200
+    rollback("CRAH", before['current_version'], "bad batch")
 
     ledger = client.get("/kb/ledger", params={"user": "auditor1"}).json()
     assert ledger["chain_valid"] is True
     actions = [(e["action"], e["actor"]) for e in ledger["entries"]]
     assert ("proposal_approved", "steward2") in actions
-    assert ("rollback", "admin1") in actions
+    # Two people: the admin asked, the CRAH steward countersigned, both recorded.
+    assert ("rollback_requested", "admin1") in actions
+    assert ("rollback", "admin1, countersigned by steward1") in actions
     assert any(e["action"] == "rollback" and e["reason"] == "bad batch" for e in ledger["entries"])
 
 
-def test_version_label_is_never_reused_after_rollback(client):
+def test_version_label_is_never_reused_after_rollback(client, rollback):
     def approve_one():
         cid = _to_feedback_queued(client)
         fb = client.post(f"/cases/{cid}/feedback", params={"user": "steward1"}).json()
@@ -98,7 +99,7 @@ def test_version_label_is_never_reused_after_rollback(client):
 
     start = client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["current_version"]
     first = approve_one()
-    client.post(f"/kb/rollback/{start}", params={"user": "admin1", "pill": "CRAH", "reason": "test"})
+    rollback("CRAH", start, "test")
     second = approve_one()
     assert second != first
     labels = [v["label"] for v in client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["versions"]]

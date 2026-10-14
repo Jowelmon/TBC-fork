@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (577 tests) |
+| `make test` | pytest suite (585 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -178,7 +178,8 @@ failure is reported in plain language, never silently replaced.
   steward (if the owner proposed it, another steward stands in), and
   nothing goes live until every pill has signed. Nobody approves or rejects
   their own proposal, and an admin cannot decide on knowledge at all
-  (admins can revoke and roll back; a steward revokes knowledge on the
+  (an admin can revoke or ask for a rollback, and a rollback takes effect
+  only when the pill's steward countersigns it; a steward revokes knowledge on the
   pills they decide, so on a proposal filed under several pills each
   steward withdraws their own part). Approval needs a
   rationale, rejection a reason, and expert interviews need recorded
@@ -234,8 +235,10 @@ find things; it never acts on a case.
   - Two people per case: the AOM who approved the work cannot also verify
     its outcome; the technician who did it records it, and can send what
     they found to the stewards as feedback (a pending proposal).
-  - Admin runs the system (seeding, rollback, revoke, drills) but cannot
-    approve a case, decide on knowledge or review integrity.
+  - Admin runs the system (seeding, revoke, drills) and asks for rollbacks,
+    but cannot approve a case, decide on knowledge or review integrity. A
+    rollback waits until the pill's steward countersigns it; the admin who
+    asked cannot countersign their own request.
 - **Tamper evidence.** Case histories, the knowledge ledger and the tool log
   are keyed HMAC-SHA256 hash chains, each sealed over length and head. Case
   entries carry a digest of the case's state, and ledger entries a digest of

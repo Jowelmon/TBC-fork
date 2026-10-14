@@ -71,7 +71,7 @@ _reported: set[tuple] = set()
 # _cause_stats is not saved: it is rebuilt from the validated cases on load.
 _LEARNING_FIELDS = (
     "_proposals", "_kb_version", "_version_seq", "_versions",
-    "ledger", "ledger_seal", "_revocations", "expert_heuristics",
+    "ledger", "ledger_seal", "_revocations", "expert_heuristics", "rollback_requests",
 )
 
 
@@ -348,7 +348,8 @@ def _apply_learning(rec: dict[str, Any]) -> None:
     ls = learning.STORE
     ls.validated = [ValidatedCase.model_validate(v) for v in rec["validated"]]
     for f in _LEARNING_FIELDS:
-        setattr(ls, f, rec[f])
+        # Snapshots from before rollback requests existed have no such list.
+        setattr(ls, f, rec.get(f, []) if f == "rollback_requests" else rec[f])
     ls.rebuild_stats()
 
 

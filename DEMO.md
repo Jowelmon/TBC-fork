@@ -206,7 +206,9 @@ works one pill at a time: pick **CRAH** and it shows every CRAH version
 (current, live and rolled back). Rolling CRAH back leaves the Chiller, UPS
 and Pump knowledge exactly as it was; the footer shows each pill's version. Show **Approved Knowledge**: any single proposal can be revoked with a
 reason, without touching the rest. Then pick an earlier version, type a
-reason, click **Roll back…** and confirm. Open a case that was scored with
+reason, click **Ask for rollback…** and confirm. Nothing changes yet: the
+CRAH steward (**steward1**) sees the request with what it would remove, and
+countersigns it. Only then is the ledger entry written with both names. Open a case that was scored with
 the withdrawn knowledge: AOM Decision now blocks approval until it is
 re-scored. Point at the new
 **Knowledge Governance Ledger** row (actor, reason, and which pill moved from which version to which), and

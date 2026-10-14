@@ -63,7 +63,7 @@ screen, endpoint, test or demo step that answers it.
  │                                              ▼                                     │
  │                          Steward reviews ── approve / reject                       │
  │                                              ▼                                     │
- │                          KB version bump + rollback available (admin)              │
+ │                          KB version bump + rollback (admin asks, steward countersigns)│
  │                                              ▼                                     │
  │                          Next matching diagnosis retrieves it (Jaccard RAG),       │
  │                          confidence rises — proven in tests/test_confidence_uplift │
@@ -107,7 +107,7 @@ all hash-chained and rollback-able.
 | **Scalable** | 4 asset types already behind one dispatcher; Pill Registry for per-pill ownership; documented multi-site path. |
 | **Governed** | Proposal → second-steward approval → version bump → rollback; self-approval returns 403 server-side. |
 | **Portable** | Plain Python knowledge (data, not prompts), no vendor lock: `llm.py` provider seam (`mock`/`adp`), SQLite→Postgres seam documented; organisation owns the KB export. |
-| **Version-controlled** | `/kb/versions` lists every version with a displayed label; `/kb/rollback/{version}` is exact and tested. |
+| **Version-controlled** | `/kb/versions` lists every version with a displayed label; `/kb/rollback/{version}` asks for a rollback, which the pill's steward countersigns at `/kb/rollback-requests/{id}/countersign`. Exact and tested. |
 | **Secure** | Signed session cookies, RBAC on every endpoint, `.env` gitignored, AppKey never committed, G7 sanitises prompt-injection patterns before any model sees metadata. |
 | **Clearly bounded** | Banned-action regex (G1: setpoint/interlock/firmware) blocks + escalates; unknown cause IDs rejected; AI cannot invent evidence refs (G8) or introduce causes outside the registry. |
 

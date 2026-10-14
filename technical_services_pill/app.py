@@ -97,7 +97,8 @@ class _DecisionTextFromBody:
 
     _PATHS = re.compile(
         r"^/(?:cases/[^/]+/(?:approval|outcome|escalation/close|escalation/evidence)|"
-        r"kb/proposals/[^/]+/(?:approve|reject|revoke)|kb/rollback/\d+|audit/review|sentinel/review)$")
+        r"kb/proposals/[^/]+/(?:approve|reject|revoke)|kb/rollback/\d+|"
+        r"kb/rollback-requests/[^/]+/(?:countersign|reject)|audit/review|sentinel/review)$")
 
     def __init__(self, inner):
         self.inner = inner
@@ -1620,11 +1621,12 @@ def list_kb_versions(pill: str, user: str = Depends(resolve_user)) -> dict:
 
 
 @app.post("/kb/rollback/{target_version}")
-def rollback_kb(target_version: int, pill: str, reason: str = "",
-                user: str = Depends(resolve_user)) -> dict:
-    """Roll one pill's knowledge back to an earlier live version (admin only,
-    reason required). Other pills are untouched; the rollback, its actor
-    and reason go into the keyed governance ledger."""
+def request_kb_rollback(target_version: int, pill: str, reason: str = "",
+                        user: str = Depends(resolve_user)) -> dict:
+    """Ask to roll one pill's knowledge back to an earlier live version. An
+    admin asks; nothing changes until the pill's steward countersigns
+    (``/kb/rollback-requests/{id}/countersign``). The request records what the
+    rollback would remove, and goes into the keyed governance ledger."""
     _need(user, "rollback_knowledge_version")
     from .learning import STORE as _LSTORE
 
@@ -1633,9 +1635,77 @@ def rollback_kb(target_version: int, pill: str, reason: str = "",
         raise HTTPException(400, "a rollback needs a reason")
     _require_intact_ledger()
     try:
-        return _LSTORE.rollback(pill, target_version, actor=user, reason=reason)
+        req = _LSTORE.request_rollback(pill, target_version, requested_by=user, reason=reason)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    return {"status": "awaiting_countersign", "request": req,
+            "countersigned_by": PILL_OWNERS.get(pill)}
+
+
+@app.get("/kb/rollback-requests")
+def list_rollback_requests(user: str = Depends(resolve_user)) -> dict:
+    """Rollbacks asked for and their outcome, newest last."""
+    _need(user, "view_case")
+    from .learning import STORE as _LSTORE
+
+    return {"requests": [{**r, "countersigned_by": PILL_OWNERS.get(r["pill"])}
+                         for r in _LSTORE.rollback_requests]}
+
+
+def _rollback_decision(request_id: str, user: str) -> dict:
+    """Who may decide a rollback request: a knowledge steward who decides the
+    request's pill. The admin who asked cannot, and a steward of another pill
+    cannot either."""
+    from .learning import STORE as _LSTORE
+    from .rbac import Role
+
+    _require_intact_ledger()
+    try:
+        req = _LSTORE.find_rollback_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if _user(user).role != Role.KNOWLEDGE_STEWARD:
+        raise HTTPException(403, f"only the {req['pill']} steward can countersign a rollback; "
+                                 f"{user} can view it but not decide")
+    if not _decides_pill(req["pill"], user, req["requested_by"]):
+        raise HTTPException(403, f"{req['pill']} knowledge is decided by "
+                                 f"{PILL_OWNERS.get(req['pill'])}; {user} cannot countersign it")
+    return req
+
+
+@app.post("/kb/rollback-requests/{request_id}/countersign")
+def countersign_kb_rollback(request_id: str, reason: str = "",
+                            user: str = Depends(resolve_user)) -> dict:
+    """Countersign a rollback: the pill's steward, not the admin who asked.
+    The rollback is carried out now, recorded with both names."""
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    from .learning import SelfApprovalError
+
+    req = _rollback_decision(request_id, user)
+    try:
+        return _LSTORE.countersign_rollback(req["request_id"], decided_by=user, reason=reason)
+    except SelfApprovalError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/kb/rollback-requests/{request_id}/reject")
+def reject_kb_rollback(request_id: str, reason: str = "",
+                       user: str = Depends(resolve_user)) -> dict:
+    """Refuse a rollback request, with a reason. Nothing changes."""
+    _need(user, "approve_knowledge_version")
+    from .learning import STORE as _LSTORE
+    from .learning import SelfApprovalError
+
+    req = _rollback_decision(request_id, user)
+    try:
+        return _LSTORE.reject_rollback(req["request_id"], decided_by=user, reason=reason)
+    except SelfApprovalError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/kb/ledger")

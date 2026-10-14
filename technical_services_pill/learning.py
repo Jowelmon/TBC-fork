@@ -132,6 +132,8 @@ class LearningStore:
         self.validated: list[ValidatedCase] = []
         self._cause_stats: dict[str, dict[str, int]] = {}  # derived; see rebuild_stats
         self._proposals: list[dict[str, Any]] = []
+        # Rollbacks wait here until the pill's steward countersigns them.
+        self.rollback_requests: list[dict[str, Any]] = []
         self._kb_version: dict[str, int] = {pill: 0 for pill in PILLS}
         # Highest version ever issued per pill; never decremented.
         self._version_seq: dict[str, int] = {pill: 0 for pill in PILLS}
@@ -691,6 +693,88 @@ class LearningStore:
                   reason=part + reason.strip(), versions_before=before)
         return {"revoked": proposal_id, "removed_items": removed, "pills": sorted(still_live),
                 "kb_versions": {pill: self._kb_version[pill] for pill in still_live}}
+
+    def rollback_preview(self, pill: str, target_version: int) -> dict[str, Any]:
+        """What a rollback of ``pill`` to ``target_version`` would take away,
+        shown to the countersigning steward before they decide."""
+        return {
+            "validated_cases": sum(1 for vc in self.validated
+                                   if vc.asset_type == pill and vc.kb_version > target_version),
+            "expert_heuristics": sum(1 for h in self.expert_heuristics
+                                     if h["asset_type"] == pill and h["kb_version"] > target_version),
+            "proposals": [p["proposal_id"] for p in self._proposals
+                          if p["status"] == "approved"
+                          and (p.get("kb_versions") or {}).get(pill, -1) > target_version],
+            "versions": [f"{pill} v{kb_version_label(v['version'])}" for v in self._versions[pill]
+                         if v["status"] == "live" and v["version"] > target_version],
+        }
+
+    def request_rollback(self, pill: str, target_version: int, *, requested_by: str,
+                         reason: str) -> dict[str, Any]:
+        """Ask for a rollback. Nothing changes until a different steward who
+        decides ``pill`` countersigns it (``countersign_rollback``)."""
+        self._require_verified()
+        if not reason.strip():
+            raise ValueError("a rollback needs a reason")
+        if pill not in PILLS:
+            raise ValueError(f"unknown pill {pill!r}; expected one of {list(PILLS)}")
+        live = {v["version"] for v in self._versions[pill] if v["status"] == "live"}
+        if target_version not in live:
+            raise ValueError(f"{pill} version {target_version} is not in the live lineage "
+                             f"(live: {sorted(live)})")
+        if target_version == self._kb_version[pill]:
+            raise ValueError(f"{pill} is already at version {target_version}")
+        if any(r["pill"] == pill and r["status"] == "pending" for r in self.rollback_requests):
+            raise ValueError(f"a rollback of {pill} is already waiting for countersign")
+        req = {
+            "request_id": f"RBK-{len(self.rollback_requests) + 1:03d}",
+            "pill": pill, "target_version": target_version,
+            "target_label": f"{pill} v{kb_version_label(target_version)}",
+            "requested_by": requested_by, "reason": reason.strip(),
+            "requested_at": _now().isoformat(), "status": "pending",
+            "preview": self.rollback_preview(pill, target_version),
+            "decided_by": None, "decided_at": None, "decision_reason": "",
+        }
+        self.rollback_requests.append(req)
+        self._log(actor=requested_by, action="rollback_requested", reason=reason.strip())
+        return req
+
+    def find_rollback_request(self, request_id: str) -> dict[str, Any]:
+        req = next((r for r in self.rollback_requests if r["request_id"] == request_id), None)
+        if req is None:
+            raise ValueError(f"rollback request {request_id} not found")
+        return req
+
+    def countersign_rollback(self, request_id: str, *, decided_by: str,
+                             reason: str = "") -> dict[str, Any]:
+        """Countersign a pending rollback: it is carried out now, recorded
+        with both names in the ledger."""
+        req = self.find_rollback_request(request_id)
+        if req["status"] != "pending":
+            raise ValueError(f"rollback request {request_id} is {req['status']}, not pending")
+        if decided_by == req["requested_by"]:
+            raise SelfApprovalError(
+                f"{decided_by} asked for {request_id} and cannot also countersign it; "
+                "the pill's steward must")
+        result = self.rollback(req["pill"], req["target_version"],
+                               actor=f"{req['requested_by']}, countersigned by {decided_by}",
+                               reason=req["reason"])
+        req.update(status="countersigned", decided_by=decided_by,
+                   decided_at=_now().isoformat(), decision_reason=reason.strip())
+        return {**req, "result": result}
+
+    def reject_rollback(self, request_id: str, *, decided_by: str, reason: str) -> dict[str, Any]:
+        req = self.find_rollback_request(request_id)
+        if req["status"] != "pending":
+            raise ValueError(f"rollback request {request_id} is {req['status']}, not pending")
+        if decided_by == req["requested_by"]:
+            raise SelfApprovalError(f"{decided_by} asked for {request_id} and cannot also reject it")
+        if not reason.strip():
+            raise ValueError("refusing a rollback needs a reason")
+        req.update(status="rejected", decided_by=decided_by, decided_at=_now().isoformat(),
+                   decision_reason=reason.strip())
+        self._log(actor=decided_by, action="rollback_rejected", reason=reason.strip())
+        return req
 
     def rollback(self, pill: str, target_version: int, *, actor: str = "system",
                  reason: str = "") -> dict[str, Any]:

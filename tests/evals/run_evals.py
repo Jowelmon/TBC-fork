@@ -220,8 +220,12 @@ def eval_09(client):
     pid = next(p["proposal_id"] for p in queue if p["feedback_id"] == fb["feedback_id"])
     client.post(f"/kb/proposals/{pid}/approve", params={"user": "steward2", "rationale": "reviewed against the transcript"})
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
-    assert resp.status_code == 200, resp.text
+    # Two people: the admin asks, the CRAH steward countersigns.
+    asked = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
+    assert asked.status_code == 200, asked.text
+    rid = asked.json()["request"]["request_id"]
+    done = client.post(f"/kb/rollback-requests/{rid}/countersign", params={"user": "steward1", "reason": "agreed"})
+    assert done.status_code == 200, done.text
     restored = _create_and_advance(client)
     assert restored["confidence"] == confidence_before, (
         f"rollback did not restore confidence exactly: {restored['confidence']} != {confidence_before}"
