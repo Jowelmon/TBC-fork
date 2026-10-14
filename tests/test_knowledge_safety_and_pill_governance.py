@@ -149,16 +149,16 @@ def test_rollback_needs_a_known_pill(client):
 
 
 # 4. Identity -------------------------------------------------------------------
-def test_logout_revokes_the_unlock_cookie(monkeypatch):
+def test_logout_revokes_the_session_cookie(monkeypatch):
     monkeypatch.setenv("TBC_DEMO_INSECURE", "0")
     auth._failures.clear()
     c = TestClient(app)
     assert c.post("/login", json={"user_id": "tech1", "pin": "1111"}).status_code == 200
-    unlock = c.cookies.get(auth.UNLOCK_COOKIE)
-    assert unlock
+    session = c.cookies.get(auth.SESSION_COOKIE)
+    assert session
     c.post("/logout")
-    c.cookies.set(auth.UNLOCK_COOKIE, unlock)  # replay the old cookie
-    assert c.post("/login", json={"user_id": "tech1"}).status_code == 401
+    c.cookies.set(auth.SESSION_COOKIE, session)  # replay the old cookie
+    assert c.get("/me").status_code == 401
 
 
 def test_a_non_ascii_pin_is_a_failed_login_not_a_crash(monkeypatch):

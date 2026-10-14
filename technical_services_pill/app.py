@@ -37,11 +37,9 @@ from .auth import (
     clear_cookie,
     demo_insecure,
     issue_cookie,
-    issue_unlock,
     locked_for,
     record_pin_result,
     resolve_user,
-    unlocked_users,
 )
 from .learning import LedgerBrokenError
 from .models import (
@@ -279,30 +277,20 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict:
     """
     u = _user(body.user_id)
     key = f"{u.user_id}@{request.client.host if request.client else '-'}"
-    unlocked = unlocked_users(request)
+    # Every sign-in needs the PIN, including switching back to a user this
+    # browser has already used: on a shared screen, the last person to sign
+    # in must not leave the next one a PIN-free switch.
     if body.pin is None:
-        # A switch back to a user this browser already proved; asking without
-        # a PIN is not a guess, so it never counts towards a lockout.
-        if u.user_id not in unlocked:
-            raise HTTPException(401, f"PIN required for {u.user_id}")
-    else:
-        wait = locked_for(key)
-        if wait:
-            raise HTTPException(429, f"too many wrong PINs for {u.user_id}; try again in {wait}s")
-        ok = check_pin(u.user_id, body.pin)
-        record_pin_result(key, ok)
-        if not ok:
-            raise HTTPException(401, f"wrong PIN for {u.user_id}")
-        issue_unlock(response, unlocked | {u.user_id})
+        raise HTTPException(401, f"PIN required for {u.user_id}")
+    wait = locked_for(key)
+    if wait:
+        raise HTTPException(429, f"too many wrong PINs for {u.user_id}; try again in {wait}s")
+    ok = check_pin(u.user_id, body.pin)
+    record_pin_result(key, ok)
+    if not ok:
+        raise HTTPException(401, f"wrong PIN for {u.user_id}")
     issue_cookie(response, u.user_id)
     return _me(u.user_id)
-
-
-@app.get("/login/unlocked")
-def login_unlocked(request: Request) -> dict:
-    """Users this browser has already proven the PIN for, so the screen asks
-    for a PIN only when one is needed instead of trying (and failing) first."""
-    return {"unlocked": sorted(unlocked_users(request))}
 
 
 def _me(user_id: str) -> dict:
@@ -321,11 +309,11 @@ def me(user: str = Depends(resolve_user)) -> dict:
 
 @app.post("/logout")
 def logout(request: Request, response: Response) -> dict:
-    from .auth import SESSION_COOKIE, UNLOCK_COOKIE, revoke
+    from .auth import SESSION_COOKIE, revoke
 
     # Both cookies: a copied "switch back without a PIN" cookie must not
     # outlive the logout either.
-    revoke(request.cookies.get(SESSION_COOKIE), request.cookies.get(UNLOCK_COOKIE))
+    revoke(request.cookies.get(SESSION_COOKIE))
     clear_cookie(response)
     return {"status": "logged out"}
 
@@ -1546,7 +1534,7 @@ def revoke_proposal(proposal_id: str, reason: str = "", user: str = Depends(reso
 
     ``pills`` (comma-separated) withdraws only that part of a proposal filed
     under several pills, so each pill's steward can withdraw their own."""
-    _need(user, "approve_knowledge_version")
+    _need(user, "revoke_knowledge_version")
     from .learning import STORE as _LSTORE
     from .rbac import Role
 
@@ -1866,6 +1854,10 @@ def health() -> dict:
     return {"ok": True}
 
 
+TAMPER_EVENT_KINDS = {"snapshot_modified_between_saves", "audit_chain_failure_on_load",
+                      "anchor_missing", "anchor_invalid", "database_replaced"}
+
+
 @app.get("/audit/status")
 def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     """Integrity summary for the dashboard banner: any case chain or the
@@ -1874,6 +1866,7 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     from .learning import STORE as _LSTORE
     broken = [cid for cid in STORE.list()
               if (st := STORE.get(cid)) is not None and not st.verify_audit_chain()]
+    from . import persistence
     from .tools import TOOL_AUDIT_LOG, verify_tool_log
 
     ledger_ok = _LSTORE.verify_ledger()
@@ -1883,6 +1876,9 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     opened = [e["inputs"].get("case_id") for e in TOOL_AUDIT_LOG if e.get("tool") == "open_case"]
     missing = sorted({c for c in opened if c and STORE.get(c) is None}
                      | set(STORE.missing_from_anchor())) if not registry_ok else []
+    # Tamper evidence recorded on load or save (the clean state may already
+    # have been restored, so these are shown even when every check passes).
+    tamper = [e for e in persistence.integrity_events() if e.get("event") in TAMPER_EVENT_KINDS]
     return {"broken_cases": broken,
             "case_problems": {cid: STORE.get(cid).chain_problem() for cid in broken},
             "missing_cases": missing,
@@ -1890,6 +1886,8 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
             "ledger_problem": None if ledger_ok else _LSTORE.ledger_problem(),
             "registry_valid": registry_ok,
             "tool_log_valid": tool_log_ok,
+            "recorded_tamper_events": [{"at": e["at"], "event": e["event"], "detail": e["detail"]}
+                                       for e in tamper[-5:]],
             "ok": not broken and ledger_ok and registry_ok and tool_log_ok}
 
 

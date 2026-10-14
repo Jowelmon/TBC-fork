@@ -28,7 +28,6 @@ from .rbac import DEMO_USERS
 SESSION_COOKIE = "tbc_session"
 # Users this browser has proven the PIN for, so switching back to them does
 # not need the PIN again and the browser never has to store PINs itself.
-UNLOCK_COOKIE = "tbc_unlocked"
 MAX_FAILURES = 5
 LOCKOUT_SECONDS = 300
 _failures: dict[str, list[float]] = {}  # "user@client" -> [count, locked_until]
@@ -76,7 +75,7 @@ def _verify(token: str | None) -> str | None:
 
 
 def revoke(*tokens: str | None) -> None:
-    """Revoke signed tokens (session and unlock cookies) on logout."""
+    """Revoke the signed session token on logout."""
     now = time.time()
     for stale in [n for n, exp in _revoked.items() if exp < now]:
         del _revoked[stale]
@@ -127,20 +126,6 @@ def record_pin_result(key: str, ok: bool) -> None:
     _failures[key] = [0 if until else count, until]
 
 
-def unlocked_users(request: Request) -> set[str]:
-    """Users this browser proved the PIN for. The cookie expires with the
-    session and is revoked on logout, like the session cookie."""
-    body = _open(request.cookies.get(UNLOCK_COOKIE)) or ""
-    if not body.startswith("unlock:"):
-        return set()
-    return {u for u in body[len("unlock:"):].split(",") if u in DEMO_USERS}
-
-
-def issue_unlock(response: Response, users: set[str]) -> None:
-    response.set_cookie(UNLOCK_COOKIE, _signed("unlock:" + ",".join(sorted(users))),
-                        httponly=True, samesite="lax", max_age=SESSION_SECONDS)
-
-
 def demo_insecure() -> bool:
     """Whether ``?user=`` is honoured as a fallback. Off by default."""
     return os.environ.get("TBC_DEMO_INSECURE", "0").strip() == "1"
@@ -155,7 +140,6 @@ def issue_cookie(response: Response, user_id: str) -> None:
 
 def clear_cookie(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE)
-    response.delete_cookie(UNLOCK_COOKIE)
 
 
 def resolve_user(request: Request, user: str | None = None) -> str:
@@ -188,10 +172,8 @@ __all__ = [
     "clear_cookie",
     "demo_insecure",
     "issue_cookie",
-    "issue_unlock",
     "locked_for",
     "record_pin_result",
     "resolve_user",
     "revoke",
-    "unlocked_users",
 ]

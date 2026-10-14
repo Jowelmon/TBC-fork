@@ -14,6 +14,8 @@ Capabilities (string keys):
     approve_knowledge_version — approve a new KnowledgeVersion
     rollback_knowledge_version — roll back to a prior KnowledgeVersion
     read_audit_trail          — read the tamper-evident audit trail
+    revoke_knowledge_version  — withdraw approved knowledge (stewards on their
+                                pills; admin as break-glass)
 """
 from __future__ import annotations
 
@@ -44,6 +46,7 @@ _ALL_CAPABILITIES: frozenset[str] = frozenset(
         "capture_expert_knowledge",
         "review_audit_integrity",
         "open_case",
+        "revoke_knowledge_version",
     }
 )
 
@@ -69,15 +72,19 @@ PERMISSIONS: dict[Role, frozenset[str]] = {
             "view_case",
             "submit_feedback",
             "approve_knowledge_version",
+            "revoke_knowledge_version",
             "read_audit_trail",
             "capture_expert_knowledge",
         }
     ),
     Role.AUDITOR: frozenset({"view_case", "read_audit_trail", "review_audit_integrity"}),
-    # Admin runs the system (seeding, roll back, revoke, drills) but holds
-    # no decision that needs a second person: no case approvals and no
-    # integrity reviews, so nobody is approver, operator and auditor at once.
-    Role.ADMIN: _ALL_CAPABILITIES - {"approve_reject_modify", "review_audit_integrity"},
+    # Admin runs the system (seeding, asks for rollbacks, break-glass revoke,
+    # drills) but holds no decision that needs a second person: no case
+    # approvals, no knowledge approval or capture, no integrity reviews. A
+    # rollback is countersigned by the pill's steward, so the admin who asks
+    # cannot also decide it.
+    Role.ADMIN: _ALL_CAPABILITIES - {"approve_reject_modify", "review_audit_integrity",
+                                     "approve_knowledge_version", "capture_expert_knowledge"},
 }
 
 

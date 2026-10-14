@@ -200,7 +200,9 @@ def test_pin_lockout_and_unlock_cookie(monkeypatch):
     assert c.post("/login", json={"user_id": "tech1"}).status_code == 401  # never proven here
     assert c.post("/login", json={"user_id": "tech1", "pin": "1111"}).status_code == 200
     assert c.post("/login", json={"user_id": "mgr1", "pin": "2222"}).status_code == 200
-    me = c.post("/login", json={"user_id": "tech1"})  # switching back needs no PIN
+    # Switching back needs the PIN too: a shared screen must not allow a PIN-free switch.
+    assert c.post("/login", json={"user_id": "tech1"}).status_code == 401
+    me = c.post("/login", json={"user_id": "tech1", "pin": "1111"})
     assert me.status_code == 200 and me.json()["role"] == "technician"
     assert c.get("/me").json()["capabilities"] == me.json()["capabilities"]
 
