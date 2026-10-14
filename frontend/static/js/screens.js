@@ -86,6 +86,8 @@ const rbacNote = (what, roles) => `<div class="banner banner-info"><p><strong>Ro
 // just landed on it (or is watching over a shoulder) knows what to do or
 // expect next without reading the whole card stack first.
 const nextHint = text => `<p class="next-hint">${_esc(text)}</p>`;
+// Who raises the work order depends on the role: a technician is told the AOM does it.
+const workOrderNext = () => (api.can('approve_reject_modify') ? 'raise the work order' : 'the AOM raises the work order');
 
 // local HTML-escape for module-level helper (render functions receive `esc` via helpers)
 function _esc(s) {
@@ -294,6 +296,7 @@ export function renderDashboard(el, state, h) {
   const isAdmin = api.role() === 'admin';
 
   el.innerHTML = `
+    <h2 class="sr-only">Cases</h2>
     <div id="integrity-banner"></div>
     <div class="dash-toolbar">
       ${nextHint('click a case to see its diagnosis, or create a new one to get started.')}
@@ -669,7 +672,7 @@ export function renderDiagnosis(el, state, h) {
           : api.can('approve_reject_modify')
           ? 'move to AOM Decision to approve, reject or modify it.'
           : 'an Asset Operations Manager reviews it on AOM Decision; you can follow it there.',
-        EXECUTING: 'approved: raise the work order on the Outcome screen.',
+        EXECUTING: `approved: ${workOrderNext()} on the Outcome screen.`,
         MONITORING_OUTCOME: 'record the outcome once work is complete, on the Outcome screen.',
         RECORDING_OUTCOME: 'outcome recording is in progress.',
         FEEDBACK_QUEUED: 'feedback is queued for a knowledge steward to review.',
@@ -1067,7 +1070,7 @@ export function renderDecision(el, state, h) {
             : 're-score the case against the current knowledge first; you can still reject.')
           : 'approve or modify to raise a work order, or reject to close the case.')
         : s.current_state === 'EXECUTING'
-        ? 'approved: raise the work order on the Outcome screen.'
+        ? `approved: ${workOrderNext()} on the Outcome screen.`
         : s.current_state === 'MONITORING_OUTCOME'
         ? 'work order raised: record the outcome on the Outcome screen once the work is done.'
         : 'this case has no pending decision right now.';
@@ -1349,7 +1352,7 @@ export function renderOutcome(el, state, h) {
         : s.current_state === 'MONITORING_OUTCOME'
         ? 'record the outcome once the work is done.'
         : s.current_state === 'EXECUTING'
-        ? 'raise the work order.'
+        ? `${workOrderNext()}.`
         : 'the outcome is recorded after the AOM approves and a work order is raised.';
       let html = `${nextHint(outcomeHint)}<h2 style="font-size:20px;margin-bottom:16px">Outcome and Feedback - ${esc(cid)}</h2>`;
 
@@ -1372,11 +1375,10 @@ export function renderOutcome(el, state, h) {
       } else if (s.current_state === 'AWAITING_APPROVAL') {
         woBody.innerHTML = '<div class="banner banner-info"><p>Approval required before a work order can be raised.</p></div>';
       } else if (s.current_state === 'EXECUTING' || s.current_state === 'MONITORING_OUTCOME') {
-        const role = api.user();
         const canWO = api.can('approve_reject_modify');
         woBody.innerHTML = canWO
           ? `<button class="btn btn-primary" id="btn-wo">Raise Work Order</button>`
-          : `<div class="banner banner-error"><p><strong>Blocked</strong> - ${esc(role)} (${esc(h.roleDisplayName(role))}) cannot create work orders.</p></div>`;
+          : `<div class="banner banner-info"><p>Only an Asset Ops Manager raises work orders. Ask your AOM to raise it; you record the outcome once the work is under way.</p></div>`;
         const btn = document.getElementById('btn-wo');
         if (btn) btn.onclick = async () => {
           try { await api.post(`/cases/${cid}/work-order`); showToast('Work order created', 'success'); load(); }
@@ -1424,7 +1426,7 @@ export function renderOutcome(el, state, h) {
           }
         }
       } else if (s.current_state === 'EXECUTING') {
-        ocBody.innerHTML = '<div class="banner banner-info"><p>Raise the work order first. The outcome is recorded once the work is under way.</p></div>';
+        ocBody.innerHTML = `<div class="banner banner-info"><p>${api.can('approve_reject_modify') ? 'Raise the work order first.' : 'The AOM raises the work order first.'} The outcome is recorded once the work is under way.</p></div>`;
       } else if (s.current_state === 'MONITORING_OUTCOME' || s.current_state === 'RECORDING_OUTCOME') {
         const role = api.user();
         const approver = (s.human_decision || {}).decided_by;
@@ -1498,6 +1500,7 @@ export function renderGovernance(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
 
   el.innerHTML = `
+    <h2 class="sr-only">Governance</h2>
     ${nextHint(api.role() === 'knowledge_steward'
       ? 'approve pending proposals to bump the KB version, then re-run affected cases to see the uplift.'
       : api.can('review_audit_integrity')
@@ -1526,39 +1529,60 @@ export function renderGovernance(el, state, h) {
     ], api.role() === 'knowledge_steward' ? 'review' : api.can('review_audit_integrity') ? 'audit' : 'overview')}
   `;
 
-  // Rollback -- admin only, one pill at a time. Lets anyone see the
-  // addressable versions even if they can't act on them, so the mapping from
-  // "CRAH v1.4.0" on screen to the integer /kb/rollback/{N} takes is never a guess. A named function
-  // (not a fire-and-forget IIFE) so an approval/rejection elsewhere on this
-  // same screen can refresh it too -- otherwise it shows a stale "current".
+  // Rollback is two-person. An admin asks, for one pill at a time; nothing
+  // changes until that pill's steward countersigns. Anyone can see the
+  // addressable versions and the requests, so the mapping from "CRAH v1.4.0"
+  // on screen to the integer /kb/rollback/{N} takes is never a guess.
+  // Named so approvals and rollbacks elsewhere on this screen refresh it.
   async function loadRollback() {
     const body = document.getElementById('rollback-body');
     if (!body) return;
-    const role = api.user();
-    const canRollback = api.can('rollback_knowledge_version');
+    const canAsk = api.can('rollback_knowledge_version');
+    const canCountersign = api.can('approve_knowledge_version');
+    const me = api.user();
     const pill = loadRollback.pill || 'CRAH';
     try {
-      const { versions, current_version, current_label } = await api.get(`/kb/versions?pill=${encodeURIComponent(pill)}`);
+      const [{ versions, current_version, current_label }, { requests }] = await Promise.all([
+        api.get(`/kb/versions?pill=${encodeURIComponent(pill)}`), api.get('/kb/rollback-requests')]);
       const targets = versions.filter(v => v.status === 'live' && v.version !== current_version);
       const options = targets.map(v => `<option value="${v.version}" data-label="${esc(v.label)}">v${esc(v.label)}</option>`).join('');
       const pillPicker = `<div class="flex gap-8 align-center" style="margin-bottom:10px"><label for="rb-pill" class="role-label">Pill</label>
         <select id="rb-pill">${['CRAH', 'Chiller', 'UPS', 'Pump'].map(p => `<option${p === pill ? ' selected' : ''}>${p}</option>`).join('')}</select></div>`;
       const history = versions.map(v => `<span class="badge ${v.status === 'live' ? (v.version === current_version ? 'badge-green' : 'badge-blue') : 'badge-grey'}" style="margin:2px" title="${v.status === 'live' ? 'live lineage' : 'rolled back; this label is never reused'}">v${esc(v.label)}${v.version === current_version ? ' (current)' : v.status === 'rolled_back' ? ' (rolled back)' : ''}</span>`).join(' ');
+      const mine = requests.filter(r => r.pill === pill);
+      const pending = mine.filter(r => r.status === 'pending');
+      const askForm = !canAsk ? `<p class="muted">Only an Admin asks for a rollback. The ${esc(pill)} steward then countersigns it, and nothing changes until they do.</p>`
+        : !targets.length ? `<p class="muted">Nothing to roll back to: the current version is the only live one.</p>`
+        : pending.length ? `<p class="muted">A rollback of ${esc(pill)} is already waiting for ${esc(pending[0].countersigned_by)}.</p>`
+        : `<div class="flex gap-8 flex-wrap align-center">
+            <label for="rb-version" class="role-label">Roll back to</label>
+            <select id="rb-version">${options}</select>
+            <input id="rb-reason" type="text" placeholder="Reason (required, recorded in the ledger)" style="flex:1 1 260px">
+            <button class="btn btn-red btn-sm" id="rb-go">Ask for rollback…</button>
+          </div>
+          <div id="rb-confirm" class="banner banner-warn mt-16" hidden></div>`;
+      const cards = mine.slice(-4).reverse().map(r => {
+        const pr = r.preview || {};
+        const what = `Would remove ${pr.validated_cases || 0} validated case(s), ${pr.expert_heuristics || 0} expert heuristic(s)`
+          + `${(pr.proposals || []).length ? `, and make ${esc((pr.proposals || []).join(', '))} rolled back` : ''}.`;
+        const head = `<strong>${esc(r.request_id)}</strong>: roll back to ${esc(r.target_label)}, asked by ${esc(r.requested_by)}. <span class="muted">“${esc(r.reason)}”</span>`;
+        if (r.status === 'countersigned') return `<div class="banner banner-success mt-16"><p>${head} <strong>Countersigned by ${esc(r.decided_by)}; rolled back.</strong></p></div>`;
+        if (r.status === 'rejected') return `<div class="banner banner-warn mt-16"><p>${head} <strong>Refused by ${esc(r.decided_by)}:</strong> “${esc(r.decision_reason)}”. Nothing changed.</p></div>`;
+        if (canCountersign && r.countersigned_by === me) return `<div class="card mt-16"><div class="card-body">
+            <p>${head}</p><p class="muted" style="margin:6px 0"><strong>Nothing has changed yet.</strong> ${esc(what)}</p>
+            <div class="flex gap-8 flex-wrap align-center">
+              <input id="cs-reason-${esc(r.request_id)}" type="text" placeholder="Reason for refusing (only if you refuse)" style="flex:1 1 240px">
+              <button class="btn btn-red btn-sm" data-cs="${esc(r.request_id)}">Countersign rollback</button>
+              <button class="btn btn-secondary btn-sm" data-rf="${esc(r.request_id)}">Refuse</button>
+            </div></div></div>`;
+        return `<div class="banner banner-info mt-16"><p>${head} <strong>Waiting for ${esc(r.countersigned_by)} to countersign.</strong> Nothing has changed yet. ${esc(what)}</p></div>`;
+      }).join('');
       body.innerHTML = `
         ${pillPicker}
         <p class="muted" style="margin-bottom:8px">Current ${esc(pill)} knowledge: <strong>${esc(current_label)}</strong>. Rolling back one pill leaves the others alone. Version labels are never reused: a rolled-back version keeps its label and the next approval gets a new one.</p>
         <div style="margin-bottom:12px">${history}</div>
-        ${!canRollback ? `<p class="muted">Rolling back requires the Admin role. Switch role in the top bar to see the control.</p>`
-          : !targets.length ? `<p class="muted">Nothing to roll back to: the current version is the only live one.</p>` : `
-          <div class="flex gap-8 flex-wrap align-center">
-            <label for="rb-version" class="role-label">Roll back to</label>
-            <select id="rb-version">${options}</select>
-            <input id="rb-reason" type="text" placeholder="Reason (required, recorded in the ledger)" style="flex:1 1 260px">
-            <button class="btn btn-red btn-sm" id="rb-go">Roll back…</button>
-          </div>
-          <div id="rb-confirm" class="banner banner-warn mt-16" hidden></div>
-        `}
-      `;
+        ${askForm}
+        ${cards}`;
       document.getElementById('rb-pill').onchange = (ev) => { loadRollback.pill = ev.target.value; loadRollback(); };
       const go = document.getElementById('rb-go');
       if (go) {
@@ -1569,18 +1593,34 @@ export function renderGovernance(el, state, h) {
           const label = sel.selectedOptions[0].dataset.label;
           const box = document.getElementById('rb-confirm');
           box.hidden = false;
-          box.innerHTML = `<p><strong>Roll ${esc(pill)} knowledge back from ${esc(current_label)} to v${esc(label)}?</strong> Every ${esc(pill)} case and expert heuristic approved after v${esc(label)} stops being used; other pills are not touched. This is recorded in the ledger with your reason.</p>
-            <div class="flex gap-8 mt-16"><button class="btn btn-red btn-sm" id="rb-yes">Yes, roll back</button><button class="btn btn-secondary btn-sm" id="rb-no">Cancel</button></div>`;
+          box.innerHTML = `<p><strong>Ask for ${esc(pill)} to go back from ${esc(current_label)} to v${esc(label)}?</strong> Nothing changes yet. The ${esc(pill)} steward must countersign it, and will see exactly what would be removed. Other pills are not touched.</p>
+            <div class="flex gap-8 mt-16"><button class="btn btn-red btn-sm" id="rb-yes">Yes, ask for rollback</button><button class="btn btn-secondary btn-sm" id="rb-no">Cancel</button></div>`;
           document.getElementById('rb-no').onclick = () => { box.hidden = true; };
           document.getElementById('rb-yes').onclick = async () => {
             try {
               const r = await api.post(`/kb/rollback/${sel.value}`, { pill, reason });
-              showToast(`${pill} rolled back to v${label} (${r.removed_cases} item(s) removed)`, 'success');
-              refreshAll();
+              showToast(`${r.request.request_id} sent to ${r.countersigned_by} to countersign`, 'success');
+              loadRollback();
             } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
           };
         };
       }
+      body.querySelectorAll('[data-cs]').forEach(b => b.onclick = async () => {
+        try {
+          const r = await api.post(`/kb/rollback-requests/${b.dataset.cs}/countersign`, { reason: 'agreed' });
+          showToast(`${r.request_id} countersigned: ${pill} rolled back`, 'success');
+          refreshAll();
+        } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+      });
+      body.querySelectorAll('[data-rf]').forEach(b => b.onclick = async () => {
+        const reason = (document.getElementById(`cs-reason-${b.dataset.rf}`) || {}).value?.trim();
+        if (!reason) { showToast('Give a reason for refusing', 'error'); return; }
+        try {
+          await api.post(`/kb/rollback-requests/${b.dataset.rf}/reject`, { reason });
+          showToast(`${b.dataset.rf} refused. Nothing changed.`, 'success');
+          loadRollback();
+        } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+      });
     } catch (e) {
       body.innerHTML = `<p class="muted">Error: ${esc(e.message)}</p>`;
     }
@@ -2073,7 +2113,7 @@ export function renderGovernance(el, state, h) {
     try {
       const { entries, chain_valid } = await api.get('/kb/ledger');
       setHTML('ledger-status', chain_valid ? '<span class="badge badge-green">Ledger verified</span>' : '<span class="badge badge-red">Ledger FAILED verification</span>');
-      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_signed_off: 'Signed off (one pill)', proposal_rejected: 'Rejected', proposal_revoked: 'Revoked', rollback: 'Rollback', seeded: 'Seeded', integrity_review: 'Integrity review' };
+      const actionLabel = { proposal_submitted: 'Proposal submitted', proposal_approved: 'Approved', proposal_signed_off: 'Signed off (one pill)', proposal_rejected: 'Rejected', proposal_revoked: 'Revoked', rollback_requested: 'Rollback asked for', rollback_rejected: 'Rollback refused', rollback: 'Rollback countersigned', seeded: 'Seeded', integrity_review: 'Integrity review' };
       setHTML('ledger-body', !entries.length
         ? '<p class="muted">No governance actions yet.</p>'
         : `<p class="muted" style="margin-bottom:8px">Every proposal, approval, rejection, rollback and integrity review, with who did it and why. Keyed hash chain: editing any entry breaks verification.</p>
@@ -2144,8 +2184,10 @@ export function renderCapture(el, state, h) {
   const canCapture = api.can('capture_expert_knowledge');
   let draft = null;      // last AI draft from /capture/draft
   let submitted = null;  // proposal after submit
+  let draftRun = 0;      // bumped when a draft is abandoned, so a late AI reply is ignored
 
   el.innerHTML = `
+    <h2 class="sr-only">Capture expert knowledge</h2>
     ${nextHint('a different knowledge steward must approve this draft before it is reused in diagnoses.')}
     <ol class="cap-steps" id="cap-steps" aria-label="Capture progress">
       <li data-step="1">Interview</li>
@@ -2254,14 +2296,18 @@ export function renderCapture(el, state, h) {
       ...(x.checks || []).map(t => ['Check', t]), ...(x.do_not || []).map(t => ['Never', t]),
       ...(x.escalate_when || []).map(t => ['Escalate when', t])]);
     const rejected = d.rejected || [];
+    const unused = d.unused_answers || [];
     const fieldName = { check: 'Check', never: 'Never', 'escalate-when': 'Escalate when', heuristic: 'Heuristic' };
+    // A line the expert said in another answer can become its own item, by hand.
+    const movable = r => r.field !== 'heuristic' && /different answer/.test(r.reason);
     return `<div class="card grounding-card"><div class="card-header"><h3>Grounding check</h3>
-        <span class="badge ${rejected.length ? 'badge-red' : 'badge-green'}">${kept.length} kept · ${rejected.length} rejected</span></div>
+        <span class="badge ${rejected.length || unused.length ? 'badge-red' : 'badge-green'}">${kept.length} kept · ${rejected.length} rejected · ${unused.length} answer${unused.length === 1 ? '' : 's'} with no knowledge</span></div>
       <div class="card-body">
         <p class="muted" style="margin-bottom:8px">Every line the AI drafted must be the expert's own words from the same answer, and must not defeat a safety device. Anything else is rejected here and again on the server when you send.</p>
         <ul class="ground-list">
           ${kept.map(([f, l]) => `<li class="ground-ok"><span aria-hidden="true">✓</span> <span class="sr-only">Kept:</span> <strong>${f}:</strong> “${esc(l)}”</li>`).join('')}
-          ${rejected.map(r => `<li class="ground-bad"><span aria-hidden="true">✗</span> <span class="sr-only">Rejected:</span> <strong>${esc(fieldName[r.field] || r.field)}:</strong> “${esc(r.text)}” <span class="ground-why">${esc(r.reason)}</span></li>`).join('')}
+          ${rejected.map((r, i) => `<li class="ground-bad"><span aria-hidden="true">✗</span> <span class="sr-only">Rejected:</span> <strong>${esc(fieldName[r.field] || r.field)}:</strong> “${esc(r.text)}” <span class="ground-why">${esc(r.reason)}</span>${movable(r) ? ` <button class="btn btn-secondary btn-sm ground-move" data-i="${i}">Add it as its own item</button>` : ''}</li>`).join('')}
+          ${unused.map(u => `<li class="ground-bad"><span aria-hidden="true">!</span> <span class="sr-only">No knowledge drafted:</span> <strong>Expert answer:</strong> “${esc(u.excerpt)}” <span class="ground-why">${esc(u.reason)}</span></li>`).join('')}
         </ul>
         ${d.heuristics.length ? `<div class="ground-try">
           <label for="gt-line">Try to slip in a line the expert never said</label>
@@ -2320,13 +2366,14 @@ export function renderCapture(el, state, h) {
       ${groundingCard(draft)}
       <p class="muted cap-hint">Untick anything that is wrong or unclear and correct causes where needed. You cannot add words the expert did not say: the server checks every quote again.</p>
       ${draft.heuristics.map((x, i) => heuristicCard(x, i, causes, true)).join('')}
-      ${draft.provider === 'manual' ? manualForm(causes) : ''}
+      ${manualForm(causes, draft.prefill)}
       <label class="hazard-ack"><input type="checkbox" id="cap-consent"> ${esc($('cap-name').value.trim() || 'The expert')} agreed to their words being recorded and reused as knowledge.</label>
       <div class="cap-submit">
         <button class="btn btn-primary" id="cap-submit">Send ${draft.heuristics.length} for steward approval</button>
         <span class="muted" id="cap-submit-note">A different knowledge steward must approve, and safety-review every check, before it goes live.</span>
       </div>`;
-    if (draft.provider === 'manual') wireManualForm(causes);
+    wireManualForm(causes);
+    wireGroundingMove();
     wireGroundingTry();
     const btn = $('cap-submit');
     const kept = () => [...document.querySelectorAll('.kh-keep')].filter(c => c.checked).map(c => +c.dataset.i);
@@ -2357,16 +2404,30 @@ export function renderCapture(el, state, h) {
   // know-how doesn't fit what the model drafted. The same rule applies:
   // every heuristic must quote the expert's own words from the transcript.
   const norm = t => t.replace(/\s+/g, ' ').trim().toLowerCase();
-  function manualForm(causes) {
-    return `<div class="card mt-16"><div class="card-header"><h3>Add a heuristic</h3></div><div class="card-body">
+  function manualForm(causes, prefill) {
+    const p = prefill || {};
+    const val = f => (p.field === f ? esc(p.text) : '');
+    return `<div class="card mt-16" id="mh-card"><div class="card-header"><h3>Add a heuristic</h3></div><div class="card-body">
+      <p class="muted" style="margin-bottom:8px">Add something the expert said that the draft missed, or a line the check put in another answer. Its quote is checked against the transcript again when you send.</p>
       <div class="form-group"><label for="mh-cause">Cause</label><select id="mh-cause">${causeOptions(causes)}</select></div>
-      <div class="form-group"><label for="mh-when">When (the symptom the expert described)</label><input id="mh-when" type="text"></div>
-      <div class="form-group"><label for="mh-checks">Checks (one per line)</label><textarea id="mh-checks" rows="3"></textarea></div>
-      <div class="form-group"><label for="mh-never">Never (one per line)</label><textarea id="mh-never" rows="2"></textarea></div>
-      <div class="form-group"><label for="mh-esc">Escalate when (one per line)</label><textarea id="mh-esc" rows="2"></textarea></div>
-      <div class="form-group"><label for="mh-quote">Expert's own words (copy exactly from the transcript)</label><textarea id="mh-quote" rows="2"></textarea></div>
+      <div class="form-group"><label for="mh-when">When (the symptom the expert described)</label><input id="mh-when" type="text" value="${p.text ? esc(p.text) : ''}"></div>
+      <div class="form-group"><label for="mh-checks">Checks (one per line)</label><textarea id="mh-checks" rows="3">${val('check')}</textarea></div>
+      <div class="form-group"><label for="mh-never">Never (one per line)</label><textarea id="mh-never" rows="2">${val('never')}</textarea></div>
+      <div class="form-group"><label for="mh-esc">Escalate when (one per line)</label><textarea id="mh-esc" rows="2">${val('escalate-when')}</textarea></div>
+      <div class="form-group"><label for="mh-quote">Expert's own words (copy exactly from the transcript)</label><textarea id="mh-quote" rows="2">${p.text ? esc(p.text) : ''}</textarea></div>
       <button class="btn btn-secondary" id="mh-add">Add heuristic</button>
     </div></div>`;
+  }
+  // Rejected lines that the expert did say, in another answer, can be moved
+  // into the form as their own item. Nothing is added here: the form still
+  // goes through the server's grounding check when the review is sent.
+  function wireGroundingMove() {
+    document.querySelectorAll('.ground-move').forEach(btn => btn.onclick = () => {
+      const r = (draft.rejected || [])[+btn.dataset.i];
+      if (!r) return;
+      draft.prefill = { text: r.text, field: r.field };
+      renderDraft().then(() => $('mh-card') && $('mh-card').scrollIntoView({ block: 'start' }));
+    });
   }
   function wireManualForm(causes) {
     const lines = id => $(id).value.split('\n').map(x => x.trim()).filter(Boolean);
@@ -2378,12 +2439,14 @@ export function renderCapture(el, state, h) {
       const c = causes.find(x => x.id === $('mh-cause').value);
       draft.heuristics.push({ symptom_pattern: when, likely_cause: c.id, cause_label: c.label, asset_type: c.asset_type,
         checks: lines('mh-checks'), do_not: lines('mh-never'), escalate_when: lines('mh-esc'), evidence_quote: quote });
+      draft.prefill = null;
       renderDraft();
     };
   }
 
   $('cap-manual').onclick = () => {
     if (!text.value.trim()) { showToast('Paste the interview transcript first', 'error'); text.focus(); return; }
+    draftRun++;  // a draft still running is abandoned
     draft = { provider: 'manual', heuristics: [], warnings: [], dropped: 0 }; submitted = null;
     renderDraft();
   };
@@ -2444,12 +2507,39 @@ export function renderCapture(el, state, h) {
     const run = $('cap-run');
     run.disabled = true; run.textContent = 'Drafting…';
     setStep(2); setStatus('Drafting…', 'badge-blue'); submitted = null;
-    $('cap-result').innerHTML = '<div class="skeleton-card"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div><p class="muted">The model is reading the interview. Each heuristic must quote the expert word for word.</p>';
+    // The model can take a minute or two. Say what is happening, how long it
+    // has taken, and offer the manual route once it runs long.
+    $('cap-result').innerHTML = `<div class="skeleton-card"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+      <p id="cap-progress-step" class="cap-progress-step"></p>
+      <p class="muted" id="cap-progress-time"></p>
+      <div id="cap-progress-slow" hidden><div class="banner banner-info mt-16"><p>Taking longer than usual. Drafts often take a minute or two. You can keep waiting, or write the heuristics by hand now; nothing is sent until you choose.</p>
+        <button class="btn btn-secondary mt-16" id="cap-progress-manual">Write heuristics by hand</button></div></div>`;
+    const started = Date.now();
+    const myRun = ++draftRun;
+    const stepFor = secs => secs < 4 ? 'Sending the transcript. Anything that looks like an instruction is removed first.'
+      : secs < 20 ? 'The model is reading the expert\'s answers and drafting candidate knowledge.'
+      : secs < 45 ? 'Still working. Each heuristic is checked against the transcript as it comes back.'
+      : 'Still working on the draft.';
+    const ticker = setInterval(() => {
+      const secs = Math.floor((Date.now() - started) / 1000);
+      const step = $('cap-progress-step'), time = $('cap-progress-time'), slow = $('cap-progress-slow');
+      if (!step) { clearInterval(ticker); return; }
+      step.textContent = stepFor(secs);
+      time.textContent = `Elapsed ${secs} s`;
+      if (slow) slow.hidden = secs < 45;
+      const manualNow = $('cap-progress-manual');
+      if (manualNow) manualNow.onclick = () => { clearInterval(ticker); $('cap-manual').click(); };
+    }, 1000);
     try {
-      draft = await thinking(api.postJson('/capture/draft', { asset_type: $('cap-asset').value, transcript: text.value }));
+      const got = await thinking(api.postJson('/capture/draft', { asset_type: $('cap-asset').value, transcript: text.value }));
+      clearInterval(ticker);
       window.__app__?.refreshSystemInfo?.();  // the AI chip reflects this call's outcome
+      if (myRun !== draftRun) return;  // the person has moved on to writing it by hand
+      draft = got;
       await renderDraft();
     } catch (e) {
+      clearInterval(ticker);
+      if (myRun !== draftRun) return;
       draft = null; setStep(1); setStatus('Draft failed', 'badge-red');
       window.__app__?.refreshSystemInfo?.();
       const aiDown = /extraction failed|ADP|reach|key/i.test(e.message);

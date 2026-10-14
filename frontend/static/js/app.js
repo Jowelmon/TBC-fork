@@ -3,7 +3,7 @@
 import { api } from './api.js?v=9';
 import { initGuide } from './guide.js?v=14';
 import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=7';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=38';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=42';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -53,12 +53,18 @@ function copyToClipboard(text, btn) {
 
 // ── Role display name ───────────────────────────────────────
 const ROLE_NAMES = {
-  tech1:    { name: 'Technician',            cap: 'technician' },
-  mgr1:     { name: 'Asset Ops Manager',      cap: 'asset_ops_manager' },
-  steward1: { name: 'Knowledge Steward',     cap: 'knowledge_steward' },
-  steward2: { name: 'Knowledge Steward 2',   cap: 'knowledge_steward' },
-  auditor1: { name: 'Auditor',                cap: 'auditor' },
-  admin1:   { name: 'Admin',                  cap: 'admin' },
+  tech1:    { name: 'Technician',            cap: 'technician',
+              does: 'Opens cases, runs the diagnosis, records the outcome and sends feedback. Cannot approve.' },
+  mgr1:     { name: 'Asset Ops Manager',      cap: 'asset_ops_manager',
+              does: 'Approves, rejects or modifies the recommendation, raises the work order, closes escalations.' },
+  steward1: { name: 'Knowledge Steward',     cap: 'knowledge_steward',
+              does: 'Decides expert knowledge and feedback for CRAH and UPS. Countersigns their rollbacks.' },
+  steward2: { name: 'Knowledge Steward 2',   cap: 'knowledge_steward',
+              does: 'Decides expert knowledge and feedback for Chiller and Pump. Countersigns their rollbacks.' },
+  auditor1: { name: 'Auditor',                cap: 'auditor',
+              does: 'Checks the audit trail and ledger; restores a verified copy or quarantines a case.' },
+  admin1:   { name: 'Admin',                  cap: 'admin',
+              does: 'Runs the system and asks for rollbacks, which a steward countersigns. Cannot approve cases or knowledge.' },
 };
 
 function roleDisplayName(id) {
@@ -225,12 +231,27 @@ roleBadge.textContent = roleDisplayName(state.role);
 // (five wrong tries lock that user out for five minutes). Once a PIN has
 // been proven in this browser, switching back to that user needs no PIN.
 function askPin(userId, note = '') {
+  // Resolves with the user who signed in, or false if the dialog was cancelled.
   const backdrop = document.getElementById('pin-backdrop');
   const form = document.getElementById('pin-dialog');
   const input = document.getElementById('pin-input');
   const err = document.getElementById('pin-error');
-  document.getElementById('pin-prompt').textContent =
-    `Enter the PIN for ${userId} (${roleDisplayName(userId)}). Demo PINs are listed in DEMO.md.`;
+  const list = document.getElementById('pin-accounts');
+  const prompt = document.getElementById('pin-prompt');
+  let current = userId;
+  const demo = (window.__DEMO_USERS__ || []).map(u => u.id);
+  const accounts = demo.length ? demo : [userId];
+  const showPrompt = () => {
+    prompt.textContent = `Enter the PIN for ${current} (${roleDisplayName(current)}).`;
+    list.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.user === current)));
+  };
+  list.innerHTML = accounts.map(id => `<li><button type="button" class="pin-account" data-user="${esc(id)}">
+      <strong>${esc(roleDisplayName(id))}</strong> <span class="muted">${esc(id)}</span>
+      <span class="pin-account-does">${esc((ROLE_NAMES[id] || {}).does || '')}</span></button></li>`).join('');
+  list.querySelectorAll('button').forEach(b => b.onclick = () => {
+    current = b.dataset.user; input.value = ''; err.textContent = ''; showPrompt(); input.focus();
+  });
+  showPrompt();
   input.value = ''; err.textContent = note;
   backdrop.hidden = false;
   input.focus();
@@ -238,7 +259,7 @@ function askPin(userId, note = '') {
     const done = value => { backdrop.hidden = true; form.onsubmit = null; resolve(value); };
     form.onsubmit = async ev => {
       ev.preventDefault();
-      try { await api.login(userId, input.value); done(true); }
+      try { await api.login(current, input.value); done(current); }
       catch (e) { err.textContent = e.message; input.select(); }
     };
     document.getElementById('pin-cancel').onclick = () => done(false);
@@ -246,12 +267,14 @@ function askPin(userId, note = '') {
   });
 }
 
+// Resolves with the user who is now signed in (may differ from the one asked
+// for, if the person picks another account in the dialog), or false.
 async function signIn(userId) {
   // Ask for the PIN straight away when this browser has not proven it yet,
   // rather than sending a sign-in that can only be refused.
   const unlocked = await api.get('/login/unlocked').then(r => r.unlocked).catch(() => null);
   if (unlocked && !unlocked.includes(userId)) return askPin(userId);
-  try { await api.login(userId); return true; }
+  try { await api.login(userId); return userId; }
   catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
 }
 
@@ -259,12 +282,13 @@ async function signIn(userId) {
 // racing into the same container would leave the slower (old) screen on top.
 async function setRole(role, { render = true } = {}) {
   if (roleSelect.value === role && state.role === role) return true;
-  if (!(await signIn(role))) {
+  const who = await signIn(role);
+  if (!who) {
     roleSelect.value = state.role; // revert the dropdown
     return false;
   }
-  roleSelect.value = role;
-  state.role = role;
+  roleSelect.value = who;
+  state.role = who;
   roleBadge.textContent = roleDisplayName(state.role);
   updateKbFooter();
   if (render) renderScreen();
@@ -309,9 +333,13 @@ async function refreshSystemInfo() {
 // -controlled ?user= — is what the server sees from here on.
 initCloud();
 (async () => {
-  while (!(await signIn(state.role))) {
+  let who;
+  while (!(who = await signIn(state.role))) {
     showToast('Sign in to continue', 'error');
   }
+  state.role = who;
+  roleSelect.value = who;
+  roleBadge.textContent = roleDisplayName(who);
   initGuide({ api, navigate, setRole, showToast });
   navigate('dashboard');
   updateKbFooter();

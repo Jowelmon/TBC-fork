@@ -126,7 +126,7 @@ def test_knowledge_changes_freeze_while_the_ledger_fails_verification(client):
 
 
 # 3. Per-pill knowledge --------------------------------------------------------
-def test_rolling_back_one_pill_leaves_the_others_alone(client):
+def test_rolling_back_one_pill_leaves_the_others_alone(client, rollback):
     pid = _queued_capture("steward1")
     before = {pill: LSTORE.version_of(pill) for pill in ("Chiller", "Pump")}
     LSTORE.approve_proposal(pid, decided_by="steward2", rationale="checked against the transcript",
@@ -134,9 +134,7 @@ def test_rolling_back_one_pill_leaves_the_others_alone(client):
     after = {pill: LSTORE.version_of(pill) for pill in ("Chiller", "Pump")}
     assert all(after[p] == before[p] + 1 for p in after)
 
-    resp = client.post(f"/kb/rollback/{before['Pump']}",
-                       params={"user": "admin1", "pill": "Pump", "reason": "bad pump advice"})
-    assert resp.status_code == 200, resp.text
+    rollback("Pump", before['Pump'], "bad pump advice")
     assert LSTORE.version_of("Pump") == before["Pump"]
     assert LSTORE.version_of("Chiller") == after["Chiller"]
     live = {(h["asset_type"], h["kb_version"]) for h in LSTORE.expert_heuristics}

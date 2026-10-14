@@ -96,11 +96,11 @@ def test_snapshots_are_json_not_pickle(tmp_path, client):
 
 
 # 2. Stale knowledge -----------------------------------------------------------
-def test_rolled_back_knowledge_blocks_approval_until_rescored(client):
+def test_rolled_back_knowledge_blocks_approval_until_rescored(client, rollback):
     start = client.get("/kb/versions", params={"user": "tech1", "pill": "CRAH"}).json()["current_version"]
     _approved_feedback(client)
     cid = _case(client)  # scored against the new version
-    client.post(f"/kb/rollback/{start}", params={"user": "admin1", "pill": "CRAH", "reason": "bad batch"})
+    rollback("CRAH", start, "bad batch")
     snap = client.get(f"/cases/{cid}", params={"user": "mgr1"}).json()
     assert snap["knowledge_withdrawn"]
     resp = client.post(f"/cases/{cid}/approval", params={"user": "mgr1", "decision": "approve", "rationale": "ok"})

@@ -84,7 +84,7 @@ def test_approving_validated_case_raises_next_identical_case_confidence(client: 
     assert second["confidence_breakdown"]["kb_match"] > first["confidence_breakdown"]["kb_match"]
 
 
-def test_rollback_restores_confidence_exactly(client: TestClient):
+def test_rollback_restores_confidence_exactly(client: TestClient, rollback):
     # Self-contained: compares against its OWN measured baseline, so it
     # doesn't assume a pristine KB (other tests in this session may have
     # already ingested cases with the same fault signature).
@@ -96,8 +96,7 @@ def test_rollback_restores_confidence_exactly(client: TestClient):
     version_after = client.get("/kb/stats", params={"user": "tech1"}).json()["kb_versions"]["CRAH"]
     assert version_after > version_before, "approval must move the KB to a new version"
 
-    resp = client.post(f"/kb/rollback/{version_before}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
-    assert resp.status_code == 200, resp.text
+    rollback("CRAH", version_before, "test rollback")
 
     restored = _create_and_advance(client)
     assert restored["confidence"] == pytest.approx(confidence_before, abs=1e-9), (

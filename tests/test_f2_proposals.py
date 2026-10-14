@@ -153,7 +153,7 @@ def test_f2_reject_proposal_does_not_enter_kb(client: TestClient):
     assert not any(p["proposal_id"] == proposal_id for p in resp.json()["queue"])
 
 
-def test_f2_rollback_removes_approved_cases(client: TestClient):
+def test_f2_rollback_removes_approved_cases(client: TestClient, rollback):
     """Rollback removes all cases added after the target version."""
     fb1 = _create_closed_case(client)
     # Approve first proposal
@@ -171,10 +171,9 @@ def test_f2_rollback_removes_approved_cases(client: TestClient):
     assert version > first
 
     # Roll back to the version right after the first approval (admin only)
-    resp = client.post(f"/kb/rollback/{first}", params={"user": "admin1", "pill": "CRAH", "reason": "test rollback"})
-    assert resp.status_code == 200
-    assert resp.json()["rolled_back_to"] == first
-    assert resp.json()["removed_cases"] >= 1
+    resp = rollback("CRAH", first, "test rollback")
+    assert resp["result"]["rolled_back_to"] == first
+    assert resp["result"]["removed_cases"] >= 1
 
     stats = client.get("/kb/stats", params={"user": "tech1"}).json()
     assert stats["kb_versions"]["CRAH"] == first
