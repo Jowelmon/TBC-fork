@@ -2254,14 +2254,18 @@ export function renderCapture(el, state, h) {
       ...(x.checks || []).map(t => ['Check', t]), ...(x.do_not || []).map(t => ['Never', t]),
       ...(x.escalate_when || []).map(t => ['Escalate when', t])]);
     const rejected = d.rejected || [];
+    const unused = d.unused_answers || [];
     const fieldName = { check: 'Check', never: 'Never', 'escalate-when': 'Escalate when', heuristic: 'Heuristic' };
+    // A line the expert said in another answer can become its own item, by hand.
+    const movable = r => r.field !== 'heuristic' && /different answer/.test(r.reason);
     return `<div class="card grounding-card"><div class="card-header"><h3>Grounding check</h3>
-        <span class="badge ${rejected.length ? 'badge-red' : 'badge-green'}">${kept.length} kept · ${rejected.length} rejected</span></div>
+        <span class="badge ${rejected.length || unused.length ? 'badge-red' : 'badge-green'}">${kept.length} kept · ${rejected.length} rejected · ${unused.length} answer${unused.length === 1 ? '' : 's'} with no knowledge</span></div>
       <div class="card-body">
         <p class="muted" style="margin-bottom:8px">Every line the AI drafted must be the expert's own words from the same answer, and must not defeat a safety device. Anything else is rejected here and again on the server when you send.</p>
         <ul class="ground-list">
           ${kept.map(([f, l]) => `<li class="ground-ok"><span aria-hidden="true">✓</span> <span class="sr-only">Kept:</span> <strong>${f}:</strong> “${esc(l)}”</li>`).join('')}
-          ${rejected.map(r => `<li class="ground-bad"><span aria-hidden="true">✗</span> <span class="sr-only">Rejected:</span> <strong>${esc(fieldName[r.field] || r.field)}:</strong> “${esc(r.text)}” <span class="ground-why">${esc(r.reason)}</span></li>`).join('')}
+          ${rejected.map((r, i) => `<li class="ground-bad"><span aria-hidden="true">✗</span> <span class="sr-only">Rejected:</span> <strong>${esc(fieldName[r.field] || r.field)}:</strong> “${esc(r.text)}” <span class="ground-why">${esc(r.reason)}</span>${movable(r) ? ` <button class="btn btn-secondary btn-sm ground-move" data-i="${i}">Add it as its own item</button>` : ''}</li>`).join('')}
+          ${unused.map(u => `<li class="ground-bad"><span aria-hidden="true">!</span> <span class="sr-only">No knowledge drafted:</span> <strong>Expert answer:</strong> “${esc(u.excerpt)}” <span class="ground-why">${esc(u.reason)}</span></li>`).join('')}
         </ul>
         ${d.heuristics.length ? `<div class="ground-try">
           <label for="gt-line">Try to slip in a line the expert never said</label>
@@ -2320,13 +2324,14 @@ export function renderCapture(el, state, h) {
       ${groundingCard(draft)}
       <p class="muted cap-hint">Untick anything that is wrong or unclear and correct causes where needed. You cannot add words the expert did not say: the server checks every quote again.</p>
       ${draft.heuristics.map((x, i) => heuristicCard(x, i, causes, true)).join('')}
-      ${draft.provider === 'manual' ? manualForm(causes) : ''}
+      ${manualForm(causes, draft.prefill)}
       <label class="hazard-ack"><input type="checkbox" id="cap-consent"> ${esc($('cap-name').value.trim() || 'The expert')} agreed to their words being recorded and reused as knowledge.</label>
       <div class="cap-submit">
         <button class="btn btn-primary" id="cap-submit">Send ${draft.heuristics.length} for steward approval</button>
         <span class="muted" id="cap-submit-note">A different knowledge steward must approve, and safety-review every check, before it goes live.</span>
       </div>`;
-    if (draft.provider === 'manual') wireManualForm(causes);
+    wireManualForm(causes);
+    wireGroundingMove();
     wireGroundingTry();
     const btn = $('cap-submit');
     const kept = () => [...document.querySelectorAll('.kh-keep')].filter(c => c.checked).map(c => +c.dataset.i);
@@ -2357,16 +2362,30 @@ export function renderCapture(el, state, h) {
   // know-how doesn't fit what the model drafted. The same rule applies:
   // every heuristic must quote the expert's own words from the transcript.
   const norm = t => t.replace(/\s+/g, ' ').trim().toLowerCase();
-  function manualForm(causes) {
-    return `<div class="card mt-16"><div class="card-header"><h3>Add a heuristic</h3></div><div class="card-body">
+  function manualForm(causes, prefill) {
+    const p = prefill || {};
+    const val = f => (p.field === f ? esc(p.text) : '');
+    return `<div class="card mt-16" id="mh-card"><div class="card-header"><h3>Add a heuristic</h3></div><div class="card-body">
+      <p class="muted" style="margin-bottom:8px">Add something the expert said that the draft missed, or a line the check put in another answer. Its quote is checked against the transcript again when you send.</p>
       <div class="form-group"><label for="mh-cause">Cause</label><select id="mh-cause">${causeOptions(causes)}</select></div>
-      <div class="form-group"><label for="mh-when">When (the symptom the expert described)</label><input id="mh-when" type="text"></div>
-      <div class="form-group"><label for="mh-checks">Checks (one per line)</label><textarea id="mh-checks" rows="3"></textarea></div>
-      <div class="form-group"><label for="mh-never">Never (one per line)</label><textarea id="mh-never" rows="2"></textarea></div>
-      <div class="form-group"><label for="mh-esc">Escalate when (one per line)</label><textarea id="mh-esc" rows="2"></textarea></div>
-      <div class="form-group"><label for="mh-quote">Expert's own words (copy exactly from the transcript)</label><textarea id="mh-quote" rows="2"></textarea></div>
+      <div class="form-group"><label for="mh-when">When (the symptom the expert described)</label><input id="mh-when" type="text" value="${p.text ? esc(p.text) : ''}"></div>
+      <div class="form-group"><label for="mh-checks">Checks (one per line)</label><textarea id="mh-checks" rows="3">${val('check')}</textarea></div>
+      <div class="form-group"><label for="mh-never">Never (one per line)</label><textarea id="mh-never" rows="2">${val('never')}</textarea></div>
+      <div class="form-group"><label for="mh-esc">Escalate when (one per line)</label><textarea id="mh-esc" rows="2">${val('escalate-when')}</textarea></div>
+      <div class="form-group"><label for="mh-quote">Expert's own words (copy exactly from the transcript)</label><textarea id="mh-quote" rows="2">${p.text ? esc(p.text) : ''}</textarea></div>
       <button class="btn btn-secondary" id="mh-add">Add heuristic</button>
     </div></div>`;
+  }
+  // Rejected lines that the expert did say, in another answer, can be moved
+  // into the form as their own item. Nothing is added here: the form still
+  // goes through the server's grounding check when the review is sent.
+  function wireGroundingMove() {
+    document.querySelectorAll('.ground-move').forEach(btn => btn.onclick = () => {
+      const r = (draft.rejected || [])[+btn.dataset.i];
+      if (!r) return;
+      draft.prefill = { text: r.text, field: r.field };
+      renderDraft().then(() => $('mh-card') && $('mh-card').scrollIntoView({ block: 'start' }));
+    });
   }
   function wireManualForm(causes) {
     const lines = id => $(id).value.split('\n').map(x => x.trim()).filter(Boolean);
@@ -2378,6 +2397,7 @@ export function renderCapture(el, state, h) {
       const c = causes.find(x => x.id === $('mh-cause').value);
       draft.heuristics.push({ symptom_pattern: when, likely_cause: c.id, cause_label: c.label, asset_type: c.asset_type,
         checks: lines('mh-checks'), do_not: lines('mh-never'), escalate_when: lines('mh-esc'), evidence_quote: quote });
+      draft.prefill = null;
       renderDraft();
     };
   }

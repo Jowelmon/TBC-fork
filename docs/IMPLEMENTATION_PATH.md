@@ -62,6 +62,11 @@ technical-services SMEs; SSO in place of the demo user list.
   manager; `auth.py`'s `_SECRET` resolution and `llm.py`'s
   `ADP_APP_KEY` read are both already environment-variable-driven, so
   this is a deployment change, not a code change.
+- Identity via SSO, not demo PINs. The seam is `auth.py`'s `/login`: its
+  PIN check becomes an OIDC sign-in callback that reads the user's groups,
+  and `rbac.DEMO_USERS` becomes the group-to-role mapping for the five roles.
+  The signed-cookie session, lockout and role checks stay as they are.
+  Not built yet: no OIDC client or group mapping exists in this repo.
 - Real CMMS/work-order integration: `tools.py`'s
   `create_work_order_for_state` currently mints a local work order id;
   the seam is that one function.

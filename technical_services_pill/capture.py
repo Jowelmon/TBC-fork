@@ -66,6 +66,35 @@ def _paragraph_of(sanitized: str, quote: str) -> str:
     return " ".join(sentences[start:start + 4])
 
 
+_SPEAKER_TURN = re.compile(r"(?m)^(?=[A-Z][^:\n]{0,60}:)")
+_MIN_ANSWER_WORDS = 8
+
+
+def _expert_answers(sanitized: str) -> list[str]:
+    """The expert's answers: each speaker turn, with its follow-on paragraphs
+    (a blank line does not start a new answer), minus the interviewer's
+    questions. A transcript with no speaker labels is one answer."""
+    turns = [t.strip() for t in _SPEAKER_TURN.split(sanitized) if t.strip()]
+    return [t for t in turns if not re.match(r"interviewer\s*:", t, re.IGNORECASE)]
+
+
+def _unused_answers(sanitized: str, kept: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Expert answers long enough to hold knowledge that no kept heuristic
+    quotes. Shown to the capturer, so an answer the AI passed over is visible."""
+    quotes = [_norm(h["evidence_quote"]) for h in kept]
+    out = []
+    for answer in _expert_answers(sanitized):
+        if len(answer.split()) < _MIN_ANSWER_WORDS:
+            continue
+        if any(q and q in _norm(answer) for q in quotes):
+            continue
+        excerpt = re.sub(r"\s+", " ", answer)
+        out.append({"excerpt": excerpt[:240] + ("…" if len(excerpt) > 240 else ""),
+                    "reason": "no knowledge was drafted from this answer; check it for a check, a "
+                              "'never' or an escalation rule, and add it by hand if it has one"})
+    return out
+
+
 def _closest_sentence(symptom: str, quote: str) -> str:
     """The sentence of the expert's quote that shares most words with a
     reworded symptom (the first, if none do), so the WHEN text stays in the
@@ -149,7 +178,8 @@ def _cause_terms(cause: str) -> tuple[str, ...]:
 def _rules_out(quote: str, cause: str) -> bool:
     """True if the expert's own words deny the cause the item is filed
     under, e.g. "it's almost never the sensor" filed as a sensor failure."""
-    low = quote.lower()
+    # Curly apostrophes are the same as straight ones ("that\u2019s" is "that's").
+    low = quote.lower().replace("\u2019", "'")
     return any(llm._denied(low, pos)
                for term in _cause_terms(cause) for pos in llm._keyword_spans(term, low))
 
@@ -318,6 +348,7 @@ def draft_from_transcript(transcript: str, asset_type: str) -> dict[str, Any]:
         "warnings": warnings,
         "dropped": len(items) - len(kept),
         "rejected": rejected,
+        "unused_answers": _unused_answers(sanitized, kept),
     }
 
 
@@ -327,7 +358,8 @@ def check_draft(transcript: str, asset_type: str, heuristics: list[Any]) -> dict
     sanitized, warnings = _sanitize(transcript)
     rejected: list[dict[str, Any]] = []
     kept, item_warnings = _validate_items(sanitized, heuristics, asset_type, rejected)
-    return {"heuristics": kept, "rejected": rejected, "warnings": warnings + item_warnings}
+    return {"heuristics": kept, "rejected": rejected, "warnings": warnings + item_warnings,
+            "unused_answers": _unused_answers(sanitized, kept)}
 
 
 def reviewed_draft(

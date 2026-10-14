@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (571 tests) |
+| `make test` | pytest suite (577 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -291,6 +291,21 @@ find things; it never acts on a case.
   `~/.tbc/audit.key` (mode 0600). Anyone holding both the database and the
   key can re-sign the chains, so in production the key belongs in a secrets
   manager. Snapshots are JSON, never pickle.
+
+## What is real and what is mocked
+
+The diagnosis, governance and audit code is real and tested. The inputs
+around it are demo stand-ins, each with a named seam to replace it.
+
+| Part | In this build | To go live (see `docs/IMPLEMENTATION_PATH.md`) |
+|---|---|---|
+| Diagnosis rules, guardrails, confidence, governance, audit | Real code, covered by `make test` and `make eval` | Validate the thresholds marked `【ASSUMPTION】` with Keppel SMEs |
+| Asset telemetry | Eight demo assets with static readings (`mock_registry.py`) | A BMS or historian feed through the gatherers in `tools.py` |
+| Work orders | A local ID minted in `create_work_order_for_state` | A CMMS API call at that one function |
+| Login | Demo PINs (`rbac.DEMO_USERS`, `TBC_LOGIN_PINS`) | SSO through the `/login` seam in `auth.py` |
+| Storage | Single-process SQLite snapshots (`persistence.py`) | A managed database behind `save_state` / `load_state` |
+| AI | Offline mock model, or Tencent Cloud ADP when configured | ADP with the AppKey in a secret manager |
+| Audit keys | `TBC_SECRET`, generated per process if unset | A secret manager, set outside the demo |
 
 ## Project layout
 

@@ -328,7 +328,9 @@ _ESCALATE_TRIGGERS = ("call the", "call a", "call in", "escalate", "get the safe
 # not a denial, and must still draft the heuristic.
 _NEGATORS = {"not", "no", "never", "isn't", "wasn't", "aren't", "weren't",
              "doesn't", "didn't", "nothing", "without"}
-_CLAUSE_SPLIT = re.compile(r"[,;:]|\bbut\b")
+# A negation only reaches as far as its clause: a full stop, dash or "but" ends it,
+# so "The pump does not leak. That's cavitation" does not deny cavitation.
+_CLAUSE_SPLIT = re.compile(r"[,;:.!?\u2014]|\bbut\b")
 
 
 def _keyword_spans(keyword: str, text: str) -> list[int]:
