@@ -412,14 +412,12 @@ export function renderDashboard(el, state, h) {
   (async () => {
     try {
       const [st, sen] = await Promise.all([api.get('/audit/status'), api.get('/sentinel')]);
-      // A tamper recorded on load or save is shown even when the restored
-      // state now verifies: the copy that was changed has been archived.
-      const recorded = st.recorded_tamper_events || [];
-      if (recorded.length) {
-        setHTML('integrity-banner', `<div class="banner banner-warn" role="alert"><p><strong>A saved copy was changed outside the app.</strong> ${recorded.length} tamper event(s) on record, latest ${esc(recorded[recorded.length - 1].at)}: ${esc(recorded[recorded.length - 1].detail)}. The changed copy was archived and the last verified state restored. An auditor reviews the record on Governance.</p></div>`);
-      }
       if (st.ok && !sen.held.length) return;
       const parts = [];
+      // A tamper recorded on load or save stays open until an auditor
+      // acknowledges it, even though the clean state has been restored.
+      const open = st.unacknowledged_tamper_events || [];
+      if (open.length) parts.push(`${open.length} saved copy change(s) recorded outside the app and not yet acknowledged (latest: ${esc(open[open.length - 1].detail)}; the changed copy was archived and the last verified state restored)`);
       if (sen.held.length) parts.push(`the sentinel stopped ${sen.held.map(x => esc(x.case_id)).join(', ')} (held for an auditor's decision)`);
       if (st.broken_cases.length) parts.push(`case audit chain failed for ${st.broken_cases.map(esc).join(', ')} (frozen: no further actions allowed)`);
       if (!st.ledger_valid) parts.push('the knowledge governance ledger failed verification');
@@ -1231,7 +1229,10 @@ export function renderDecision(el, state, h) {
         if (!canApprove) {
           escBody.innerHTML = `<p class="muted">Resolving an escalation requires the Asset Ops Manager role. Switch role in the top bar.</p>`;
         } else {
+          const kc = s.knowledge_changed;
           escBody.innerHTML = `
+            ${kc ? `<div class="banner banner-warn" style="margin-bottom:12px"><p><strong>Knowledge has changed since this was scored.</strong> It was scored on ${esc(kc.scored_on)}; ${esc(kc.pill)} is now ${esc(kc.now)}. Re-diagnosing uses the current knowledge.</p>
+              <button class="btn btn-primary mt-16" id="btn-esc-rediag">Re-diagnose against current knowledge</button></div>` : ''}
             <div class="form-group"><label for="esc-reason">Reason or resolution</label><input id="esc-reason" type="text" placeholder="e.g. BMS vendor replaced controller CTL-02; tags reporting again"></div>
             ${s.asset_type === 'UNKNOWN' ? '<p class="muted" style="margin-bottom:8px">This asset is not in the registry, so there is no data source to re-query. Close it with what was found, and register the asset if the pill should cover it.</p>' : ''}
             <div class="form-group"><label for="esc-cause">Confirmed cause (optional: sends this resolution to a knowledge steward so the pill can learn it)</label>
@@ -1241,6 +1242,19 @@ export function renderDecision(el, state, h) {
               <button class="btn btn-red" id="btn-esc-close">Close escalation (resolution required)</button>
             </div>
           `;
+          const btnRe = document.getElementById('btn-esc-rediag');
+          if (btnRe) btnRe.onclick = async () => {
+            btnRe.disabled = true; btnRe.setAttribute('aria-busy', 'true');
+            btnRe.textContent = 'Re-diagnosing against current knowledge… (about 15 s)';
+            try {
+              const r = await thinking(api.post(`/cases/${cid}/escalation/evidence`, { reason: `re-diagnosed against current ${kc.now} knowledge (scored on ${kc.scored_on})` }));
+              showToast(`Re-diagnosed: ${plain(r.current_state).toLowerCase()} at ${Math.round(r.confidence * 100)}%`, 'success');
+              load();
+            } catch (e) {
+              showToast(`Error: ${e.message}`, 'error');
+              btnRe.disabled = false; btnRe.removeAttribute('aria-busy'); btnRe.textContent = 'Re-diagnose against current knowledge';
+            }
+          };
           const btnEv = document.getElementById('btn-esc-evidence');
           if (btnEv) btnEv.onclick = async () => {
             const reason = document.getElementById('esc-reason').value.trim();
@@ -1603,13 +1617,18 @@ export function renderGovernance(el, state, h) {
             </div></div></div>`;
         return `<div class="banner banner-info mt-16"><p>${head} <strong>Waiting for ${esc(r.countersigned_by)} to countersign.</strong> Nothing has changed yet. ${esc(what)}</p></div>`;
       }).join('');
+      // Rollbacks waiting for the signed-in steward, whichever pill is on screen.
+      const waitingForMe = requests.filter(r => r.status === 'pending' && r.countersigned_by === me && canCountersign);
+      const waitingBanner = waitingForMe.map(r => `<div class="banner banner-warn" style="margin-bottom:10px"><p><strong>${esc(r.request_id)} waits for you:</strong> roll ${esc(r.pill)} back to ${esc(r.target_label)}, asked by ${esc(r.requested_by)}. <button class="btn btn-secondary btn-sm" data-open-pill="${esc(r.pill)}">Open ${esc(r.pill)}</button></p></div>`).join('');
       body.innerHTML = `
+        ${waitingBanner}
         ${pillPicker}
         <p class="muted" style="margin-bottom:8px">Current ${esc(pill)} knowledge: <strong>${esc(current_label)}</strong>. Rolling back one pill leaves the others alone. Version labels are never reused: a rolled-back version keeps its label and the next approval gets a new one.</p>
         <div style="margin-bottom:12px">${history}</div>
         ${askForm}
         ${cards}`;
       document.getElementById('rb-pill').onchange = (ev) => { loadRollback.pill = ev.target.value; loadRollback(); };
+      body.querySelectorAll('[data-open-pill]').forEach(b => b.onclick = () => { loadRollback.pill = b.dataset.openPill; loadRollback(); });
       const go = document.getElementById('rb-go');
       if (go) {
         go.onclick = () => {
@@ -2180,8 +2199,21 @@ export function renderGovernance(el, state, h) {
         return;
       }
       const archived = events.some(e => e.archived_path);
-      body.innerHTML = `<div class="banner banner-warn" style="margin-bottom:8px"><p><strong>${events.length} integrity event(s) recorded.</strong> ${archived ? 'Where a snapshot was tampered with, it was archived (paths below) before the clean state overwrote the file, so no restart can erase the evidence.' : 'Each says what was found; review any frozen record on this tab.'}</p></div>
-        <ul style="margin:0 0 0 18px">${events.slice().reverse().map(e => `<li style="margin-bottom:6px"><strong>${esc(TAMPER_EVENTS[e.event] || e.event)}</strong> — ${esc(e.detail)}${e.archived_path ? ' · <code>' + esc(e.archived_path) + '</code>' : ''}<div class="muted" style="font-size:12px">${esc(e.at)}</div></li>`).join('')}</ul>`;
+      const open = events.filter(e => !e.acknowledged).length;
+      const canAck = api.can('review_audit_integrity');
+      body.innerHTML = `<div class="banner ${open ? 'banner-error' : 'banner-warn'}" style="margin-bottom:8px"><p><strong>${events.length} integrity event(s) recorded, ${open} not yet acknowledged.</strong> ${archived ? 'Where a snapshot was tampered with, it was archived (paths below) before the clean state overwrote the file, so no restart can erase the evidence.' : 'Each says what was found.'} ${open && !canAck ? 'An auditor acknowledges each one here.' : ''}</p></div>
+        <ul style="margin:0 0 0 18px">${events.slice().reverse().map(e => `<li style="margin-bottom:6px"><strong>${esc(TAMPER_EVENTS[e.event] || e.event)}</strong> — ${esc(e.detail)}${e.archived_path ? ' · <code>' + esc(e.archived_path) + '</code>' : ''}<div class="muted" style="font-size:12px">${esc(e.at)} · ${e.acknowledged ? 'acknowledged by an auditor' : '<strong>not acknowledged</strong>'}</div>
+          ${!e.acknowledged && canAck ? `<div class="flex gap-8 flex-wrap align-center mt-16"><input type="text" class="tamper-reason" data-at="${esc(e.at)}" placeholder="Reason (required)" aria-label="Reason for acknowledging this event" style="flex:1 1 240px"><button class="btn btn-secondary btn-sm" data-ack="${esc(e.at)}">Acknowledge</button></div>` : ''}</li>`).join('')}</ul>`;
+      body.querySelectorAll('[data-ack]').forEach(b => b.onclick = async () => {
+        const reason = body.querySelector(`.tamper-reason[data-at="${CSS.escape(b.dataset.ack)}"]`).value.trim();
+        if (!reason) { showToast('Give a reason for acknowledging this event', 'error'); return; }
+        try {
+          await api.post(`/audit/tamper/acknowledge?event_at=${encodeURIComponent(b.dataset.ack)}&reason=${encodeURIComponent(reason)}`);
+          showToast('Tamper event acknowledged in the ledger', 'success');
+          loadTamperEvents();
+          loadIntegrity();
+        } catch (e) { showToast(`Error: ${e.message}`, 'error'); }
+      });
     } catch (e) {
       setHTML('tamper-body', isForbidden(e)
         ? rbacNote('Integrity events', 'auditors, knowledge stewards and admins')

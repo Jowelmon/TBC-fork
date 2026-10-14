@@ -651,6 +651,20 @@ def get_case(case_id: str, user: str = Depends(resolve_user)) -> dict:
     state = STORE.get(case_id)
     snap["knowledge_withdrawn"] = (
         _knowledge_withdrawn(state) if state.current_state == AgentStateName.AWAITING_APPROVAL else None)
+    # An escalated case keeps the knowledge version it was scored against. If
+    # that pill has moved on since, re-diagnosing picks up the current knowledge.
+    snap["knowledge_changed"] = None
+    if state.current_state == AgentStateName.ESCALATED and state.confidence_breakdown:
+        from .learning import STORE as _KSTORE
+        from .learning import kb_version_label
+        b = state.confidence_breakdown
+        pill, used = b.get("pill"), b.get("kb_version")
+        if pill and used is not None and _KSTORE.version_of(pill) != used:
+            snap["knowledge_changed"] = {
+                "pill": pill,
+                "scored_on": f"{pill} v{kb_version_label(used)}",
+                "now": _KSTORE.label_of(pill),
+            }
     from .learning import STORE as _LSTORE
 
     # A broken ledger is cleared by an auditor's review, not by re-scoring.
@@ -1879,6 +1893,8 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
     # Tamper evidence recorded on load or save (the clean state may already
     # have been restored, so these are shown even when every check passes).
     tamper = [e for e in persistence.integrity_events() if e.get("event") in TAMPER_EVENT_KINDS]
+    acked = _acknowledged_tamper_ats()
+    unacked = [e for e in tamper if e["at"] not in acked]
     return {"broken_cases": broken,
             "case_problems": {cid: STORE.get(cid).chain_problem() for cid in broken},
             "missing_cases": missing,
@@ -1888,7 +1904,50 @@ def get_audit_status(user: str = Depends(resolve_user)) -> dict:
             "tool_log_valid": tool_log_ok,
             "recorded_tamper_events": [{"at": e["at"], "event": e["event"], "detail": e["detail"]}
                                        for e in tamper[-5:]],
-            "ok": not broken and ledger_ok and registry_ok and tool_log_ok}
+            # An event stays open until an auditor acknowledges it: detection
+            # alone does not make the audit trail OK again.
+            "unacknowledged_tamper_events": [{"at": e["at"], "event": e["event"], "detail": e["detail"]}
+                                             for e in unacked],
+            "ok": not broken and ledger_ok and registry_ok and tool_log_ok and not unacked}
+
+
+def _acknowledged_tamper_ats() -> set[str]:
+    """Tamper events an auditor has acknowledged, read from the governance
+    ledger (keyed and hash-chained, so an acknowledgement cannot be forged)."""
+    from .learning import STORE as _LSTORE
+
+    prefix = "tamper event "
+    acked: set[str] = set()
+    for e in _LSTORE.ledger:
+        reason = e.get("reason") or ""
+        if e.get("action") == "integrity_review" and reason.startswith(prefix) and " acknowledged: " in reason:
+            acked.add(reason[len(prefix):].split(" acknowledged: ", 1)[0])
+    return acked
+
+
+@app.post("/audit/tamper/acknowledge")
+def acknowledge_tamper_event(event_at: str, reason: str = "", user: str = Depends(resolve_user)) -> dict:
+    """An auditor acknowledges a recorded tamper event, with a reason. The
+    acknowledgement is written to the governance ledger, so the audit verdict
+    stays open until someone with the auditor role has looked at it."""
+    _need(user, "review_audit_integrity")
+    from . import persistence
+    from .learning import STORE as _LSTORE
+    from .learning import LedgerBrokenError
+
+    if not reason.strip():
+        raise HTTPException(400, "acknowledging a tamper event needs a reason")
+    known = {e["at"] for e in persistence.integrity_events() if e.get("event") in TAMPER_EVENT_KINDS}
+    if event_at not in known:
+        raise HTTPException(404, f"no tamper event recorded at {event_at}")
+    if event_at in _acknowledged_tamper_ats():
+        raise HTTPException(409, f"the tamper event at {event_at} is already acknowledged")
+    try:
+        _LSTORE.record_integrity_review(
+            actor=user, reason=f"tamper event {event_at} acknowledged: {reason.strip()}")
+    except LedgerBrokenError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"at": event_at, "acknowledged_by": user, "reason": reason.strip()}
 
 
 @app.post("/audit/review")
@@ -2052,7 +2111,8 @@ def get_system_integrity(user: str = Depends(resolve_user)) -> dict:
     from . import persistence
 
     _need(user, "read_audit_trail")
-    return {"events": persistence.integrity_events()}
+    acked = _acknowledged_tamper_ats()
+    return {"events": [{**e, "acknowledged": e.get("at") in acked} for e in persistence.integrity_events()]}
 
 
 # --- helpers ---------------------------------------------------------------
