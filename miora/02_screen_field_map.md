@@ -5,7 +5,7 @@ screen below lists the endpoint that feeds it and the exact model fields to
 bind. Do NOT invent fields not listed here.
 
 All endpoints require `?user=<role_id>` (RBAC enforced). Base path: the
-FastAPI app in `technical_services_pill/app.py` (14 endpoints).
+FastAPI app in `technical_services_pill/app.py` (14 endpoints when this map was written).
 
 ---
 
