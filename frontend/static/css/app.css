@@ -792,9 +792,13 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   #cases-table th:nth-child(5), #cases-table td:nth-child(5) { display: none; }
   #cases-table th, #cases-table td { padding-left: 8px; padding-right: 8px; }
 }
-@media (max-width: 1100px) {
-  /* The fault is named on the case screen too; the Action column stays. */
+/* Laptop and projector widths: the fault is named on the case screen, so the
+   table keeps Status, Confidence and Action on screen without scrolling. */
+@media (max-width: 1366px) {
   #cases-table th:nth-child(3), #cases-table td:nth-child(3) { display: none; }
+}
+@media (max-width: 1100px) {
+
   .role-label { display: none; }
   #role-switcher .btn-sm { padding: 4px 8px; }
   #model-chip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -966,3 +970,9 @@ th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { 
 .pin-account[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 3px 0 0 var(--blue); }
 .pin-account-does { font-size: 20px; color: var(--text-dim); }
 .cap-progress-step { margin-top: 12px; color: var(--text-bright); }
+
+/* Narrow dashboards (1024 px and below, beside the sidebar): badges and the
+   Action button may wrap so every column fits the table box. */
+@media (max-width: 1100px) {
+  #cases-table td .badge, #cases-table td:last-child .btn { white-space: normal; }
+}

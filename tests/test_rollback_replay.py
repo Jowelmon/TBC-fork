@@ -68,6 +68,14 @@ def _status(c):
     return c.get("/audit/status", params={"user": "auditor1"}).json()
 
 
+
+def _acknowledge_tamper(c):
+    """An auditor acknowledges every tamper event recorded by the restart(s)."""
+    for e in _status(c)["unacknowledged_tamper_events"]:
+        r = c.post("/audit/tamper/acknowledge", params={"user": "auditor1", "event_at": e["at"],
+                                                        "reason": "reviewed with the case and ledger reviews"})
+        assert r.status_code == 200, r.text
+
 def test_a_replayed_older_database_is_caught_and_cannot_be_restored_over(db):
     older, second = _two_sessions(db)
     shutil.copyfile(older, db)  # the whole older database, every seal intact
@@ -90,6 +98,7 @@ def test_a_replayed_older_database_is_caught_and_cannot_be_restored_over(db):
         assert r.status_code == 200 and _status(c)["ok"] is True
     _restart()
     with TestClient(app) as c:  # the accepted copy is the new baseline
+        _acknowledge_tamper(c)
         assert _status(c)["ok"] is True
 
 
@@ -108,6 +117,7 @@ def test_replaying_only_the_knowledge_base_is_undone_by_restore(db):
         r = c.post("/audit/review", params={"user": "auditor1", "target": "ledger",
                                             "decision": "restore", "reason": "rolled back by hand"})
         assert r.status_code == 200, r.text
+        _acknowledge_tamper(c)
         assert _status(c)["ok"] is True
         assert any(p["status"] == "approved" for p in learning.STORE._proposals)
     assert approved  # (the approved state existed before the replay)
@@ -152,6 +162,7 @@ def test_rolling_back_a_single_case_is_caught(db):
         assert r.status_code == 200 and cid not in r.json()["broken_cases"]
     _restart()
     with TestClient(app) as c:
+        _acknowledge_tamper(c)
         assert _status(c)["ok"] is True
 
 
@@ -199,7 +210,9 @@ def test_a_different_database_at_the_same_path_is_reported_and_checked(db, tmp_p
         for cid in _status(c)["broken_cases"]:
             c.post("/audit/review", params={"user": "auditor1", "target": f"case:{cid}", "decision": "accept",
                                             "reason": "same move"})
+        _acknowledge_tamper(c)
         assert _status(c)["ok"] is True
     _restart()
     with TestClient(app) as c:  # accepted: the new database is the baseline now
+        _acknowledge_tamper(c)
         assert _status(c)["ok"] is True
