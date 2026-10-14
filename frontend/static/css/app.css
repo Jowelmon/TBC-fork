@@ -972,7 +972,9 @@ th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { 
 .cap-progress-step { margin-top: 12px; color: var(--text-bright); }
 
 /* Narrow dashboards (1024 px and below, beside the sidebar): badges and the
-   Action button may wrap so every column fits the table box. */
+   Action button may wrap, and the Asset column drops out (the asset is named
+   on the case screen) so Case, Status, Confidence and Action fit the box. */
 @media (max-width: 1100px) {
   #cases-table td .badge, #cases-table td:last-child .btn { white-space: normal; }
+  #cases-table th:nth-child(2), #cases-table td:nth-child(2) { display: none; }
 }
