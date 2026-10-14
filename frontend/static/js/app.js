@@ -157,11 +157,6 @@ function navigate(screen, caseId = null) {
     }
   }
 
-  // Update role badge
-  if (roleBadge) {
-    roleBadge.textContent = roleDisplayName(state.role);
-  }
-
   renderScreen();
 }
 
@@ -224,7 +219,7 @@ document.getElementById('nav-show').addEventListener('click', () => setNavHidden
 // session cookie) — awaitable so callers (the guide tour included) can
 // rely on the new identity being live before they act on it.
 roleSelect.value = state.role;
-roleBadge.textContent = roleDisplayName(state.role);
+// The badge stays "Not signed in" (set in the page) until a PIN is accepted.
 
 // ── PIN sign-in ────────────────────────────────────────────
 // Naming a user is not enough to act as them: the server checks their PIN
@@ -270,12 +265,9 @@ function askPin(userId, note = '') {
 // Resolves with the user who is now signed in (may differ from the one asked
 // for, if the person picks another account in the dialog), or false.
 async function signIn(userId) {
-  // Ask for the PIN straight away when this browser has not proven it yet,
-  // rather than sending a sign-in that can only be refused.
-  const unlocked = await api.get('/login/unlocked').then(r => r.unlocked).catch(() => null);
-  if (unlocked && !unlocked.includes(userId)) return askPin(userId);
-  try { await api.login(userId); return userId; }
-  catch (e) { return askPin(userId, e.status === 429 ? e.message : ''); }
+  // Every sign-in asks for the PIN, including a switch back to someone who
+  // signed in earlier on this screen: the server requires it too.
+  return askPin(userId);
 }
 
 // ``render: false`` when the caller navigates straight after: two renders

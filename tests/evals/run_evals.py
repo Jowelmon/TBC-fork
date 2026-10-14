@@ -257,16 +257,26 @@ def eval_11(client):
     expectations = {
         "tech1": {"view_case": True, "record_outcome": True, "approve_reject_modify": False},
         "mgr1": {"view_case": True, "approve_reject_modify": True, "submit_feedback": True},
-        "steward1": {"approve_knowledge_version": True, "approve_reject_modify": False},
+        "steward1": {"approve_knowledge_version": True, "approve_reject_modify": False,
+                     "revoke_knowledge_version": True},
         "auditor1": {"read_audit_trail": True, "approve_reject_modify": False},
+        # Admin asks for rollbacks and may revoke as break-glass; it decides no knowledge.
         "admin1": {"approve_reject_modify": False, "review_audit_integrity": False,
-                   "approve_knowledge_version": True, "read_audit_trail": True},
+                   "approve_knowledge_version": False, "capture_expert_knowledge": False,
+                   "rollback_knowledge_version": True, "revoke_knowledge_version": True,
+                   "read_audit_trail": True},
     }
     for user_id, caps in expectations.items():
         role = DEMO_USERS[user_id].role
         for cap, expected in caps.items():
             assert can(role, cap) == expected, f"{user_id}/{role.value}: {cap} expected {expected}"
-    return f"{sum(len(c) for c in expectations.values())} capability checks across {len(expectations)} roles"
+    # The matrix must also hold at the server: the admin is refused knowledge decisions.
+    from fastapi.testclient import TestClient
+    admin = TestClient(app)
+    assert admin.get("/kb/queue", params={"user": "admin1"}).status_code == 403
+    assert admin.post("/kb/rollback-requests/RBK-999/countersign", params={"user": "admin1"}).status_code in (403, 404)
+    return (f"{sum(len(c) for c in expectations.values())} capability checks across "
+            f"{len(expectations)} roles; admin refused on the knowledge queue")
 
 
 @eval_("EVAL-12", "No invented evidence: capture drops ungrounded heuristics")

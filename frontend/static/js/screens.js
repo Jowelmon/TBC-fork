@@ -412,6 +412,12 @@ export function renderDashboard(el, state, h) {
   (async () => {
     try {
       const [st, sen] = await Promise.all([api.get('/audit/status'), api.get('/sentinel')]);
+      // A tamper recorded on load or save is shown even when the restored
+      // state now verifies: the copy that was changed has been archived.
+      const recorded = st.recorded_tamper_events || [];
+      if (recorded.length) {
+        setHTML('integrity-banner', `<div class="banner banner-warn" role="alert"><p><strong>A saved copy was changed outside the app.</strong> ${recorded.length} tamper event(s) on record, latest ${esc(recorded[recorded.length - 1].at)}: ${esc(recorded[recorded.length - 1].detail)}. The changed copy was archived and the last verified state restored. An auditor reviews the record on Governance.</p></div>`);
+      }
       if (st.ok && !sen.held.length) return;
       const parts = [];
       if (sen.held.length) parts.push(`the sentinel stopped ${sen.held.map(x => esc(x.case_id)).join(', ')} (held for an auditor's decision)`);
@@ -645,6 +651,14 @@ export function renderDashboard(el, state, h) {
 export function renderDiagnosis(el, state, h) {
   const { api, showToast, statePill, confBand, fmtTime, esc, navigate } = h;
   const cid = state.caseId;
+  // While the agent is diagnosing (possibly started from another screen or
+  // session), poll until it finishes, then re-render: no "refresh" needed.
+  let pollTimer = null;
+  let diagnosingSince = null;
+  const pollWhileDiagnosing = () => {
+    if (pollTimer || state.screen !== 'diagnosis') return;
+    pollTimer = setTimeout(() => { pollTimer = null; if (state.screen === 'diagnosis') load(); }, 2000);
+  };
 
   el.innerHTML = '<div class="card skeleton-card"><div class="skeleton skeleton-line" style="width:30%"></div><div class="skeleton skeleton-line" style="width:50%"></div><div class="skeleton skeleton-line" style="width:80%"></div><div class="skeleton skeleton-line" style="width:40%"></div></div>';
 
@@ -656,6 +670,12 @@ export function renderDiagnosis(el, state, h) {
         api.get('/system/info'),
         loadCauses(),
       ]);
+      if (s.current_state === 'DIAGNOSING') {
+        diagnosingSince = diagnosingSince || Date.now();
+        pollWhileDiagnosing();
+      } else {
+        diagnosingSince = null;
+      }
       const obs = s.observation || {};
       const cb = s.diagnosis ? confBand(s.confidence, s.current_state) : { cls: 'badge-grey', label: 'Not yet diagnosed' };
 
@@ -663,7 +683,7 @@ export function renderDiagnosis(el, state, h) {
         ? 'this case is frozen: an auditor must review it on Governance.'
         : {
         GATHERING_EVIDENCE: api.can('open_case') ? 'click Advance Agent to run the decision tree.' : 'a technician or AOM runs the agent on this case next.',
-        DIAGNOSING: 'the agent is diagnosing; refresh in a moment.',
+        DIAGNOSING: `the agent is diagnosing (${Math.max(0, Math.floor((Date.now() - (diagnosingSince || Date.now())) / 1000))} s so far). This screen updates when it finishes.`,
         RECOMMENDING: 'a recommendation is being prepared.',
         AWAITING_APPROVAL: s.ledger_valid === false
           ? 'the knowledge ledger failed verification: approval waits for an auditor review on Governance.'
@@ -1001,13 +1021,18 @@ export function renderDiagnosis(el, state, h) {
           // and stop a second click starting another advance.
           advBtn.disabled = true;
           advBtn.setAttribute('aria-busy', 'true');
-          advBtn.textContent = 'Gathering evidence and diagnosing…';
+          const started = Date.now();
+          const tick = () => { advBtn.textContent = `Gathering evidence and diagnosing… ${Math.floor((Date.now() - started) / 1000)} s`; };
+          tick();
+          const timer = setInterval(tick, 1000);
           try {
             await thinking(api.post(`/cases/${cid}/advance`));
+            clearInterval(timer);
             showToast('Agent advanced', 'success');
             window.__app__?.refreshSystemInfo?.();
             load();
           } catch (e) {
+            clearInterval(timer);
             showToast(`Error: ${e.message}`, 'error');
             advBtn.disabled = false;
             advBtn.removeAttribute('aria-busy');
@@ -1538,7 +1563,8 @@ export function renderGovernance(el, state, h) {
     const body = document.getElementById('rollback-body');
     if (!body) return;
     const canAsk = api.can('rollback_knowledge_version');
-    const canCountersign = api.can('approve_knowledge_version');
+    // Only a knowledge steward can countersign; the server checks the pill too.
+    const canCountersign = api.role() === 'knowledge_steward';
     const me = api.user();
     const pill = loadRollback.pill || 'CRAH';
     try {

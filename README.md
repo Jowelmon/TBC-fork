@@ -43,7 +43,7 @@ AppKey into `ADP_APP_KEY` (see [`docs/ADP_SETUP.md`](docs/ADP_SETUP.md)).
 
 | Command | What it does |
 |---|---|
-| `make test` | pytest suite (585 tests) |
+| `make test` | pytest suite (587 tests) |
 | `make eval` | 13 labelled acceptance evals as a pass/fail table |
 | `make demo` | console walkthrough of the same scenarios, including capture → approval → reuse |
 | `make reset` | stop the server and wipe saved state for a clean demo |
@@ -221,7 +221,8 @@ find things; it never acts on a case.
 
 ## Identity and audit
 
-- **Login.** `POST /login` checks the PIN (in the body, never the URL) and
+- **Login.** `POST /login` checks the PIN (in the body, never the URL) on every
+  sign-in, including switching back to a user already used on the screen, and
   sets an HMAC-signed session cookie that expires and is revoked on logout.
   Five wrong PINs lock that user out from that client for five minutes (the
   server ignores `X-Forwarded-For`, so a client cannot pick its address).
@@ -235,7 +236,7 @@ find things; it never acts on a case.
   - Two people per case: the AOM who approved the work cannot also verify
     its outcome; the technician who did it records it, and can send what
     they found to the stewards as feedback (a pending proposal).
-  - Admin runs the system (seeding, revoke, drills) and asks for rollbacks,
+  - Admin runs the system (seeding, break-glass revoke, drills) and asks for rollbacks,
     but cannot approve a case, decide on knowledge or review integrity. A
     rollback waits until the pill's steward countersigns it; the admin who
     asked cannot countersign their own request.
