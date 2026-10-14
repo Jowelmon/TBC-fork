@@ -64,7 +64,7 @@ Swagger docs are at `/docs`.
 | **Decision tree** | Deterministic diagnosis: same evidence, same answer |
 | **A person** | Approves every recommendation; nothing executes without an Asset Ops Manager |
 
-The Dashboard shows this strip, and the top bar shows which model is live.
+The Dashboard's **How this pill works** card shows this strip, and the top bar shows which model is live.
 
 ```
 observation ─▶ gather evidence ─▶ decision tree ─▶ confidence (W1-W5)

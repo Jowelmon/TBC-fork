@@ -817,11 +817,9 @@ code { font-size: max(0.9em, 14px); }
 @media (max-width: 768px) { #ai-cloud { transform-origin: bottom right; scale: .8; right: 12px; bottom: 12px; } }
 
 /* ── Dashboard: where AI is used and what governs it ─────────────────── */
-.ai-flow .card-body { padding: 14px 16px; }
+.ai-flow-row.ai-flow { margin-bottom: 16px; }
 .ai-flow-row { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
 .ai-flow-step { flex: 1 1 180px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-input); }
-.ai-flow-ai { border-color: var(--purple, #7C3AED); }
-.ai-flow-human { border-color: var(--green); }
 .ai-flow-k { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
 .ai-flow-v { font-size: 16px; font-weight: 600; color: var(--text-bright); margin: 2px 0 4px; }
 .ai-flow-d { font-size: 14px; color: var(--text-dim); line-height: 1.4; }
@@ -891,3 +889,54 @@ select::-ms-expand { display: none; }
 .tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 7px;
   margin-left: 6px; border-radius: 999px; background: var(--yellow-bg); color: var(--yellow-text); font-size: 14px; font-weight: 700; line-height: 1; }
 .tab[aria-selected="true"] .tab-count { background: var(--blue-bg); color: var(--blue-text); }
+
+/* ── Hideable menu ──────────────────────────────────────────────────── */
+.nav-hidden #nav-rail { display: none; }
+.nav-arrow { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-dim); font-size: 26px; line-height: 1; cursor: pointer; }
+.nav-arrow:hover { background: var(--bg-card); border-color: var(--border); color: var(--text-bright); }
+.nav-brand .nav-arrow { margin-left: auto; }
+#nav-show { display: none; align-self: flex-start; margin-top: 2px; }
+.nav-hidden #nav-show { display: inline-flex; }
+
+/* ── Header: title and breadcrumb each stay on one line; "Acting as" and
+   its dropdown move to the next row together, never split. ───────────── */
+/* The title never shrinks: when there isn't room for both, the controls
+   wrap to a second row instead of cutting the title short. */
+#topbar { justify-content: flex-start; flex-wrap: wrap; row-gap: 8px; }
+#topbar > #title-block { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; max-width: calc(100% - 60px); min-width: 0; }
+#topbar h1 { overflow: visible; }
+.breadcrumb { white-space: nowrap; min-width: 0; }
+.breadcrumb-current { overflow: hidden; text-overflow: ellipsis; }
+/* Right side: status chips on the first line, "Acting as" under them. */
+#role-switcher { flex: 0 1 auto; margin-left: auto; min-width: 0; flex-direction: column; align-items: flex-end; flex-wrap: nowrap; gap: 6px; }
+.rs-chips { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.acting-as { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+@media (max-width: 1400px) {
+  #topbar > #title-block { flex: 0 0 auto; }
+  #role-switcher { flex: 0 1 auto; flex-direction: column; align-items: flex-end; }
+}
+
+/* ── Dashboard: stat cards filter the table, headers sort it ─────────── */
+button.stat { font: inherit; color: inherit; text-align: left; cursor: pointer; transition: background .15s, border-color .15s; }
+button.stat:hover { background: var(--bg-card-hover); }
+/* While filtering, the other cards lose their colour stripe and their
+   number dims; the text keeps full contrast and no outline is added. */
+.stats-row.filtering button.stat[aria-pressed="false"] { border-left-color: var(--border); }
+.stats-row.filtering button.stat[aria-pressed="false"] .stat-val { color: var(--text-dim); }
+.stats-row.filtering button.stat[aria-pressed="true"] { background: var(--bg-card-hover); }
+.th-sort { background: none; border: none; padding: 0; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.th-sort:hover { color: var(--text-bright); }
+.th-sort .sort-arrow { font-size: 14px; opacity: .6; }
+th[aria-sort="ascending"] .sort-arrow, th[aria-sort="descending"] .sort-arrow { opacity: 1; color: var(--blue-text); }
+.table-filter-note { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-dim); margin: -8px 0 12px; }
+.table-filter-note[hidden] { display: none; }
+
+/* ── Dashboard: the case list is the focus ─────────────────────────── */
+.dash-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.dash-toolbar .next-hint { margin-bottom: 0; }
+#how-it-works { margin-top: 20px; }
+#cases-table td:nth-child(1), #cases-table td:nth-child(2) { white-space: nowrap; }
+@media (max-width: 768px) { .nav-brand { flex-direction: column; gap: 6px; padding: 12px 8px; } .nav-brand .nav-arrow { margin-left: 0; } }
+.nav-brand { gap: 10px; padding-right: 8px; }
+.nav-title { white-space: nowrap; }
+.nav-brand .nav-arrow { width: 26px; }

@@ -2,8 +2,8 @@
 
 import { api } from './api.js?v=9';
 import { initGuide } from './guide.js?v=14';
-import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=6';
-import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=37';
+import { initCloud, setCloudStatus, setCloudMood, setCloudScreen, cloudThinking } from './cloud.js?v=7';
+import { renderDashboard, renderDiagnosis, renderDecision, renderOutcome, renderGovernance, renderCapture } from './screens.js?v=38';
 
 // ── State ──────────────────────────────────────────────────
 const state = {
@@ -200,6 +200,17 @@ themeToggle.addEventListener('click', () => {
   localStorage.setItem('tbc_theme', next);
   applyThemeButtonLabel();
 });
+
+// ── Hideable menu (remembered per browser) ──────────────────
+// The ‹ beside the brand hides it; the › at the start of the top bar
+// (only there while it is hidden) brings it back.
+function setNavHidden(hidden) {
+  document.documentElement.classList.toggle('nav-hidden', hidden);
+  try { localStorage.setItem('tbc_nav_hidden', hidden ? '1' : '0'); } catch (_) {}
+  document.getElementById(hidden ? 'nav-show' : 'nav-hide')?.focus();
+}
+document.getElementById('nav-hide').addEventListener('click', () => setNavHidden(true));
+document.getElementById('nav-show').addEventListener('click', () => setNavHidden(false));
 
 // ── Role switcher ──────────────────────────────────────────
 // Switching role means logging in as that demo user (sets the signed
